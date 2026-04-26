@@ -92,8 +92,21 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       let anchors: Point[] = [];
       let vertexTargets: Point[] = [];
       if (state.drawing && state.drawing.points.length > 0) {
-        anchors = [state.drawing.points[state.drawing.points.length - 1]];
-        vertexTargets = collectVertexTargets(state, null);
+        const pts = state.drawing.points;
+        anchors = [pts[pts.length - 1]];
+        // For polygons, also anchor angle snaps to the first point so the user
+        // can line up the closing edge with rays from the start vertex.
+        if (state.drawing.type === 'polygon' && pts.length >= 2) {
+          anchors.push(pts[0]);
+          if (state.settings.snapAngles.length > 0) {
+            vertexTargets = collectVertexTargets(state, null);
+            vertexTargets.push(...rayIntersections(pts[0], pts[pts.length - 1], state.settings.snapAngles));
+          } else {
+            vertexTargets = collectVertexTargets(state, null);
+          }
+        } else {
+          vertexTargets = collectVertexTargets(state, null);
+        }
       } else if (draggingVertex) {
         const shape = state.shapes.find((s) => s.id === draggingVertex!.shapeId);
         if (shape) anchors = vertexAnchors(shape, draggingVertex.index);

@@ -331,26 +331,36 @@ function PreviewLayer({
 }) {
   if (drawing.points.length === 0) return null;
   const last = drawing.points[drawing.points.length - 1];
+  const first = drawing.points[0];
+  // For polygons with ≥ 2 points, also project rays from the first vertex so
+  // the user can align the closing edge with the start of the polygon before
+  // clicking it to close.
+  const guideAnchors: Point[] = [last];
+  if (drawing.type === 'polygon' && drawing.points.length >= 2) {
+    guideAnchors.push(first);
+  }
   const previewPts: Point[] = [...drawing.points, [cursor[0], cursor[1]]];
   const rayLen = (boardW + boardH) * 2;
 
   return (
     <g>
       {!snapDisabled &&
-        snapAngles.map((a) => {
-          const rad = (a * Math.PI) / 180;
-          return (
-            <line
-              key={a}
-              x1={fmt(last[0])}
-              y1={fmt(last[1])}
-              x2={fmt(last[0] + Math.cos(rad) * rayLen)}
-              y2={fmt(last[1] + Math.sin(rad) * rayLen)}
-              className="snap-guide"
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
+        guideAnchors.flatMap((anchor, ai) =>
+          snapAngles.map((a) => {
+            const rad = (a * Math.PI) / 180;
+            return (
+              <line
+                key={`${ai}-${a}`}
+                x1={fmt(anchor[0])}
+                y1={fmt(anchor[1])}
+                x2={fmt(anchor[0] + Math.cos(rad) * rayLen)}
+                y2={fmt(anchor[1] + Math.sin(rad) * rayLen)}
+                className="snap-guide"
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          }),
+        )}
 
       {drawing.type === 'polygon' && previewPts.length >= 3 && (
         <path
