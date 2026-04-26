@@ -1,16 +1,23 @@
 import { useEffect, type RefObject } from 'react';
 import { useStore, type AppState } from '../store';
 import { applySnap, distancePoints, rayIntersections } from '../lib/snap';
+import { dist } from '../lib/geometry';
 import type { Point, Shape } from '../types';
 
 const CLOSE_POLYGON_PX = 12;
 /** Magnetic snap pull radius for discrete points (vertices, grid intersections). */
 const POINT_SNAP_PX = 16;
+/**
+ * Pixel radius the pointer must move before a "click + drag" pattern is
+ * upgraded to a real drag. Smaller and incidental hand jitter triggers a
+ * marquee or shape move; larger and the user feels the click "stick".
+ */
+const DRAG_THRESHOLD_PX = 3;
 
-interface DragShapeState {
-  shapeId: string;
+interface DragShapesState {
+  ids: string[];
   startCursor: Point;
-  startPoints: Point[];
+  startPoints: Map<string, Point[]>;
 }
 
 interface DragVertexState {
@@ -23,6 +30,26 @@ interface PanState {
   startY: number;
   viewX: number;
   viewY: number;
+}
+
+/**
+ * Click-to-select that may upgrade into a marquee or a shape move once the
+ * pointer travels past `DRAG_THRESHOLD_PX`. We need the deferred decision so
+ * a plain click on an unselected shape selects it (no drag) while the same
+ * gesture with movement starts a marquee per the user's spec.
+ */
+interface PendingSelectState {
+  /** Shape under the pointer at mousedown, or null for empty canvas. */
+  shapeId: string | null;
+  /** True iff the clicked shape is currently part of the selection. */
+  hitSelected: boolean;
+  startScreenX: number;
+  startScreenY: number;
+  startCanvas: Point;
+  shift: boolean;
+  meta: boolean;
+  /** Once true, the pointer has moved past threshold and is committed to a drag. */
+  becameDrag: boolean;
 }
 
 const findShapeRef = (target: EventTarget | null): { shapeId?: string; vertexIndex?: string } => {
@@ -77,14 +104,56 @@ const collectVertexTargets = (state: AppState, exclude: DragVertexState | null):
   return targets;
 };
 
+interface AABB {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+const shapeBBox = (shape: Shape): AABB | null => {
+  if (shape.kind === 'circle' && shape.points.length >= 2) {
+    const [cx, cy] = shape.points[0];
+    const r = dist(shape.points[0], shape.points[1]);
+    return { minX: cx - r, minY: cy - r, maxX: cx + r, maxY: cy + r };
+  }
+  if (shape.points.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of shape.points) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
+};
+
+const intersects = (a: AABB, b: AABB): boolean =>
+  !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
+
+const shapesInBox = (shapes: Shape[], box: AABB): string[] => {
+  const ids: string[] = [];
+  for (const s of shapes) {
+    if (s.hidden || s.locked) continue;
+    const bb = shapeBBox(s);
+    if (bb && intersects(bb, box)) ids.push(s.id);
+  }
+  return ids;
+};
+
 export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
 
     let panning: PanState | null = null;
-    let draggingShape: DragShapeState | null = null;
+    let draggingShapes: DragShapesState | null = null;
     let draggingVertex: DragVertexState | null = null;
+    let pendingSelect: PendingSelectState | null = null;
+    let marquee: { start: Point } | null = null;
 
     const screenToCanvas = (clientX: number, clientY: number): Point => {
       const rect = svg.getBoundingClientRect();
@@ -189,25 +258,28 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       const ref = findShapeRef(e.target);
       if (ref.shapeId && ref.vertexIndex !== undefined) {
         const idx = parseInt(ref.vertexIndex, 10);
+        // Vertex editing is single-shape only — collapse multi-select to this one.
         state.selectShape(ref.shapeId);
         state.selectVertex({ shapeId: ref.shapeId, index: idx });
         draggingVertex = { shapeId: ref.shapeId, index: idx };
         state.setVertexDragging(true);
         return;
       }
-      if (ref.shapeId) {
-        state.selectShape(ref.shapeId);
-        const shape = state.shapes.find((s) => s.id === ref.shapeId);
-        if (shape) {
-          draggingShape = {
-            shapeId: shape.id,
-            startCursor: state.rawCursor,
-            startPoints: shape.points.map((p) => [p[0], p[1]] as Point),
-          };
-        }
-        return;
-      }
-      state.selectShape(null);
+
+      // Defer the select / box-select decision until we see whether the user
+      // moves the pointer. A plain click selects; movement upgrades to either
+      // a marquee (clicked on empty canvas / unselected shape) or a multi-
+      // shape move (clicked on a member of the current selection).
+      pendingSelect = {
+        shapeId: ref.shapeId ?? null,
+        hitSelected: !!ref.shapeId && state.selectedShapeIds.includes(ref.shapeId),
+        startScreenX: e.clientX,
+        startScreenY: e.clientY,
+        startCanvas: snapped,
+        shift: e.shiftKey,
+        meta: e.metaKey || e.ctrlKey,
+        becameDrag: false,
+      };
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -226,21 +298,66 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         useStore.getState().moveVertex(draggingVertex.shapeId, draggingVertex.index, snapped);
         return;
       }
-      if (draggingShape) {
+      if (draggingShapes) {
         const state = useStore.getState();
         const settings = state.settings;
-        let dx = raw[0] - draggingShape.startCursor[0];
-        let dy = raw[1] - draggingShape.startCursor[1];
-        // Snap the *delta* to the grid so the shape preserves its original
-        // sub-grid offset and just moves by whole grid steps.
+        let dx = raw[0] - draggingShapes.startCursor[0];
+        let dy = raw[1] - draggingShapes.startCursor[1];
+        // Snap the *delta* to the grid so the shapes preserve their original
+        // sub-grid offsets and just move by whole grid steps.
         if (settings.gridSnap && !state.snapDisabled && settings.gridSize > 0) {
           dx = Math.round(dx / settings.gridSize) * settings.gridSize;
           dy = Math.round(dy / settings.gridSize) * settings.gridSize;
         }
-        state.moveShape(
-          draggingShape.shapeId,
-          draggingShape.startPoints.map((p) => [p[0] + dx, p[1] + dy] as Point),
+        const moves: { id: string; points: Point[] }[] = [];
+        for (const id of draggingShapes.ids) {
+          const start = draggingShapes.startPoints.get(id);
+          if (!start) continue;
+          moves.push({ id, points: start.map((p) => [p[0] + dx, p[1] + dy] as Point) });
+        }
+        state.moveShapes(moves);
+        return;
+      }
+      if (marquee) {
+        useStore.getState().setBoxSelect({ start: marquee.start, end: raw });
+        return;
+      }
+
+      // Pending click that may now be becoming a drag.
+      if (pendingSelect && !pendingSelect.becameDrag) {
+        const moved = Math.hypot(
+          e.clientX - pendingSelect.startScreenX,
+          e.clientY - pendingSelect.startScreenY,
         );
+        if (moved < DRAG_THRESHOLD_PX) return;
+        pendingSelect.becameDrag = true;
+
+        const state = useStore.getState();
+        if (pendingSelect.hitSelected && !pendingSelect.shift && !pendingSelect.meta) {
+          // Drag-move the entire current selection together.
+          const ids = state.selectedShapeIds.slice();
+          const startPoints = new Map<string, Point[]>();
+          for (const sh of state.shapes) {
+            if (!ids.includes(sh.id)) continue;
+            startPoints.set(
+              sh.id,
+              sh.points.map((p) => [p[0], p[1]] as Point),
+            );
+          }
+          draggingShapes = {
+            ids,
+            startCursor: pendingSelect.startCanvas,
+            startPoints,
+          };
+          pendingSelect = null;
+          return;
+        }
+
+        // Otherwise upgrade to a marquee. With shift/meta, the marquee adds
+        // to the existing selection rather than replacing it (handled at up).
+        marquee = { start: pendingSelect.startCanvas };
+        state.setBoxSelect({ start: pendingSelect.startCanvas, end: raw });
+        return;
       }
     };
 
@@ -252,7 +369,50 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       if (draggingVertex) {
         useStore.getState().setVertexDragging(false);
       }
-      draggingShape = null;
+
+      if (marquee) {
+        const state = useStore.getState();
+        const box = state.boxSelect;
+        if (box) {
+          const aabb: AABB = {
+            minX: Math.min(box.start[0], box.end[0]),
+            minY: Math.min(box.start[1], box.end[1]),
+            maxX: Math.max(box.start[0], box.end[0]),
+            maxY: Math.max(box.start[1], box.end[1]),
+          };
+          const hit = shapesInBox(state.shapes, aabb);
+          // Shift / meta extend the existing selection; without them, the
+          // marquee replaces what was there.
+          const additive = pendingSelect?.shift || pendingSelect?.meta;
+          if (additive) {
+            const set = new Set(state.selectedShapeIds);
+            for (const id of hit) set.add(id);
+            state.selectShapes(Array.from(set));
+          } else {
+            state.selectShapes(hit);
+          }
+        }
+        state.setBoxSelect(null);
+        marquee = null;
+      } else if (pendingSelect && !pendingSelect.becameDrag) {
+        // Pure click — apply selection now.
+        const state = useStore.getState();
+        if (pendingSelect.shapeId) {
+          if (pendingSelect.shift) {
+            state.selectShapeRange(pendingSelect.shapeId);
+          } else if (pendingSelect.meta) {
+            state.toggleShapeSelection(pendingSelect.shapeId);
+          } else {
+            state.selectShape(pendingSelect.shapeId);
+          }
+        } else if (!pendingSelect.shift && !pendingSelect.meta) {
+          // Clicking empty canvas without a modifier clears the selection.
+          state.selectShape(null);
+        }
+      }
+
+      pendingSelect = null;
+      draggingShapes = null;
       draggingVertex = null;
       // Drag is over → no anchors / no targets are computed in updateCursor,
       // so clear any leftover indicator immediately rather than waiting for

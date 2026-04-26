@@ -560,6 +560,14 @@ label.checkbox > span {
   vector-effect: non-scaling-stroke;
 }
 
+.marquee {
+  fill: rgba(255, 59, 48, 0.08);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
 .vertex-handle {
   fill: var(--bg-0);
   stroke: var(--accent);

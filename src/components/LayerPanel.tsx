@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import { useStore, effectiveBezier } from '../store';
 import { bbox, dist, pointsToPath } from '../lib/geometry';
 import type { Shape } from '../types';
@@ -10,13 +10,26 @@ interface DropTarget {
 
 export function LayerPanel() {
   const shapes = useStore((s) => s.shapes);
-  const selectedShapeId = useStore((s) => s.selectedShapeId);
+  const selectedShapeIds = useStore((s) => s.selectedShapeIds);
   const settings = useStore((s) => s.settings);
   const selectShape = useStore((s) => s.selectShape);
+  const toggleShapeSelection = useStore((s) => s.toggleShapeSelection);
+  const selectShapeRange = useStore((s) => s.selectShapeRange);
   const toggleShapeVisibility = useStore((s) => s.toggleShapeVisibility);
   const toggleShapeLock = useStore((s) => s.toggleShapeLock);
   const reorderShape = useStore((s) => s.reorderShape);
   const renameShape = useStore((s) => s.renameShape);
+  const selectedSet = useMemo(() => new Set(selectedShapeIds), [selectedShapeIds]);
+
+  const onRowClick = (e: MouseEvent<HTMLLIElement>, id: string) => {
+    if (e.shiftKey) {
+      selectShapeRange(id);
+    } else if (e.metaKey || e.ctrlKey) {
+      toggleShapeSelection(id);
+    } else {
+      selectShape(id);
+    }
+  };
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
@@ -87,7 +100,7 @@ export function LayerPanel() {
         }}
       >
         {visual.map((shape) => {
-          const isSelected = shape.id === selectedShapeId;
+          const isSelected = selectedSet.has(shape.id);
           const isDragging = shape.id === draggingId;
           const drop = dropTarget?.id === shape.id ? dropTarget.position : null;
           const cls = [
@@ -109,7 +122,7 @@ export function LayerPanel() {
               onDragStart={(e) => onDragStart(e, shape.id)}
               onDragOver={(e) => onDragOverRow(e, shape.id)}
               onDragEnd={clearDrag}
-              onClick={() => selectShape(shape.id)}
+              onClick={(e) => onRowClick(e, shape.id)}
             >
               <span className="layer-handle" aria-hidden>
                 <DragHandleIcon />

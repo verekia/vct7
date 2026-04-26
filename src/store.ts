@@ -7,9 +7,16 @@ export interface SelectedVertex {
   index: number;
 }
 
+export interface BoxSelect {
+  start: Point;
+  end: Point;
+}
+
 export interface AppState {
   shapes: Shape[];
-  selectedShapeId: string | null;
+  selectedShapeIds: string[];
+  /** Last shape id that anchored the selection (plain or cmd click). Drives shift+click range. */
+  selectionAnchorId: string | null;
   selectedVertex: SelectedVertex | null;
   tool: Tool;
   drawing: Drawing | null;
@@ -24,6 +31,8 @@ export interface AppState {
   vertexDragging: boolean;
   /** Canvas-space point the cursor is currently magnetically locked to, or null. */
   snapTarget: Point | null;
+  /** Active marquee in canvas coordinates, or null when not box-selecting. */
+  boxSelect: BoxSelect | null;
   fileName: string;
   fileHandle: unknown;
   dirty: boolean;
@@ -39,16 +48,26 @@ export interface AppState {
   setPanning: (v: boolean) => void;
   setVertexDragging: (v: boolean) => void;
   setSnapTarget: (p: Point | null) => void;
+  setBoxSelect: (b: BoxSelect | null) => void;
   startDrawing: (type: 'line' | 'polygon' | 'circle', at: Point) => void;
   appendDrawingPoint: (p: Point) => void;
   cancelDrawing: () => void;
   commitDrawing: (closed: boolean) => void;
+  /** Replace selection with [id] (or clear if null). Updates the range anchor. */
   selectShape: (id: string | null) => void;
+  /** Replace selection with the given ids. Anchor becomes the last id, or null. */
+  selectShapes: (ids: string[]) => void;
+  /** Add or remove a single id from the selection. Anchor becomes id. */
+  toggleShapeSelection: (id: string) => void;
+  /** Select every shape between the anchor and toId (inclusive) by array index. */
+  selectShapeRange: (toId: string) => void;
   selectVertex: (v: SelectedVertex | null) => void;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   moveShape: (id: string, points: Point[]) => void;
+  moveShapes: (deltas: { id: string; points: Point[] }[]) => void;
   moveVertex: (id: string, index: number, p: Point) => void;
   deleteShape: (id: string) => void;
+  deleteShapes: (ids: string[]) => void;
   deleteVertex: (shapeId: string, index: number) => void;
   toggleShapeVisibility: (id: string) => void;
   toggleShapeLock: (id: string) => void;
@@ -67,7 +86,8 @@ const DEFAULT_VIEW: ViewState = { x: 0, y: 0, scale: 1 };
 
 export const useStore = create<AppState>((set) => ({
   shapes: [],
-  selectedShapeId: null,
+  selectedShapeIds: [],
+  selectionAnchorId: null,
   selectedVertex: null,
   tool: 'line',
   drawing: null,
@@ -80,6 +100,7 @@ export const useStore = create<AppState>((set) => ({
   panning: false,
   vertexDragging: false,
   snapTarget: null,
+  boxSelect: null,
   fileName: 'untitled.svg',
   fileHandle: null,
   dirty: false,
@@ -94,6 +115,7 @@ export const useStore = create<AppState>((set) => ({
   setPanning: (v) => set({ panning: v }),
   setVertexDragging: (v) => set({ vertexDragging: v }),
   setSnapTarget: (p) => set({ snapTarget: p }),
+  setBoxSelect: (b) => set({ boxSelect: b }),
 
   startDrawing: (type, at) => set({ drawing: { type, points: [at] } }),
   appendDrawingPoint: (p) =>
@@ -123,13 +145,75 @@ export const useStore = create<AppState>((set) => ({
       return {
         drawing: null,
         shapes: [...s.shapes, newShape],
-        selectedShapeId: newShape.id,
+        selectedShapeIds: [newShape.id],
+        selectionAnchorId: newShape.id,
         dirty: true,
       };
     }),
 
-  selectShape: (id) => set({ selectedShapeId: id, selectedVertex: null }),
-  selectVertex: (v) => set({ selectedVertex: v }),
+  selectShape: (id) =>
+    set({
+      selectedShapeIds: id ? [id] : [],
+      selectionAnchorId: id,
+      selectedVertex: null,
+    }),
+  selectShapes: (ids) =>
+    set({
+      selectedShapeIds: ids.slice(),
+      selectionAnchorId: ids.length ? ids[ids.length - 1] : null,
+      selectedVertex: null,
+    }),
+  toggleShapeSelection: (id) =>
+    set((s) => {
+      const has = s.selectedShapeIds.includes(id);
+      const next = has ? s.selectedShapeIds.filter((x) => x !== id) : [...s.selectedShapeIds, id];
+      return {
+        selectedShapeIds: next,
+        // Anchor on the most recent click — even when removing — so the next
+        // shift+click extends from where the user just clicked.
+        selectionAnchorId: id,
+        selectedVertex: null,
+      };
+    }),
+  selectShapeRange: (toId) =>
+    set((s) => {
+      const toIdx = s.shapes.findIndex((sh) => sh.id === toId);
+      if (toIdx === -1) return s;
+      const anchorIdx = s.selectionAnchorId
+        ? s.shapes.findIndex((sh) => sh.id === s.selectionAnchorId)
+        : -1;
+      // No anchor → degrade to a single-shape select. This matches Finder /
+      // most file managers when shift-click happens with nothing selected.
+      if (anchorIdx === -1) {
+        return {
+          selectedShapeIds: [toId],
+          selectionAnchorId: toId,
+          selectedVertex: null,
+        };
+      }
+      const lo = Math.min(anchorIdx, toIdx);
+      const hi = Math.max(anchorIdx, toIdx);
+      const range = s.shapes.slice(lo, hi + 1).map((sh) => sh.id);
+      return {
+        selectedShapeIds: range,
+        // Anchor stays put on shift+click — successive shift+clicks all
+        // extend from the same origin, the standard range-select behavior.
+        selectedVertex: null,
+      };
+    }),
+  selectVertex: (v) =>
+    set((s) => {
+      if (!v) return { selectedVertex: null };
+      // Selecting a vertex implies single-shape selection; collapse multi-select.
+      if (s.selectedShapeIds.length === 1 && s.selectedShapeIds[0] === v.shapeId) {
+        return { selectedVertex: v };
+      }
+      return {
+        selectedVertex: v,
+        selectedShapeIds: [v.shapeId],
+        selectionAnchorId: v.shapeId,
+      };
+    }),
   updateShape: (id, patch) =>
     set((s) => ({
       shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)),
@@ -140,6 +224,18 @@ export const useStore = create<AppState>((set) => ({
       shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, points } : sh)),
       dirty: true,
     })),
+  moveShapes: (deltas) =>
+    set((s) => {
+      if (deltas.length === 0) return s;
+      const map = new Map(deltas.map((d) => [d.id, d.points]));
+      return {
+        shapes: s.shapes.map((sh) => {
+          const next = map.get(sh.id);
+          return next ? { ...sh, points: next } : sh;
+        }),
+        dirty: true,
+      };
+    }),
   moveVertex: (id, index, p) =>
     set((s) => ({
       shapes: s.shapes.map((sh) => {
@@ -164,12 +260,30 @@ export const useStore = create<AppState>((set) => ({
       dirty: true,
     })),
   deleteShape: (id) =>
-    set((s) => ({
-      shapes: s.shapes.filter((sh) => sh.id !== id),
-      selectedShapeId: null,
-      selectedVertex: null,
-      dirty: true,
-    })),
+    set((s) => {
+      const remaining = s.selectedShapeIds.filter((x) => x !== id);
+      return {
+        shapes: s.shapes.filter((sh) => sh.id !== id),
+        selectedShapeIds: remaining,
+        selectionAnchorId: s.selectionAnchorId === id ? null : s.selectionAnchorId,
+        selectedVertex: s.selectedVertex?.shapeId === id ? null : s.selectedVertex,
+        dirty: true,
+      };
+    }),
+  deleteShapes: (ids) =>
+    set((s) => {
+      if (ids.length === 0) return s;
+      const idSet = new Set(ids);
+      return {
+        shapes: s.shapes.filter((sh) => !idSet.has(sh.id)),
+        selectedShapeIds: s.selectedShapeIds.filter((x) => !idSet.has(x)),
+        selectionAnchorId:
+          s.selectionAnchorId && idSet.has(s.selectionAnchorId) ? null : s.selectionAnchorId,
+        selectedVertex:
+          s.selectedVertex && idSet.has(s.selectedVertex.shapeId) ? null : s.selectedVertex,
+        dirty: true,
+      };
+    }),
   deleteVertex: (shapeId, index) =>
     set((s) => {
       const shape = s.shapes.find((sh) => sh.id === shapeId);
@@ -177,7 +291,8 @@ export const useStore = create<AppState>((set) => ({
       if (shape.points.length <= 2) {
         return {
           shapes: s.shapes.filter((sh) => sh.id !== shapeId),
-          selectedShapeId: null,
+          selectedShapeIds: s.selectedShapeIds.filter((x) => x !== shapeId),
+          selectionAnchorId: s.selectionAnchorId === shapeId ? null : s.selectionAnchorId,
           selectedVertex: null,
           dirty: true,
         };
@@ -208,13 +323,15 @@ export const useStore = create<AppState>((set) => ({
       const target = s.shapes.find((sh) => sh.id === id);
       if (!target) return s;
       const nextLocked = !target.locked;
-      // Locking the currently-selected shape clears the selection so canvas
-      // interactions don't keep operating on a now-uneditable target.
-      const clearSel = nextLocked && s.selectedShapeId === id;
+      // Locking a shape removes it from the selection so canvas interactions
+      // don't keep operating on a now-uneditable target.
+      const stripSel = nextLocked && s.selectedShapeIds.includes(id);
+      const nextSel = stripSel ? s.selectedShapeIds.filter((x) => x !== id) : s.selectedShapeIds;
       return {
         shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, locked: nextLocked } : sh)),
-        selectedShapeId: clearSel ? null : s.selectedShapeId,
-        selectedVertex: clearSel ? null : s.selectedVertex,
+        selectedShapeIds: nextSel,
+        selectionAnchorId: stripSel && s.selectionAnchorId === id ? null : s.selectionAnchorId,
+        selectedVertex: stripSel && s.selectedVertex?.shapeId === id ? null : s.selectedVertex,
         dirty: true,
       };
     }),
@@ -232,7 +349,8 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({
       settings,
       shapes,
-      selectedShapeId: null,
+      selectedShapeIds: [],
+      selectionAnchorId: null,
       selectedVertex: null,
       drawing: null,
       dirty: false,
@@ -242,7 +360,8 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({
       settings: { ...DEFAULT_SETTINGS },
       shapes: [],
-      selectedShapeId: null,
+      selectedShapeIds: [],
+      selectionAnchorId: null,
       selectedVertex: null,
       drawing: null,
       fileName: 'untitled.svg',

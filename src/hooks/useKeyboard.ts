@@ -56,8 +56,8 @@ export function useKeyboard() {
         e.preventDefault();
         if (state.selectedVertex) {
           state.deleteVertex(state.selectedVertex.shapeId, state.selectedVertex.index);
-        } else if (state.selectedShapeId) {
-          state.deleteShape(state.selectedShapeId);
+        } else if (state.selectedShapeIds.length > 0) {
+          state.deleteShapes(state.selectedShapeIds);
         }
         return;
       }

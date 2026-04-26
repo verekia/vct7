@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { dist } from '../lib/geometry';
 import type { Shape } from '../types';
@@ -22,15 +22,32 @@ const sanitizeColor = (c: string): string => {
   return '#000000';
 };
 
+type ShapeKind = 'circle' | 'line' | 'polygon';
+
+const kindOf = (sh: Shape): ShapeKind => {
+  if (sh.kind === 'circle') return 'circle';
+  return sh.closed ? 'polygon' : 'line';
+};
+
+const allSame = <T,>(values: T[]): boolean => values.every((v) => v === values[0]);
+
 export function ShapePanel() {
-  const shape = useStore((s) =>
-    s.selectedShapeId ? (s.shapes.find((sh) => sh.id === s.selectedShapeId) ?? null) : null,
-  );
+  // Subscribe to the underlying primitives only — deriving the selected-shape
+  // list inside the selector would return a fresh array each call and trip
+  // Zustand's strict identity check (Maximum update depth exceeded).
+  const shapes = useStore((s) => s.shapes);
+  const selectedShapeIds = useStore((s) => s.selectedShapeIds);
   const globalBezier = useStore((s) => s.settings.bezier);
   const updateShape = useStore((s) => s.updateShape);
   const deleteShape = useStore((s) => s.deleteShape);
+  const deleteShapes = useStore((s) => s.deleteShapes);
 
-  if (!shape) {
+  const selectedShapes = useMemo(() => {
+    const ids = new Set(selectedShapeIds);
+    return shapes.filter((sh) => ids.has(sh.id));
+  }, [shapes, selectedShapeIds]);
+
+  if (selectedShapes.length === 0) {
     return (
       <section className="panel inspector-empty">
         <p className="hint">
@@ -42,12 +59,37 @@ export function ShapePanel() {
     );
   }
 
+  if (selectedShapes.length === 1) {
+    return (
+      <ShapePanelInner
+        shape={selectedShapes[0]}
+        globalBezier={globalBezier}
+        updateShape={updateShape}
+        deleteShape={deleteShape}
+      />
+    );
+  }
+
+  const kinds = selectedShapes.map(kindOf);
+  if (!allSame(kinds)) {
+    return (
+      <section className="panel inspector-empty">
+        <p className="hint">
+          {selectedShapes.length} layers selected — mixed types.
+          <br />
+          Pick layers of the same type to edit them together.
+        </p>
+      </section>
+    );
+  }
+
   return (
-    <ShapePanelInner
-      shape={shape}
+    <MultiShapePanel
+      shapes={selectedShapes}
+      kind={kinds[0]}
       globalBezier={globalBezier}
       updateShape={updateShape}
-      deleteShape={deleteShape}
+      deleteShapes={deleteShapes}
     />
   );
 }
@@ -189,6 +231,183 @@ function ShapePanelInner({
       <div className="row">
         <button type="button" className="danger" onClick={() => deleteShape(shape.id)}>
           Delete shape
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Multi-shape inspector. All edits dispatch updateShape per id, so each shape
+ * stores its own copy of the new value (independent updates, not group state).
+ * Inputs display the value when uniform across the selection, and a "Mixed"
+ * placeholder when values differ — until the user types something, at which
+ * point that uniform value is written everywhere.
+ */
+function MultiShapePanel({
+  shapes,
+  kind,
+  globalBezier,
+  updateShape,
+  deleteShapes,
+}: {
+  shapes: Shape[];
+  kind: ShapeKind;
+  globalBezier: number;
+  updateShape: (id: string, patch: Partial<Shape>) => void;
+  deleteShapes: (ids: string[]) => void;
+}) {
+  const showFill = kind !== 'line';
+  const showBezier = kind !== 'circle';
+
+  const strokes = shapes.map((s) => s.stroke);
+  const fills = shapes.map((s) => s.fill);
+  const widths = shapes.map((s) => s.strokeWidth);
+  const overrides = shapes.map((s) => s.bezierOverride);
+  const strokeUniform = allSame(strokes);
+  const fillUniform = allSame(fills);
+  const widthUniform = allSame(widths);
+  const overrideUniform = allSame(overrides);
+
+  const [strokeText, setStrokeText] = useState(strokeUniform ? strokes[0] : '');
+  const [fillText, setFillText] = useState(fillUniform ? fills[0] : '');
+  // Resync the typed-input value when the underlying selection changes — but
+  // only when the *displayed* value would change. Joining is just to derive
+  // a primitive identity for the deps array (arrays change every render).
+  const strokeKey = strokes.join('|');
+  const fillKey = fills.join('|');
+  useEffect(() => {
+    setStrokeText(strokeUniform ? strokes[0] : '');
+    // strokes is captured via the strokeKey identity above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strokeUniform, strokeKey]);
+  useEffect(() => {
+    setFillText(fillUniform ? fills[0] : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fillUniform, fillKey]);
+
+  const applyAll = (patch: Partial<Shape>) => {
+    for (const s of shapes) updateShape(s.id, patch);
+  };
+
+  const bezierForRange = overrideUniform && overrides[0] !== null ? overrides[0] : globalBezier;
+
+  const typeLabel = kind === 'circle' ? `${shapes.length} circles` : `${shapes.length} ${kind}s`;
+
+  return (
+    <section className="panel">
+      <div className="row">
+        <span className="kv-key">Type</span>
+        <span className="kv-value">{typeLabel}</span>
+      </div>
+
+      <label>
+        <span>Stroke</span>
+        <div className="row">
+          <input
+            type="color"
+            value={sanitizeColor(strokeUniform ? strokes[0] : '#000000')}
+            onChange={(e) => applyAll({ stroke: e.target.value })}
+          />
+          <input
+            type="text"
+            value={strokeText}
+            placeholder={strokeUniform ? '' : 'Mixed'}
+            onChange={(e) => setStrokeText(e.target.value)}
+            onBlur={() => {
+              if (strokeText === 'none' || HEX_RE.test(strokeText)) {
+                applyAll({ stroke: strokeText });
+              } else {
+                setStrokeText(strokeUniform ? strokes[0] : '');
+              }
+            }}
+          />
+        </div>
+      </label>
+
+      <label>
+        <span>Stroke width</span>
+        <input
+          type="number"
+          min={0}
+          step={0.5}
+          value={widthUniform ? widths[0] : ''}
+          placeholder={widthUniform ? '' : 'Mixed'}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (Number.isFinite(v) && v >= 0) applyAll({ strokeWidth: v });
+          }}
+        />
+      </label>
+
+      {showFill && (
+        <label>
+          <span>Fill</span>
+          <div className="row">
+            <input
+              type="color"
+              value={sanitizeColor(fillUniform ? fills[0] : '#000000')}
+              onChange={(e) => applyAll({ fill: e.target.value })}
+            />
+            <input
+              type="text"
+              value={fillText}
+              placeholder={fillUniform ? '' : 'Mixed'}
+              onChange={(e) => setFillText(e.target.value)}
+              onBlur={() => {
+                if (fillText === 'none' || HEX_RE.test(fillText)) {
+                  applyAll({ fill: fillText });
+                } else {
+                  setFillText(fillUniform ? fills[0] : '');
+                }
+              }}
+            />
+            <button type="button" className="small" onClick={() => applyAll({ fill: 'none' })}>
+              none
+            </button>
+          </div>
+        </label>
+      )}
+
+      {showBezier && (
+        <label>
+          <span className="row">
+            <span style={{ flex: 1 }}>Bezier override</span>
+            {overrides.some((o) => o !== null) && (
+              <button
+                type="button"
+                className="small"
+                onClick={() => applyAll({ bezierOverride: null })}
+              >
+                use global
+              </button>
+            )}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={bezierForRange}
+            onChange={(e) => applyAll({ bezierOverride: parseFloat(e.target.value) })}
+          />
+          <span className="num">
+            {!overrideUniform
+              ? 'Mixed'
+              : overrides[0] === null
+                ? `— (global ${globalBezier.toFixed(2)})`
+                : overrides[0]!.toFixed(2)}
+          </span>
+        </label>
+      )}
+
+      <div className="row">
+        <button
+          type="button"
+          className="danger"
+          onClick={() => deleteShapes(shapes.map((s) => s.id))}
+        >
+          Delete {shapes.length} shapes
         </button>
       </div>
     </section>

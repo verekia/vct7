@@ -6,7 +6,8 @@ const reset = () => {
   // Replace the Zustand state without losing action references.
   useStore.setState({
     shapes: [],
-    selectedShapeId: null,
+    selectedShapeIds: [],
+    selectionAnchorId: null,
     selectedVertex: null,
     tool: 'line',
     drawing: null,
@@ -19,6 +20,7 @@ const reset = () => {
     panning: false,
     vertexDragging: false,
     snapTarget: null,
+    boxSelect: null,
     fileName: 'untitled.svg',
     fileHandle: null,
     dirty: false,
@@ -172,12 +174,12 @@ describe('store: deleteVertex', () => {
           locked: false,
         },
       ],
-      selectedShapeId: 's1',
+      selectedShapeIds: ['s1'],
       selectedVertex: { shapeId: 's1', index: 0 },
     });
     useStore.getState().deleteVertex('s1', 0);
     expect(useStore.getState().shapes).toEqual([]);
-    expect(useStore.getState().selectedShapeId).toBe(null);
+    expect(useStore.getState().selectedShapeIds).toEqual([]);
   });
 
   it('removes only the indexed vertex when 3+ remain', () => {
@@ -200,7 +202,7 @@ describe('store: deleteVertex', () => {
           locked: false,
         },
       ],
-      selectedShapeId: 's1',
+      selectedShapeIds: ['s1'],
       selectedVertex: { shapeId: 's1', index: 1 },
     });
     useStore.getState().deleteVertex('s1', 1);
@@ -291,18 +293,131 @@ describe('store: layer ordering and toggles', () => {
   // operating on a now-uneditable target.
   it('toggleShapeLock clears selection when locking the selected shape', () => {
     seed();
-    useStore.setState({ selectedShapeId: 'c', selectedVertex: { shapeId: 'c', index: 0 } });
+    useStore.setState({
+      selectedShapeIds: ['c'],
+      selectionAnchorId: 'c',
+      selectedVertex: { shapeId: 'c', index: 0 },
+    });
     useStore.getState().toggleShapeLock('c');
     expect(useStore.getState().shapes.find((s) => s.id === 'c')!.locked).toBe(true);
-    expect(useStore.getState().selectedShapeId).toBe(null);
+    expect(useStore.getState().selectedShapeIds).toEqual([]);
     expect(useStore.getState().selectedVertex).toBe(null);
   });
 
   it('toggleShapeLock leaves selection alone when locking a different shape', () => {
     seed();
-    useStore.setState({ selectedShapeId: 'a' });
+    useStore.setState({ selectedShapeIds: ['a'], selectionAnchorId: 'a' });
     useStore.getState().toggleShapeLock('c');
-    expect(useStore.getState().selectedShapeId).toBe('a');
+    expect(useStore.getState().selectedShapeIds).toEqual(['a']);
+  });
+});
+
+describe('store: multi-selection', () => {
+  const seed = () =>
+    useStore.setState({
+      shapes: ['a', 'b', 'c', 'd'].map((id) => ({
+        id,
+        points: [
+          [0, 0],
+          [10, 10],
+        ],
+        closed: false,
+        fill: 'none',
+        stroke: '#000',
+        strokeWidth: 1,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+      })),
+    });
+
+  it('selectShape replaces selection with [id] and updates anchor', () => {
+    seed();
+    useStore.getState().selectShape('b');
+    expect(useStore.getState().selectedShapeIds).toEqual(['b']);
+    expect(useStore.getState().selectionAnchorId).toBe('b');
+    useStore.getState().selectShape(null);
+    expect(useStore.getState().selectedShapeIds).toEqual([]);
+    expect(useStore.getState().selectionAnchorId).toBe(null);
+  });
+
+  it('toggleShapeSelection adds and removes individual ids and pins anchor', () => {
+    seed();
+    useStore.getState().selectShape('a');
+    useStore.getState().toggleShapeSelection('c');
+    expect(useStore.getState().selectedShapeIds).toEqual(['a', 'c']);
+    expect(useStore.getState().selectionAnchorId).toBe('c');
+    useStore.getState().toggleShapeSelection('a');
+    expect(useStore.getState().selectedShapeIds).toEqual(['c']);
+    expect(useStore.getState().selectionAnchorId).toBe('a');
+  });
+
+  it('selectShapeRange spans from the anchor to the target by array index', () => {
+    seed();
+    useStore.getState().selectShape('a');
+    useStore.getState().selectShapeRange('c');
+    expect(useStore.getState().selectedShapeIds).toEqual(['a', 'b', 'c']);
+    // Anchor is preserved on shift+click — successive ranges all extend from 'a'.
+    expect(useStore.getState().selectionAnchorId).toBe('a');
+    useStore.getState().selectShapeRange('d');
+    expect(useStore.getState().selectedShapeIds).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('selectShapeRange falls back to single selection when no anchor exists', () => {
+    seed();
+    useStore.getState().selectShapeRange('c');
+    expect(useStore.getState().selectedShapeIds).toEqual(['c']);
+    expect(useStore.getState().selectionAnchorId).toBe('c');
+  });
+
+  it('deleteShapes removes shapes and trims selection', () => {
+    seed();
+    useStore.getState().selectShapes(['a', 'b', 'c']);
+    useStore.getState().deleteShapes(['a', 'c']);
+    expect(useStore.getState().shapes.map((s) => s.id)).toEqual(['b', 'd']);
+    expect(useStore.getState().selectedShapeIds).toEqual(['b']);
+  });
+
+  it('moveShapes translates each given shape independently', () => {
+    seed();
+    useStore.getState().moveShapes([
+      {
+        id: 'a',
+        points: [
+          [5, 5],
+          [15, 15],
+        ],
+      },
+      {
+        id: 'c',
+        points: [
+          [100, 100],
+          [110, 110],
+        ],
+      },
+    ]);
+    const shapes = useStore.getState().shapes;
+    expect(shapes.find((s) => s.id === 'a')!.points).toEqual([
+      [5, 5],
+      [15, 15],
+    ]);
+    expect(shapes.find((s) => s.id === 'c')!.points).toEqual([
+      [100, 100],
+      [110, 110],
+    ]);
+    // Untouched shapes stay where they were.
+    expect(shapes.find((s) => s.id === 'b')!.points).toEqual([
+      [0, 0],
+      [10, 10],
+    ]);
+  });
+
+  it('selectVertex collapses multi-selection to the vertex owner', () => {
+    seed();
+    useStore.getState().selectShapes(['a', 'b']);
+    useStore.getState().selectVertex({ shapeId: 'b', index: 0 });
+    expect(useStore.getState().selectedShapeIds).toEqual(['b']);
+    expect(useStore.getState().selectedVertex).toEqual({ shapeId: 'b', index: 0 });
   });
 });
 

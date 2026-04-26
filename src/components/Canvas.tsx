@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { effectiveBezier } from '../store';
 import { dist, fmt, pointsToPath } from '../lib/geometry';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
+import type { BoxSelect } from '../store';
 import type { Drawing, Point, ProjectSettings, Shape } from '../types';
 
 interface ContainerSize {
@@ -56,15 +57,18 @@ export function Canvas() {
   const cursor = useStore((s) => s.cursor);
   const shapes = useStore((s) => s.shapes);
   const drawing = useStore((s) => s.drawing);
-  const selectedShapeId = useStore((s) => s.selectedShapeId);
+  const selectedShapeIds = useStore((s) => s.selectedShapeIds);
   const selectedVertex = useStore((s) => s.selectedVertex);
   const snapDisabled = useStore((s) => s.snapDisabled);
   const spaceHeld = useStore((s) => s.spaceHeld);
   const panning = useStore((s) => s.panning);
   const vertexDragging = useStore((s) => s.vertexDragging);
   const snapTarget = useStore((s) => s.snapTarget);
+  const boxSelect = useStore((s) => s.boxSelect);
 
-  const selectedShape = shapes.find((s) => s.id === selectedShapeId) ?? null;
+  const selectedSet = useMemo(() => new Set(selectedShapeIds), [selectedShapeIds]);
+  const selectedShapes = shapes.filter((s) => selectedSet.has(s.id));
+  const singleSelected = selectedShapes.length === 1 ? selectedShapes[0] : null;
   const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`;
 
   const cls = [
@@ -110,21 +114,31 @@ export function Canvas() {
             ),
           )}
 
-          {selectedShape && (
+          {selectedShapes.map((shape) => (
             <SelectionLayer
-              shape={selectedShape}
-              selectedIndex={selectedVertex?.index ?? null}
+              key={shape.id}
+              shape={shape}
+              // Vertex handles are only meaningful when a single shape is
+              // selected — multi-select shows outlines only.
+              selectedIndex={
+                singleSelected && selectedVertex && selectedVertex.shapeId === shape.id
+                  ? selectedVertex.index
+                  : null
+              }
+              showVertices={!!singleSelected}
               scale={view.scale}
             />
-          )}
+          ))}
 
-          {vertexDragging && selectedShape && selectedVertex && !snapDisabled && (
+          {vertexDragging && singleSelected && selectedVertex && !snapDisabled && (
             <VertexDragGuides
-              shape={selectedShape}
+              shape={singleSelected}
               index={selectedVertex.index}
               settings={settings}
             />
           )}
+
+          {boxSelect && <MarqueeRect box={boxSelect} />}
 
           {drawing && (
             <PreviewLayer
@@ -278,10 +292,12 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
 function SelectionLayer({
   shape,
   selectedIndex,
+  showVertices,
   scale,
 }: {
   shape: Shape;
   selectedIndex: number | null;
+  showVertices: boolean;
   scale: number;
 }) {
   const outline =
@@ -299,19 +315,38 @@ function SelectionLayer({
   return (
     <g>
       {outline}
-      {shape.points.map((p, i) => (
-        <circle
-          key={i}
-          cx={fmt(p[0])}
-          cy={fmt(p[1])}
-          r={5 / scale}
-          className={`vertex-handle${selectedIndex === i ? ' selected' : ''}`}
-          data-shape-id={shape.id}
-          data-vertex-index={i}
-          pointerEvents={shape.locked ? 'none' : undefined}
-        />
-      ))}
+      {showVertices &&
+        shape.points.map((p, i) => (
+          <circle
+            key={i}
+            cx={fmt(p[0])}
+            cy={fmt(p[1])}
+            r={5 / scale}
+            className={`vertex-handle${selectedIndex === i ? ' selected' : ''}`}
+            data-shape-id={shape.id}
+            data-vertex-index={i}
+            pointerEvents={shape.locked ? 'none' : undefined}
+          />
+        ))}
     </g>
+  );
+}
+
+function MarqueeRect({ box }: { box: BoxSelect }) {
+  const x = Math.min(box.start[0], box.end[0]);
+  const y = Math.min(box.start[1], box.end[1]);
+  const w = Math.abs(box.end[0] - box.start[0]);
+  const h = Math.abs(box.end[1] - box.start[1]);
+  return (
+    <rect
+      className="marquee"
+      x={fmt(x)}
+      y={fmt(y)}
+      width={fmt(w)}
+      height={fmt(h)}
+      pointerEvents="none"
+      vectorEffect="non-scaling-stroke"
+    />
   );
 }
 
