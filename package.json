@@ -14,7 +14,7 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test"
+    "all": "npm run format:check && npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
     "react": "^19.2.5",
