@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bbox, corner, fmt, pointsToPath } from './geometry';
+import { bbox, corner, fmt, pointsToPath, polygonWinding } from './geometry';
 import type { Point } from '../types';
 
 describe('fmt', () => {
@@ -98,24 +98,33 @@ describe('corner adaptive direction', () => {
     expect(c.control).toEqual([10, 0]);
   });
 
-  // Acute corner (45°): control should be mirrored across the chord (bulges AWAY from vertex).
-  it('mirrors control for an acute angle', () => {
-    // (0,0) → (10,0) → (0,10): angle at (10,0) is 45°.
+  // Acute corner (45°), convex (default): control should be the vertex (fillet).
+  // Without winding info we treat the corner as convex, which is correct for
+  // open polylines and for spikes sticking out of a closed polygon.
+  it('uses vertex as control for a convex acute angle', () => {
     const c = corner([0, 0], [10, 0], [0, 10], 1);
     expect(c.interiorAngle).toBeCloseTo(45, 5);
-    // Control is reflection of (10,0) through midpoint of (a,b).
+    expect(c.control).toEqual([10, 0]);
+  });
+
+  // Acute corner (45°), reflex: control should be mirrored across the chord
+  // (bulges AWAY from vertex). This is what a heart's top cusp wants.
+  it('mirrors control for a reflex acute angle', () => {
+    const c = corner([0, 0], [10, 0], [0, 10], 1, true);
+    expect(c.interiorAngle).toBeCloseTo(45, 5);
     const midX = (c.a[0] + c.b[0]) / 2;
     const midY = (c.a[1] + c.b[1]) / 2;
     expect(c.control[0]).toBeCloseTo(2 * midX - 10, 5);
     expect(c.control[1]).toBeCloseTo(2 * midY - 0, 5);
   });
 
-  it('curve direction visibly differs across the 90° threshold', () => {
-    const acute = corner([0, 0], [10, 0], [0, 5], 1); // ~26.6°
-    const obtuse = corner([0, 0], [10, 0], [20, 1], 1); // ~174°
-    // For the acute case, control_y > 0 (mirrored upward); for the obtuse case, control = vertex.
-    expect(acute.control[1]).toBeGreaterThan(0);
-    expect(obtuse.control).toEqual([10, 0]);
+  it('only mirrors when both acute AND reflex', () => {
+    const acuteConvex = corner([0, 0], [10, 0], [0, 5], 1, false); // ~26.6°
+    const acuteReflex = corner([0, 0], [10, 0], [0, 5], 1, true);
+    const obtuseReflex = corner([0, 0], [10, 0], [20, 1], 1, true); // ~174°
+    expect(acuteConvex.control).toEqual([10, 0]);
+    expect(acuteReflex.control[1]).toBeGreaterThan(0);
+    expect(obtuseReflex.control).toEqual([10, 0]);
   });
 });
 
@@ -216,9 +225,9 @@ describe('pointsToPath robustness', () => {
 });
 
 describe('mixed-angle polygon adaptive rounding', () => {
-  // A pentagon with one obviously acute vertex and four obviously obtuse
-  // (~108° regular-pentagon-ish) vertices. Verifies that adaptive rounding
-  // flips direction only at the acute corner.
+  // A pentagon with one obviously acute CONVEX vertex (a spike sticking out
+  // below the body) and four obtuse vertices. The acute spike is convex —
+  // a fillet should round it, NOT mirror it inward.
   const acuteIdx = 0;
   const pentagon: Point[] = [
     [50, 80], // acute spike below
@@ -234,19 +243,56 @@ describe('mixed-angle polygon adaptive rounding', () => {
     expect(/(NaN|Infinity)/.test(d)).toBe(false);
   });
 
-  it('only the acute vertex has a mirrored control point', () => {
+  it('every vertex of a fully-convex polygon filletes (no mirror)', () => {
     for (let i = 0; i < pentagon.length; i++) {
       const prev = pentagon[(i - 1 + pentagon.length) % pentagon.length];
       const cur = pentagon[i];
       const next = pentagon[(i + 1) % pentagon.length];
-      const c = corner(prev, cur, next, 1);
+      const c = corner(prev, cur, next, 1, /* isReflex */ false);
       if (i === acuteIdx) {
         expect(c.interiorAngle).toBeLessThan(90);
-        expect(c.control).not.toEqual(cur);
       } else {
         expect(c.interiorAngle).toBeGreaterThanOrEqual(90);
+      }
+      expect(c.control).toEqual(cur);
+    }
+  });
+});
+
+describe('reflex-aware adaptive rounding (heart-style cusp)', () => {
+  // A heart-like outline with a sharp cusp dipping down between two lobes.
+  // The cusp is the only reflex vertex; everything else is convex.
+  const cuspIdx = 3;
+  const heart: Point[] = [
+    [50, 100], // bottom tip
+    [100, 60],
+    [75, 20], // right lobe
+    [50, 60], // CUSP (reflex acute)
+    [25, 20], // left lobe
+    [0, 60],
+  ];
+
+  it('classifies the cusp as the only reflex vertex and mirrors only there', () => {
+    const winding = polygonWinding(heart);
+    let mirroredCount = 0;
+    for (let i = 0; i < heart.length; i++) {
+      const prev = heart[(i - 1 + heart.length) % heart.length];
+      const cur = heart[i];
+      const next = heart[(i + 1) % heart.length];
+      const cross =
+        (cur[0] - prev[0]) * (next[1] - cur[1]) - (cur[1] - prev[1]) * (next[0] - cur[0]);
+      const isReflex = cross * winding < 0;
+      const c = corner(prev, cur, next, 1, isReflex);
+      if (i === cuspIdx) {
+        expect(isReflex).toBe(true);
+        expect(c.interiorAngle).toBeLessThan(90);
+        expect(c.control).not.toEqual(cur);
+        mirroredCount++;
+      } else {
+        expect(isReflex).toBe(false);
         expect(c.control).toEqual(cur);
       }
     }
+    expect(mirroredCount).toBe(1);
   });
 });
