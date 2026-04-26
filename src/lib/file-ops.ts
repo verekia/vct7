@@ -33,6 +33,22 @@ export async function openFile(): Promise<void> {
   }
 }
 
+export async function openDroppedFile(
+  file: File,
+  handle: FileHandle | null = null,
+): Promise<void> {
+  if (!confirmDiscard()) return;
+  try {
+    const text = await file.text();
+    const { settings, shapes } = parseProject(text);
+    const store = useStore.getState();
+    store.setProject(settings, shapes);
+    store.setFileMeta(file.name, handle);
+  } catch (e) {
+    alert(`Open failed: ${(e as Error).message}`);
+  }
+}
+
 export async function saveFile(): Promise<void> {
   const store = useStore.getState();
   const handle = store.fileHandle as FileHandle | null;

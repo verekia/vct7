@@ -12,6 +12,9 @@ interface FileSystemFileHandleLike {
   name: string;
   getFile(): Promise<File>;
   createWritable(): Promise<FileSystemWritableLike>;
+  // Present on handles obtained via drag-and-drop; absent on the picker's
+  // handle (which is already granted readwrite by the user gesture).
+  requestPermission?: (descriptor: { mode: 'read' | 'readwrite' }) => Promise<PermissionState>;
 }
 
 interface FileSystemWritableLike {
@@ -71,6 +74,10 @@ function openFileFallback(): Promise<OpenedFile | null> {
 }
 
 export async function writeToHandle(handle: FileHandle, text: string): Promise<void> {
+  if (handle.requestPermission) {
+    const state = await handle.requestPermission({ mode: 'readwrite' });
+    if (state !== 'granted') throw new Error('Write permission denied');
+  }
   const writable = await handle.createWritable();
   await writable.write(text);
   await writable.close();
