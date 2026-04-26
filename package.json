@@ -1,0 +1,14 @@
+{
+  "name": "vectorheart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A focused SVG editor for vectorheart-style compositions: angle snapping, global bezier rounding, File System API saves.",
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes serve@14 -l 5173 .",
+    "start": "npx --yes serve@14 -l 5173 ."
+  },
+  "dependencies": {
+    "jsdom": "^29.0.2"
+  }
+}

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>vectorheart</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">[ VH ]</span>
+        <span class="brand-name">vectorheart</span>
+        <span class="file-name" id="file-name">untitled.svg</span>
+        <span class="dirty-mark" id="dirty-mark"></span>
+      </div>
+
+      <div class="topbar-group">
+        <button data-action="new" title="New (Ctrl/Cmd+N)">New</button>
+        <button data-action="open" title="Open (Ctrl/Cmd+O)">Open</button>
+        <button data-action="save" title="Save (Ctrl/Cmd+S)">Save</button>
+        <button data-action="save-as" title="Save As (Ctrl/Cmd+Shift+S)">Save As</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="left-panel">
+        <section class="panel">
+          <h2>Tools</h2>
+          <div class="tool-grid">
+            <button class="tool" data-tool="select" title="Select (V)">
+              <span class="tk">V</span>
+              <span>Select</span>
+            </button>
+            <button class="tool" data-tool="line" title="Line (L)">
+              <span class="tk">L</span>
+              <span>Line</span>
+            </button>
+            <button class="tool" data-tool="polygon" title="Polygon (P)">
+              <span class="tk">P</span>
+              <span>Polygon</span>
+            </button>
+          </div>
+          <p class="hint" id="tool-hint"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Project</h2>
+          <label>
+            <span>Snap angles (deg, comma-separated)</span>
+            <input id="snap-angles" type="text" placeholder="0,45,90,135,180,225,270,315" />
+          </label>
+          <div class="row">
+            <button data-preset="ortho">0/90</button>
+            <button data-preset="45">45°</button>
+            <button data-preset="30">30°</button>
+            <button data-preset="60">60°</button>
+            <button data-preset="15">15°</button>
+          </div>
+
+          <label>
+            <span>Global bezier <span class="num" id="bezier-readout">0.00</span></span>
+            <input id="bezier" type="range" min="0" max="1" step="0.01" value="0" />
+          </label>
+
+          <label>
+            <span>Background</span>
+            <div class="row">
+              <input id="bg" type="color" value="#ffffff" />
+              <input id="bg-text" type="text" value="#ffffff" />
+            </div>
+          </label>
+
+          <label>
+            <span>Canvas size</span>
+            <div class="row">
+              <input id="canvas-w" type="number" value="800" min="1" />
+              <span>×</span>
+              <input id="canvas-h" type="number" value="800" min="1" />
+            </div>
+          </label>
+        </section>
+
+        <section class="panel" id="shape-panel" hidden>
+          <h2>Selected</h2>
+          <div class="row">
+            <span class="kv-key">Type</span>
+            <span class="kv-value" id="shape-type">—</span>
+          </div>
+          <div class="row">
+            <span class="kv-key">Points</span>
+            <span class="kv-value" id="shape-points">0</span>
+          </div>
+
+          <label>
+            <span>Stroke</span>
+            <div class="row">
+              <input id="shape-stroke" type="color" value="#000000" />
+              <input id="shape-stroke-text" type="text" value="#000000" />
+            </div>
+          </label>
+
+          <label>
+            <span>Stroke width</span>
+            <input id="shape-stroke-width" type="number" min="0" step="0.5" value="2" />
+          </label>
+
+          <label class="closed-only">
+            <span>Fill</span>
+            <div class="row">
+              <input id="shape-fill" type="color" value="#000000" />
+              <input id="shape-fill-text" type="text" value="#000000" />
+              <button id="shape-fill-none" class="small">none</button>
+            </div>
+          </label>
+
+          <label>
+            <span class="row-between">
+              <span>Bezier override</span>
+              <button id="bezier-override-clear" class="small">use global</button>
+            </span>
+            <input id="shape-bezier" type="range" min="0" max="1" step="0.01" value="0" />
+            <span class="num" id="shape-bezier-readout">— (global)</span>
+          </label>
+
+          <div class="row">
+            <button id="shape-delete" class="danger">Delete shape</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="canvas-wrap">
+        <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="canvas-hud">
+          <span id="hud-coords">0, 0</span>
+          <span id="hud-zoom">100%</span>
+          <span id="hud-tool"></span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <span>Shift: free angle</span>
+      <span>Esc: cancel</span>
+      <span>Enter / Double-click: finish line</span>
+      <span>Space + drag: pan</span>
+      <span>Wheel: zoom</span>
+    </footer>
+
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
