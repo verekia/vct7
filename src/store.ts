@@ -20,6 +20,10 @@ export interface AppState {
   snapDisabled: boolean;
   spaceHeld: boolean;
   panning: boolean;
+  /** True while the user is actively dragging a vertex; drives snap-ray rendering. */
+  vertexDragging: boolean;
+  /** Canvas-space point the cursor is currently magnetically locked to, or null. */
+  snapTarget: Point | null;
   fileName: string;
   fileHandle: unknown;
   dirty: boolean;
@@ -33,6 +37,8 @@ export interface AppState {
   setSnapDisabled: (v: boolean) => void;
   setSpaceHeld: (v: boolean) => void;
   setPanning: (v: boolean) => void;
+  setVertexDragging: (v: boolean) => void;
+  setSnapTarget: (p: Point | null) => void;
   startDrawing: (type: 'line' | 'polygon', at: Point) => void;
   appendDrawingPoint: (p: Point) => void;
   cancelDrawing: () => void;
@@ -67,6 +73,8 @@ export const useStore = create<AppState>((set) => ({
   snapDisabled: false,
   spaceHeld: false,
   panning: false,
+  vertexDragging: false,
+  snapTarget: null,
   fileName: 'untitled.svg',
   fileHandle: null,
   dirty: false,
@@ -79,6 +87,8 @@ export const useStore = create<AppState>((set) => ({
   setSnapDisabled: (v) => set({ snapDisabled: v }),
   setSpaceHeld: (v) => set({ spaceHeld: v }),
   setPanning: (v) => set({ panning: v }),
+  setVertexDragging: (v) => set({ vertexDragging: v }),
+  setSnapTarget: (p) => set({ snapTarget: p }),
 
   startDrawing: (type, at) => set({ drawing: { type, points: [at] } }),
   appendDrawingPoint: (p) =>

@@ -8,6 +8,9 @@ const sampleSettings: ProjectSettings = {
   bg: '#ffeedd',
   width: 400,
   height: 300,
+  gridSize: 25,
+  gridVisible: true,
+  gridSnap: false,
 };
 
 const sampleShapes: Shape[] = [

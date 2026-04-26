@@ -17,6 +17,8 @@ const reset = () => {
     snapDisabled: false,
     spaceHeld: false,
     panning: false,
+    vertexDragging: false,
+    snapTarget: null,
     fileName: 'untitled.svg',
     fileHandle: null,
     dirty: false,

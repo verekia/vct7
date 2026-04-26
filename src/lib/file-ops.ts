@@ -33,10 +33,7 @@ export async function openFile(): Promise<void> {
   }
 }
 
-export async function openDroppedFile(
-  file: File,
-  handle: FileHandle | null = null,
-): Promise<void> {
+export async function openDroppedFile(file: File, handle: FileHandle | null = null): Promise<void> {
   if (!confirmDiscard()) return;
   try {
     const text = await file.text();

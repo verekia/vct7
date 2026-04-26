@@ -22,6 +22,10 @@ export interface ProjectSettings {
   bg: string;
   width: number;
   height: number;
+  /** Grid spacing in canvas units. Must be > 0 to be usable. */
+  gridSize: number;
+  gridVisible: boolean;
+  gridSnap: boolean;
 }
 
 export interface ViewState {

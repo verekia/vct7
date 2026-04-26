@@ -1,9 +1,11 @@
 import { useEffect, type RefObject } from 'react';
-import { useStore } from '../store';
-import { distancePoints, snapToAngle } from '../lib/snap';
-import type { Point } from '../types';
+import { useStore, type AppState } from '../store';
+import { applySnap, distancePoints, rayIntersections } from '../lib/snap';
+import type { Point, Shape } from '../types';
 
 const CLOSE_POLYGON_PX = 12;
+/** Magnetic snap pull radius for discrete points (vertices, grid intersections). */
+const POINT_SNAP_PX = 16;
 
 interface DragShapeState {
   shapeId: string;
@@ -35,6 +37,40 @@ const findShapeRef = (target: EventTarget | null): { shapeId?: string; vertexInd
   return {};
 };
 
+const vertexAnchors = (shape: Shape, index: number): Point[] => {
+  const n = shape.points.length;
+  const anchors: Point[] = [];
+  if (index > 0) anchors.push(shape.points[index - 1]);
+  else if (shape.closed && n > 1) anchors.push(shape.points[n - 1]);
+  if (index < n - 1) anchors.push(shape.points[index + 1]);
+  else if (shape.closed && n > 1) anchors.push(shape.points[0]);
+  return anchors;
+};
+
+/**
+ * Collect every vertex the cursor is allowed to magnetically lock onto.
+ *
+ * Excluded: the vertex actively being dragged (would lock to itself), and the
+ * drawing's last point during drawing (lets the user lay down consecutive
+ * points without the cursor sticking to the one just placed). Included: every
+ * other shape vertex, plus the in-progress drawing's earlier points so a new
+ * point can join an existing line or close a polygon.
+ */
+const collectVertexTargets = (state: AppState, exclude: DragVertexState | null): Point[] => {
+  const targets: Point[] = [];
+  for (const shape of state.shapes) {
+    for (let i = 0; i < shape.points.length; i++) {
+      if (exclude && exclude.shapeId === shape.id && exclude.index === i) continue;
+      targets.push(shape.points[i]);
+    }
+  }
+  if (state.drawing) {
+    const pts = state.drawing.points;
+    for (let i = 0; i < pts.length - 1; i++) targets.push(pts[i]);
+  }
+  return targets;
+};
+
 export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
   useEffect(() => {
     const svg = svgRef.current;
@@ -53,17 +89,35 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
     const updateCursor = (clientX: number, clientY: number): { snapped: Point; raw: Point } => {
       const raw = screenToCanvas(clientX, clientY);
       const state = useStore.getState();
-      let snapped: Point = raw;
-      if (state.drawing && state.drawing.points.length > 0 && !state.snapDisabled) {
-        const last = state.drawing.points[state.drawing.points.length - 1];
-        const r = snapToAngle(
-          { x: last[0], y: last[1] },
-          { x: raw[0], y: raw[1] },
-          state.settings.snapAngles,
-        );
-        snapped = [r.x, r.y];
+      let anchors: Point[] = [];
+      let vertexTargets: Point[] = [];
+      if (state.drawing && state.drawing.points.length > 0) {
+        anchors = [state.drawing.points[state.drawing.points.length - 1]];
+        vertexTargets = collectVertexTargets(state, null);
+      } else if (draggingVertex) {
+        const shape = state.shapes.find((s) => s.id === draggingVertex!.shapeId);
+        if (shape) anchors = vertexAnchors(shape, draggingVertex.index);
+        vertexTargets = collectVertexTargets(state, draggingVertex);
+        // With two neighbors, every pair of dashed angle rays from each anchor
+        // crosses at a point — make those crossings magnetic so the cursor
+        // locks at the intersection the user is visually targeting.
+        if (anchors.length === 2 && state.settings.snapAngles.length > 0) {
+          vertexTargets.push(
+            ...rayIntersections(anchors[0], anchors[1], state.settings.snapAngles),
+          );
+        }
       }
+      const { snapped, snapPoint } = applySnap(raw, {
+        anchors,
+        vertexTargets,
+        snapAngles: state.settings.snapAngles,
+        gridSize: state.settings.gridSize,
+        gridSnap: state.settings.gridSnap,
+        pointThresholdCanvas: POINT_SNAP_PX / state.view.scale,
+        snapDisabled: state.snapDisabled,
+      });
       state.setCursor(snapped, raw);
+      state.setSnapTarget(snapPoint);
       return { snapped, raw };
     };
 
@@ -110,6 +164,7 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         state.selectShape(ref.shapeId);
         state.selectVertex({ shapeId: ref.shapeId, index: idx });
         draggingVertex = { shapeId: ref.shapeId, index: idx };
+        state.setVertexDragging(true);
         return;
       }
       if (ref.shapeId) {
@@ -137,16 +192,24 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         return;
       }
 
-      const { raw } = updateCursor(e.clientX, e.clientY);
+      const { snapped, raw } = updateCursor(e.clientX, e.clientY);
 
       if (draggingVertex) {
-        useStore.getState().moveVertex(draggingVertex.shapeId, draggingVertex.index, raw);
+        useStore.getState().moveVertex(draggingVertex.shapeId, draggingVertex.index, snapped);
         return;
       }
       if (draggingShape) {
-        const dx = raw[0] - draggingShape.startCursor[0];
-        const dy = raw[1] - draggingShape.startCursor[1];
-        useStore.getState().moveShape(
+        const state = useStore.getState();
+        const settings = state.settings;
+        let dx = raw[0] - draggingShape.startCursor[0];
+        let dy = raw[1] - draggingShape.startCursor[1];
+        // Snap the *delta* to the grid so the shape preserves its original
+        // sub-grid offset and just moves by whole grid steps.
+        if (settings.gridSnap && !state.snapDisabled && settings.gridSize > 0) {
+          dx = Math.round(dx / settings.gridSize) * settings.gridSize;
+          dy = Math.round(dy / settings.gridSize) * settings.gridSize;
+        }
+        state.moveShape(
           draggingShape.shapeId,
           draggingShape.startPoints.map((p) => [p[0] + dx, p[1] + dy] as Point),
         );
@@ -158,8 +221,15 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         panning = null;
         useStore.getState().setPanning(false);
       }
+      if (draggingVertex) {
+        useStore.getState().setVertexDragging(false);
+      }
       draggingShape = null;
       draggingVertex = null;
+      // Drag is over → no anchors / no targets are computed in updateCursor,
+      // so clear any leftover indicator immediately rather than waiting for
+      // the next pointermove.
+      useStore.getState().setSnapTarget(null);
     };
 
     const onDblClick = () => {

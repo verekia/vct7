@@ -165,6 +165,22 @@ label > span {
   gap: 6px;
 }
 
+label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+label.checkbox input {
+  accent-color: var(--accent);
+}
+
+label.checkbox > span {
+  display: inline;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -313,6 +329,23 @@ label > span {
   stroke-width: 0.5;
   stroke-dasharray: 4 4;
   opacity: 0.35;
+  pointer-events: none;
+}
+
+.grid line {
+  /* `difference` against white-on-bg auto-inverts: gives a faint dark grid on
+     a white artboard and a faint light grid on a dark one. */
+  stroke: #ffffff;
+  stroke-width: 1;
+  mix-blend-mode: difference;
+  opacity: 0.18;
+}
+
+.snap-target {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 

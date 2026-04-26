@@ -43,6 +43,9 @@ export function ProjectPanel() {
   useEffect(() => setWidthText(String(settings.width)), [settings.width]);
   useEffect(() => setHeightText(String(settings.height)), [settings.height]);
 
+  const [gridSizeText, setGridSizeText] = useState(String(settings.gridSize));
+  useEffect(() => setGridSizeText(String(settings.gridSize)), [settings.gridSize]);
+
   return (
     <section className="panel">
       <h2>Project</h2>
@@ -132,6 +135,39 @@ export function ProjectPanel() {
           />
         </div>
       </label>
+
+      <label>
+        <span>Grid size</span>
+        <input
+          type="number"
+          min={1}
+          value={gridSizeText}
+          onChange={(e) => setGridSizeText(e.target.value)}
+          onBlur={() => {
+            const v = parseFloat(gridSizeText);
+            if (Number.isFinite(v) && v > 0) setSettings({ gridSize: v });
+            else setGridSizeText(String(settings.gridSize));
+          }}
+        />
+      </label>
+      <div className="row">
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.gridVisible}
+            onChange={(e) => setSettings({ gridVisible: e.target.checked })}
+          />
+          <span>Show grid (G)</span>
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.gridSnap}
+            onChange={(e) => setSettings({ gridSnap: e.target.checked })}
+          />
+          <span>Snap to grid</span>
+        </label>
+      </div>
     </section>
   );
 }

@@ -7,6 +7,7 @@ export function Statusbar() {
       <span>Space + drag: pan</span>
       <span>Wheel: zoom</span>
       <span>F: fit view</span>
+      <span>G: toggle grid</span>
     </footer>
   );
 }

@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { effectiveBezier } from '../store';
 import { fmt, pointsToPath } from '../lib/geometry';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
-import type { Drawing, Point, Shape } from '../types';
+import type { Drawing, Point, ProjectSettings, Shape } from '../types';
 
 interface ContainerSize {
   w: number;
@@ -61,6 +61,8 @@ export function Canvas() {
   const snapDisabled = useStore((s) => s.snapDisabled);
   const spaceHeld = useStore((s) => s.spaceHeld);
   const panning = useStore((s) => s.panning);
+  const vertexDragging = useStore((s) => s.vertexDragging);
+  const snapTarget = useStore((s) => s.snapTarget);
 
   const selectedShape = shapes.find((s) => s.id === selectedShapeId) ?? null;
   const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`;
@@ -83,6 +85,14 @@ export function Canvas() {
       >
         <g transform={transform}>
           <rect x={0} y={0} width={settings.width} height={settings.height} fill={settings.bg} />
+          {settings.gridVisible && settings.gridSize > 0 && (
+            <GridLayer
+              size={settings.gridSize}
+              boardW={settings.width}
+              boardH={settings.height}
+              scale={view.scale}
+            />
+          )}
           <rect
             x={0}
             y={0}
@@ -106,6 +116,14 @@ export function Canvas() {
             />
           )}
 
+          {vertexDragging && selectedShape && selectedVertex && !snapDisabled && (
+            <VertexDragGuides
+              shape={selectedShape}
+              index={selectedVertex.index}
+              settings={settings}
+            />
+          )}
+
           {drawing && (
             <PreviewLayer
               drawing={drawing}
@@ -118,6 +136,15 @@ export function Canvas() {
               scale={view.scale}
             />
           )}
+
+          {snapTarget && (
+            <circle
+              className="snap-target"
+              cx={fmt(snapTarget[0])}
+              cy={fmt(snapTarget[1])}
+              r={9 / view.scale}
+            />
+          )}
         </g>
       </svg>
       <div className="canvas-hud">
@@ -128,6 +155,53 @@ export function Canvas() {
         <span>{tool}</span>
       </div>
     </div>
+  );
+}
+
+function GridLayer({
+  size,
+  boardW,
+  boardH,
+  scale,
+}: {
+  size: number;
+  boardW: number;
+  boardH: number;
+  scale: number;
+}) {
+  // Skip rendering if the grid would be visually noisy (sub-pixel) or huge.
+  const screenSpacing = size * scale;
+  const lines = useMemo(() => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let x = size; x < boardW; x += size) xs.push(x);
+    for (let y = size; y < boardH; y += size) ys.push(y);
+    return { xs, ys };
+  }, [size, boardW, boardH]);
+  if (screenSpacing < 4) return null;
+  return (
+    <g className="grid" pointerEvents="none">
+      {lines.xs.map((x) => (
+        <line
+          key={`x${x}`}
+          x1={fmt(x)}
+          y1={0}
+          x2={fmt(x)}
+          y2={fmt(boardH)}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+      {lines.ys.map((y) => (
+        <line
+          key={`y${y}`}
+          x1={0}
+          y1={fmt(y)}
+          x2={fmt(boardW)}
+          y2={fmt(y)}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+    </g>
   );
 }
 
@@ -190,6 +264,45 @@ function SelectionLayer({
           data-vertex-index={i}
         />
       ))}
+    </g>
+  );
+}
+
+function VertexDragGuides({
+  shape,
+  index,
+  settings,
+}: {
+  shape: Shape;
+  index: number;
+  settings: ProjectSettings;
+}) {
+  if (settings.snapAngles.length === 0) return null;
+  const n = shape.points.length;
+  const anchors: Point[] = [];
+  if (index > 0) anchors.push(shape.points[index - 1]);
+  else if (shape.closed && n > 1) anchors.push(shape.points[n - 1]);
+  if (index < n - 1) anchors.push(shape.points[index + 1]);
+  else if (shape.closed && n > 1) anchors.push(shape.points[0]);
+  const rayLen = (settings.width + settings.height) * 2;
+  return (
+    <g>
+      {anchors.map((a, ai) =>
+        settings.snapAngles.map((deg) => {
+          const rad = (deg * Math.PI) / 180;
+          return (
+            <line
+              key={`${ai}-${deg}`}
+              x1={fmt(a[0])}
+              y1={fmt(a[1])}
+              x2={fmt(a[0] + Math.cos(rad) * rayLen)}
+              y2={fmt(a[1] + Math.sin(rad) * rayLen)}
+              className="snap-guide"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        }),
+      )}
     </g>
   );
 }

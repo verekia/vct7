@@ -7,6 +7,9 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   bg: '#ffffff',
   width: 800,
   height: 800,
+  gridSize: 20,
+  gridVisible: false,
+  gridSnap: false,
 };
 
 const escapeAttr = (v: string): string =>
@@ -27,7 +30,10 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     )}" width="${fmt(settings.width)}" height="${fmt(settings.height)}"` +
       ` data-vh-snap-angles="${escapeAttr(settings.snapAngles.join(','))}"` +
       ` data-vh-bezier="${fmt(settings.bezier)}"` +
-      ` data-vh-bg="${escapeAttr(settings.bg)}">`,
+      ` data-vh-bg="${escapeAttr(settings.bg)}"` +
+      ` data-vh-grid-size="${fmt(settings.gridSize)}"` +
+      ` data-vh-grid-visible="${settings.gridVisible}"` +
+      ` data-vh-grid-snap="${settings.gridSnap}">`,
   );
   lines.push(
     `  <rect x="0" y="0" width="${fmt(settings.width)}" height="${fmt(
@@ -104,6 +110,16 @@ export function parseProject(text: string): ParsedProject {
 
   const bg = svg.getAttribute('data-vh-bg');
   if (bg) settings.bg = bg;
+
+  const gridSize = svg.getAttribute('data-vh-grid-size');
+  if (gridSize) {
+    const v = parseFloat(gridSize);
+    if (Number.isFinite(v) && v > 0) settings.gridSize = v;
+  }
+  const gridVisible = svg.getAttribute('data-vh-grid-visible');
+  if (gridVisible) settings.gridVisible = gridVisible === 'true';
+  const gridSnap = svg.getAttribute('data-vh-grid-snap');
+  if (gridSnap) settings.gridSnap = gridSnap === 'true';
 
   const shapes: Shape[] = [];
   for (const path of Array.from(svg.querySelectorAll('path'))) {
