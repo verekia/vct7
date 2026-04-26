@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { useStore, effectiveBezier } from '../store';
-import { bbox, pointsToPath } from '../lib/geometry';
+import { bbox, dist, pointsToPath } from '../lib/geometry';
 import type { Shape } from '../types';
 
 interface DropTarget {
@@ -70,7 +70,7 @@ export function LayerPanel() {
   if (shapes.length === 0) {
     return (
       <section className="panel">
-        <p className="hint">No layers yet — draw a line or polygon.</p>
+        <p className="hint">No layers yet — draw a line, polygon, or circle.</p>
       </section>
     );
   }
@@ -167,6 +167,7 @@ export function LayerPanel() {
 }
 
 function defaultLayerName(shape: Shape): string {
+  if (shape.kind === 'circle') return 'circle';
   return shape.closed ? 'polygon' : 'line';
 }
 
@@ -236,14 +237,34 @@ function Swatch({ color, title }: { color: string; title: string }) {
 }
 
 function ShapePreview({ shape, bezier }: { shape: Shape; bezier: number }) {
-  const box = bbox(shape.points);
+  const fill = shape.closed ? (shape.fill === 'none' ? 'transparent' : shape.fill) : 'none';
+  const stroke = shape.stroke === 'none' ? 'transparent' : shape.stroke;
   const pad = 1;
+  if (shape.kind === 'circle' && shape.points.length >= 2) {
+    const [cx, cy] = shape.points[0];
+    const r = dist(shape.points[0], shape.points[1]) || 0.0001;
+    const vb = `${cx - r - pad} ${cy - r - pad} ${r * 2 + pad * 2} ${r * 2 + pad * 2}`;
+    return (
+      <span className="layer-preview" aria-hidden>
+        <svg viewBox={vb} width="20" height="20" preserveAspectRatio="xMidYMid meet">
+          <circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill={fill}
+            stroke={stroke}
+            strokeWidth={1.2}
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      </span>
+    );
+  }
+  const box = bbox(shape.points);
   const w = Math.max(box.w, 0.0001);
   const h = Math.max(box.h, 0.0001);
   const vb = `${box.x - pad} ${box.y - pad} ${w + pad * 2} ${h + pad * 2}`;
   const d = pointsToPath(shape.points, shape.closed, bezier);
-  const fill = shape.closed ? (shape.fill === 'none' ? 'transparent' : shape.fill) : 'none';
-  const stroke = shape.stroke === 'none' ? 'transparent' : shape.stroke;
   return (
     <span className="layer-preview" aria-hidden>
       <svg viewBox={vb} width="20" height="20" preserveAspectRatio="xMidYMid meet">

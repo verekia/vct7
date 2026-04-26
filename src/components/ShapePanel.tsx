@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store';
+import { dist } from '../lib/geometry';
 import type { Shape } from '../types';
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
@@ -68,16 +69,22 @@ function ShapePanelInner({
   useEffect(() => setFillText(shape.fill), [shape.fill]);
 
   const bezierValue = shape.bezierOverride ?? globalBezier;
+  const isCircle = shape.kind === 'circle';
+  const typeLabel = isCircle ? 'circle' : shape.closed ? 'polygon' : 'line';
 
   return (
     <section className="panel">
       <div className="row">
         <span className="kv-key">Type</span>
-        <span className="kv-value">{shape.closed ? 'polygon' : 'line'}</span>
+        <span className="kv-value">{typeLabel}</span>
       </div>
       <div className="row">
-        <span className="kv-key">Points</span>
-        <span className="kv-value">{shape.points.length}</span>
+        <span className="kv-key">{isCircle ? 'Radius' : 'Points'}</span>
+        <span className="kv-value">
+          {isCircle && shape.points.length >= 2
+            ? dist(shape.points[0], shape.points[1]).toFixed(2)
+            : shape.points.length}
+        </span>
       </div>
 
       <label>
@@ -149,33 +156,35 @@ function ShapePanelInner({
         </label>
       )}
 
-      <label>
-        <span className="row">
-          <span style={{ flex: 1 }}>Bezier override</span>
-          {shape.bezierOverride !== null && (
-            <button
-              type="button"
-              className="small"
-              onClick={() => updateShape(shape.id, { bezierOverride: null })}
-            >
-              use global
-            </button>
-          )}
-        </span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={bezierValue}
-          onChange={(e) => updateShape(shape.id, { bezierOverride: parseFloat(e.target.value) })}
-        />
-        <span className="num">
-          {shape.bezierOverride === null
-            ? `— (global ${globalBezier.toFixed(2)})`
-            : shape.bezierOverride.toFixed(2)}
-        </span>
-      </label>
+      {!isCircle && (
+        <label>
+          <span className="row">
+            <span style={{ flex: 1 }}>Bezier override</span>
+            {shape.bezierOverride !== null && (
+              <button
+                type="button"
+                className="small"
+                onClick={() => updateShape(shape.id, { bezierOverride: null })}
+              >
+                use global
+              </button>
+            )}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={bezierValue}
+            onChange={(e) => updateShape(shape.id, { bezierOverride: parseFloat(e.target.value) })}
+          />
+          <span className="num">
+            {shape.bezierOverride === null
+              ? `— (global ${globalBezier.toFixed(2)})`
+              : shape.bezierOverride.toFixed(2)}
+          </span>
+        </label>
+      )}
 
       <div className="row">
         <button type="button" className="danger" onClick={() => deleteShape(shape.id)}>

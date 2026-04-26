@@ -63,6 +63,91 @@ describe('store: commitDrawing', () => {
     expect(useStore.getState().shapes).toHaveLength(0);
     expect(useStore.getState().drawing).toBe(null);
   });
+
+  // Circle: 2 points (center + perimeter), always closed, marked with kind='circle'.
+  it('commits a circle from center + perimeter as a closed kind=circle shape', () => {
+    const s = useStore.getState();
+    s.startDrawing('circle', [10, 10]);
+    s.appendDrawingPoint([13, 14]); // radius = 5
+    s.commitDrawing(true);
+
+    const shapes = useStore.getState().shapes;
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0].kind).toBe('circle');
+    expect(shapes[0].closed).toBe(true);
+    expect(shapes[0].points).toEqual([
+      [10, 10],
+      [13, 14],
+    ]);
+  });
+
+  // A 1-point circle is meaningless; the commit should drop the in-progress
+  // drawing rather than emit a zero-radius shape.
+  it('drops a 1-point circle silently', () => {
+    const s = useStore.getState();
+    s.startDrawing('circle', [0, 0]);
+    s.commitDrawing(true);
+    expect(useStore.getState().shapes).toHaveLength(0);
+    expect(useStore.getState().drawing).toBe(null);
+  });
+});
+
+describe('store: moveVertex on circles', () => {
+  // Dragging the center handle (index 0) of a circle must translate the whole
+  // shape — the perimeter anchor moves with it so the radius is preserved.
+  it('translates both points when the center is moved', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'c1',
+          kind: 'circle',
+          points: [
+            [10, 10],
+            [20, 10],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    });
+    useStore.getState().moveVertex('c1', 0, [50, 30]);
+    expect(useStore.getState().shapes[0].points).toEqual([
+      [50, 30],
+      [60, 30],
+    ]);
+  });
+
+  it('only changes the radius when the perimeter handle is moved', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'c1',
+          kind: 'circle',
+          points: [
+            [10, 10],
+            [20, 10],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    });
+    useStore.getState().moveVertex('c1', 1, [10, 25]);
+    expect(useStore.getState().shapes[0].points).toEqual([
+      [10, 10],
+      [10, 25],
+    ]);
+  });
 });
 
 describe('store: deleteVertex', () => {

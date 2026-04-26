@@ -49,7 +49,7 @@ export function useKeyboard() {
         return;
       }
       if (e.key === 'Enter') {
-        if (state.drawing) state.commitDrawing(state.drawing.type === 'polygon');
+        if (state.drawing) state.commitDrawing(state.drawing.type !== 'line');
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -64,6 +64,7 @@ export function useKeyboard() {
       if (e.key === 'v' || e.key === 'V') state.setTool('select');
       else if (e.key === 'l' || e.key === 'L') state.setTool('line');
       else if (e.key === 'p' || e.key === 'P') state.setTool('polygon');
+      else if (e.key === 'c' || e.key === 'C') state.setTool('circle');
       else if (e.key === 'f' || e.key === 'F') state.requestFit();
       else if (e.key === 'g' || e.key === 'G')
         state.setSettings({ gridVisible: !state.settings.gridVisible });

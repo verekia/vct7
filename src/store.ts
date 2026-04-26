@@ -39,7 +39,7 @@ export interface AppState {
   setPanning: (v: boolean) => void;
   setVertexDragging: (v: boolean) => void;
   setSnapTarget: (p: Point | null) => void;
-  startDrawing: (type: 'line' | 'polygon', at: Point) => void;
+  startDrawing: (type: 'line' | 'polygon' | 'circle', at: Point) => void;
   appendDrawingPoint: (p: Point) => void;
   cancelDrawing: () => void;
   commitDrawing: (closed: boolean) => void;
@@ -103,11 +103,14 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       if (!s.drawing || s.drawing.points.length < 2) return { drawing: null };
       const isPolygon = s.drawing.type === 'polygon';
+      const isCircle = s.drawing.type === 'circle';
       // A polygon needs ≥ 3 vertices to be a real fill region; below that, fall
       // back to an open polyline so we never emit a degenerate Z over a chord.
-      const willClose = closed && isPolygon && s.drawing.points.length >= 3;
+      // A circle is always closed (center + perimeter point describe a region).
+      const willClose = isCircle || (closed && isPolygon && s.drawing.points.length >= 3);
       const newShape: Shape = {
         id: makeId(),
+        kind: isCircle ? 'circle' : 'path',
         points: s.drawing.points.map((p) => [p[0], p[1]] as Point),
         closed: willClose,
         fill: willClose ? '#000000' : 'none',
@@ -141,6 +144,19 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({
       shapes: s.shapes.map((sh) => {
         if (sh.id !== id) return sh;
+        // Circle center (index 0) is a translation handle: dragging it must
+        // carry the perimeter anchor along so the radius is preserved. The
+        // perimeter anchor (index 1) is the resize handle and just moves on
+        // its own — `dist(center, perimeter)` becomes the new radius.
+        if (sh.kind === 'circle' && index === 0 && sh.points.length >= 2) {
+          const [cx, cy] = sh.points[0];
+          const dx = p[0] - cx;
+          const dy = p[1] - cy;
+          return {
+            ...sh,
+            points: sh.points.map(([x, y]) => [x + dx, y + dy] as Point),
+          };
+        }
         const next = sh.points.slice();
         next[index] = p;
         return { ...sh, points: next };
@@ -183,9 +199,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       const trimmed = name.trim();
       return {
-        shapes: s.shapes.map((sh) =>
-          sh.id !== id ? sh : { ...sh, name: trimmed || undefined },
-        ),
+        shapes: s.shapes.map((sh) => (sh.id !== id ? sh : { ...sh, name: trimmed || undefined })),
         dirty: true,
       };
     }),

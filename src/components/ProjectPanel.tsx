@@ -12,6 +12,9 @@ const PRESET_LABELS: Record<string, string> = {
   '15': '15°',
 };
 
+const sameAngles = (a: number[], b: number[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
+
 // `<input type="color">` requires `#rrggbb`; expand a 3-digit hex if needed.
 const toLongHex = (c: string): string => {
   if (/^#[0-9a-f]{6}$/i.test(c)) return c;
@@ -45,21 +48,24 @@ export function ProjectPanel() {
 
   return (
     <section className="panel">
-      <label>
-        <span>Snap angles</span>
+      <div className="field">
+        <span className="field-label">Snap angles</span>
         <div className="preset-grid">
-          {Object.keys(ANGLE_PRESETS).map((key) => (
-            <button
-              key={key}
-              type="button"
-              className="small"
-              onClick={() => setSettings({ snapAngles: ANGLE_PRESETS[key] })}
-            >
-              {PRESET_LABELS[key] ?? `${key}°`}
-            </button>
-          ))}
+          {Object.keys(ANGLE_PRESETS).map((key) => {
+            const isActive = sameAngles(settings.snapAngles, ANGLE_PRESETS[key]);
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`small${isActive ? ' active' : ''}`}
+                onClick={() => setSettings({ snapAngles: ANGLE_PRESETS[key] })}
+              >
+                {PRESET_LABELS[key] ?? `${key}°`}
+              </button>
+            );
+          })}
         </div>
-      </label>
+      </div>
 
       <label>
         <span>

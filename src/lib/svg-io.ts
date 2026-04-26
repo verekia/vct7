@@ -1,5 +1,5 @@
-import type { ProjectSettings, Shape } from '../types';
-import { fmt, pointsToPath } from './geometry';
+import type { Point, ProjectSettings, Shape } from '../types';
+import { dist, fmt, pointsToPath } from './geometry';
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
@@ -41,30 +41,39 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     )}" fill="${escapeAttr(settings.bg)}"/>`,
   );
   for (const shape of shapes) {
-    const bz = shape.bezierOverride ?? settings.bezier;
-    const d = pointsToPath(shape.points, shape.closed, bz);
-    const attrs = [
-      `d="${d}"`,
+    const isCircle = shape.kind === 'circle' && shape.points.length >= 2;
+    const baseAttrs = [
       `fill="${escapeAttr(shape.closed ? shape.fill : 'none')}"`,
       `stroke="${escapeAttr(shape.stroke)}"`,
       `stroke-width="${fmt(shape.strokeWidth)}"`,
-      `stroke-linejoin="round"`,
-      `stroke-linecap="round"`,
     ];
-    // `visibility="hidden"` is the SVG-native attribute, so external viewers
-    // honor the toggle even though `data-vh-hidden` is what we read back.
-    if (shape.hidden) attrs.push(`visibility="hidden"`);
-    attrs.push(
+    if (!isCircle) {
+      baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
+    }
+    if (shape.hidden) baseAttrs.push(`visibility="hidden"`);
+    baseAttrs.push(
       `data-vh-points="${shape.points.map((p) => `${fmt(p[0])},${fmt(p[1])}`).join(' ')}"`,
       `data-vh-closed="${shape.closed}"`,
     );
-    if (shape.bezierOverride !== null) {
-      attrs.push(`data-vh-bezier="${fmt(shape.bezierOverride)}"`);
+    if (isCircle) baseAttrs.push(`data-vh-kind="circle"`);
+    if (!isCircle && shape.bezierOverride !== null) {
+      baseAttrs.push(`data-vh-bezier="${fmt(shape.bezierOverride)}"`);
     }
-    if (shape.hidden) attrs.push(`data-vh-hidden="true"`);
-    if (shape.locked) attrs.push(`data-vh-locked="true"`);
-    if (shape.name) attrs.push(`data-vh-name="${escapeAttr(shape.name)}"`);
-    lines.push(`  <path ${attrs.join(' ')}/>`);
+    if (shape.hidden) baseAttrs.push(`data-vh-hidden="true"`);
+    if (shape.locked) baseAttrs.push(`data-vh-locked="true"`);
+    if (shape.name) baseAttrs.push(`data-vh-name="${escapeAttr(shape.name)}"`);
+
+    if (isCircle) {
+      const [cx, cy] = shape.points[0];
+      const r = dist(shape.points[0], shape.points[1]);
+      lines.push(
+        `  <circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}" ${baseAttrs.join(' ')}/>`,
+      );
+    } else {
+      const bz = shape.bezierOverride ?? settings.bezier;
+      const d = pointsToPath(shape.points, shape.closed, bz);
+      lines.push(`  <path d="${d}" ${baseAttrs.join(' ')}/>`);
+    }
   }
   lines.push('</svg>');
   return lines.join('\n');
@@ -130,8 +139,9 @@ export function parseProject(text: string): ParsedProject {
   if (gridSnap) settings.gridSnap = gridSnap === 'true';
 
   const shapes: Shape[] = [];
-  for (const path of Array.from(svg.querySelectorAll('path'))) {
-    const ptsAttr = path.getAttribute('data-vh-points');
+  // Iterate path AND circle elements in document order so z-order survives.
+  for (const el of Array.from(svg.querySelectorAll('path, circle'))) {
+    const ptsAttr = el.getAttribute('data-vh-points');
     if (!ptsAttr) continue;
     const points = ptsAttr
       .trim()
@@ -143,22 +153,41 @@ export function parseProject(text: string): ParsedProject {
       .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
     if (points.length === 0) continue;
 
-    const closed = path.getAttribute('data-vh-closed') === 'true';
-    const overrideAttr = path.getAttribute('data-vh-bezier');
+    const isCircle =
+      el.tagName.toLowerCase() === 'circle' || el.getAttribute('data-vh-kind') === 'circle';
+    const closed = isCircle ? true : el.getAttribute('data-vh-closed') === 'true';
+    const overrideAttr = el.getAttribute('data-vh-bezier');
     const overrideNum = overrideAttr === null ? NaN : parseFloat(overrideAttr);
-    const bezierOverride = Number.isFinite(overrideNum) ? overrideNum : null;
+    const bezierOverride = !isCircle && Number.isFinite(overrideNum) ? overrideNum : null;
 
-    const nameAttr = path.getAttribute('data-vh-name');
+    // If a `<circle>` element was tagged but its perimeter anchor is missing
+    // (only one point in `data-vh-points`), reconstruct it from `cx`/`r` so
+    // the shape stays editable.
+    let resolvedPoints: Point[] = points;
+    if (isCircle && points.length < 2) {
+      const cx = parseFloat(el.getAttribute('cx') ?? '');
+      const cy = parseFloat(el.getAttribute('cy') ?? '');
+      const r = parseFloat(el.getAttribute('r') ?? '');
+      if (Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(r)) {
+        resolvedPoints = [
+          [cx, cy],
+          [cx + r, cy],
+        ];
+      }
+    }
+
+    const nameAttr = el.getAttribute('data-vh-name');
     shapes.push({
       id: makeId(),
-      points,
+      ...(isCircle ? { kind: 'circle' as const } : {}),
+      points: resolvedPoints,
       closed,
-      fill: path.getAttribute('fill') ?? (closed ? '#000000' : 'none'),
-      stroke: path.getAttribute('stroke') ?? 'none',
-      strokeWidth: parseFloat(path.getAttribute('stroke-width') ?? '2'),
+      fill: el.getAttribute('fill') ?? (closed ? '#000000' : 'none'),
+      stroke: el.getAttribute('stroke') ?? 'none',
+      strokeWidth: parseFloat(el.getAttribute('stroke-width') ?? '2'),
       bezierOverride,
-      hidden: path.getAttribute('data-vh-hidden') === 'true',
-      locked: path.getAttribute('data-vh-locked') === 'true',
+      hidden: el.getAttribute('data-vh-hidden') === 'true',
+      locked: el.getAttribute('data-vh-locked') === 'true',
       ...(nameAttr ? { name: nameAttr } : {}),
     });
   }

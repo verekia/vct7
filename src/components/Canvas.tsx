@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { effectiveBezier } from '../store';
-import { fmt, pointsToPath } from '../lib/geometry';
+import { dist, fmt, pointsToPath } from '../lib/geometry';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
 import type { Drawing, Point, ProjectSettings, Shape } from '../types';
 
@@ -209,6 +209,37 @@ function GridLayer({
 }
 
 function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
+  if (shape.kind === 'circle' && shape.points.length >= 2) {
+    const [cx, cy] = shape.points[0];
+    const r = dist(shape.points[0], shape.points[1]);
+    return (
+      <g data-shape-id={shape.id}>
+        <circle
+          cx={fmt(cx)}
+          cy={fmt(cy)}
+          r={fmt(r)}
+          fill={shape.fill}
+          stroke={shape.stroke}
+          strokeWidth={shape.strokeWidth}
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+        <circle
+          cx={fmt(cx)}
+          cy={fmt(cy)}
+          r={fmt(r)}
+          className="shape-hit"
+          data-shape-id={shape.id}
+          fill="#000"
+          stroke="#000"
+          strokeWidth={Math.max(10, shape.strokeWidth + 8)}
+          pointerEvents={shape.locked ? 'none' : 'all'}
+          opacity={0}
+          vectorEffect="non-scaling-stroke"
+        />
+      </g>
+    );
+  }
   const d = pointsToPath(shape.points, shape.closed, bezier);
   return (
     <g data-shape-id={shape.id}>
@@ -253,9 +284,21 @@ function SelectionLayer({
   selectedIndex: number | null;
   scale: number;
 }) {
+  const outline =
+    shape.kind === 'circle' && shape.points.length >= 2 ? (
+      <circle
+        cx={fmt(shape.points[0][0])}
+        cy={fmt(shape.points[0][1])}
+        r={fmt(dist(shape.points[0], shape.points[1]))}
+        className="selection-outline"
+        fill="none"
+      />
+    ) : (
+      <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
+    );
   return (
     <g>
-      <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
+      {outline}
       {shape.points.map((p, i) => (
         <circle
           key={i}
@@ -335,13 +378,17 @@ function PreviewLayer({
   const first = drawing.points[0];
   // For polygons with ≥ 2 points, also project rays from the first vertex so
   // the user can align the closing edge with the start of the polygon before
-  // clicking it to close.
+  // clicking it to close. Circles only ever have one placed point (center) so
+  // the ray fan from `last` is exactly the fan from the center — useful for
+  // axis-aligning the radius before the second click.
   const guideAnchors: Point[] = [last];
   if (drawing.type === 'polygon' && drawing.points.length >= 2) {
     guideAnchors.push(first);
   }
   const previewPts: Point[] = [...drawing.points, [cursor[0], cursor[1]]];
   const rayLen = (boardW + boardH) * 2;
+  const isCircle = drawing.type === 'circle';
+  const circleR = isCircle ? Math.hypot(cursor[0] - first[0], cursor[1] - first[1]) : 0;
 
   return (
     <g>
@@ -371,11 +418,32 @@ function PreviewLayer({
         />
       )}
 
-      <path
-        d={pointsToPath(previewPts, false, bezier)}
-        className="preview-shape"
-        vectorEffect="non-scaling-stroke"
-      />
+      {isCircle ? (
+        <>
+          <circle
+            cx={fmt(first[0])}
+            cy={fmt(first[1])}
+            r={fmt(circleR)}
+            className="preview-shape"
+            fill="rgba(255,59,48,0.08)"
+            vectorEffect="non-scaling-stroke"
+          />
+          <line
+            x1={fmt(first[0])}
+            y1={fmt(first[1])}
+            x2={fmt(cursor[0])}
+            y2={fmt(cursor[1])}
+            className="preview-shape"
+            vectorEffect="non-scaling-stroke"
+          />
+        </>
+      ) : (
+        <path
+          d={pointsToPath(previewPts, false, bezier)}
+          className="preview-shape"
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
 
       {drawing.points.map((p, i) => (
         <circle key={i} cx={fmt(p[0])} cy={fmt(p[1])} r={3 / scale} className="preview-vertex" />

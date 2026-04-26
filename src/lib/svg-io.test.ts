@@ -139,6 +139,62 @@ describe('parseProject round-trip', () => {
     ]);
   });
 
+  // Circles serialize as native <circle> elements (so external viewers render
+  // them correctly) with `data-vh-points` carrying the editor's center +
+  // perimeter anchor for round-trip.
+  it('round-trips a kind=circle shape as a native <circle>', () => {
+    const circleShape: Shape = {
+      id: 'c',
+      kind: 'circle',
+      points: [
+        [50, 60],
+        [70, 60],
+      ],
+      closed: true,
+      fill: '#0f0',
+      stroke: 'none',
+      strokeWidth: 3,
+      bezierOverride: null,
+      hidden: false,
+      locked: false,
+    };
+    const text = serializeProject(sampleSettings, [circleShape]);
+    expect(text).toContain('<circle ');
+    expect(text).toContain('cx="50"');
+    expect(text).toContain('cy="60"');
+    expect(text).toContain('r="20"');
+    expect(text).toContain('data-vh-kind="circle"');
+
+    resetIds(1);
+    const parsed = parseProject(text);
+    expect(parsed.shapes).toHaveLength(1);
+    const back = parsed.shapes[0];
+    expect(back.kind).toBe('circle');
+    expect(back.closed).toBe(true);
+    expect(back.fill).toBe('#0f0');
+    expect(back.points).toEqual([
+      [50, 60],
+      [70, 60],
+    ]);
+  });
+
+  // If a saved file has a tagged <circle> but its data-vh-points is missing
+  // (e.g. hand-edited externally), reconstruct the perimeter anchor from
+  // cx/cy/r so the shape stays editable.
+  it('reconstructs circle perimeter from cx/cy/r when data-vh-points is incomplete', () => {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="40" cy="40" r="15" data-vh-points="40,40" data-vh-kind="circle" data-vh-closed="true" fill="#000" stroke="none" stroke-width="2"/>
+</svg>`;
+    const parsed = parseProject(svg);
+    expect(parsed.shapes).toHaveLength(1);
+    expect(parsed.shapes[0].kind).toBe('circle');
+    expect(parsed.shapes[0].points).toEqual([
+      [40, 40],
+      [55, 40],
+    ]);
+  });
+
   it('falls back to defaults when SVG omits all vh metadata', () => {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"/>`;
     const parsed = parseProject(svg);

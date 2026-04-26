@@ -38,6 +38,12 @@ const findShapeRef = (target: EventTarget | null): { shapeId?: string; vertexInd
 };
 
 const vertexAnchors = (shape: Shape, index: number): Point[] => {
+  // Circle: center (index 0) is a translation handle — no neighbors to anchor
+  // an angle ray to. The perimeter point (index 1) anchors to the center so
+  // the user can axis-align the radius.
+  if (shape.kind === 'circle') {
+    return index === 1 && shape.points.length >= 1 ? [shape.points[0]] : [];
+  }
   const n = shape.points.length;
   const anchors: Point[] = [];
   if (index > 0) anchors.push(shape.points[index - 1]);
@@ -100,7 +106,9 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
           anchors.push(pts[0]);
           if (state.settings.snapAngles.length > 0) {
             vertexTargets = collectVertexTargets(state, null);
-            vertexTargets.push(...rayIntersections(pts[0], pts[pts.length - 1], state.settings.snapAngles));
+            vertexTargets.push(
+              ...rayIntersections(pts[0], pts[pts.length - 1], state.settings.snapAngles),
+            );
           } else {
             vertexTargets = collectVertexTargets(state, null);
           }
@@ -152,9 +160,16 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       const { snapped } = updateCursor(e.clientX, e.clientY);
       const state = useStore.getState();
 
-      if (state.tool === 'line' || state.tool === 'polygon') {
+      if (state.tool === 'line' || state.tool === 'polygon' || state.tool === 'circle') {
         if (!state.drawing) {
           state.startDrawing(state.tool, snapped);
+          return;
+        }
+        // Circles take exactly two clicks: center, then a perimeter anchor.
+        // The second click appends the perimeter point and commits.
+        if (state.drawing.type === 'circle') {
+          state.appendDrawingPoint(snapped);
+          state.commitDrawing(true);
           return;
         }
         // Should we close the polygon by clicking the first point?
@@ -248,14 +263,14 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
     const onDblClick = () => {
       const state = useStore.getState();
       if (!state.drawing) return;
-      state.commitDrawing(state.drawing.type === 'polygon');
+      state.commitDrawing(state.drawing.type !== 'line');
     };
 
     const onContextMenu = (e: MouseEvent) => {
       const state = useStore.getState();
       if (state.drawing) {
         e.preventDefault();
-        state.commitDrawing(state.drawing.type === 'polygon');
+        state.commitDrawing(state.drawing.type !== 'line');
       }
     };
 

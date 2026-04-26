@@ -1,9 +1,20 @@
 export type Point = readonly [number, number];
 
-export type Tool = 'select' | 'line' | 'polygon';
+export type Tool = 'select' | 'line' | 'polygon' | 'circle';
 
+/**
+ * Shape representation — `kind` is optional with implicit default `'path'` so
+ * older projects (and tests) keep round-tripping without an explicit field.
+ *
+ * Circles store two points: `points[0]` is the center and `points[1]` is a
+ * perimeter anchor. The radius is `dist(points[0], points[1])`. Storing the
+ * perimeter as an actual point (rather than a scalar radius) lets generic
+ * code — bbox, snap, vertex drag — keep operating on points uniformly, and
+ * gives the user a draggable "resize handle" for free.
+ */
 export interface Shape {
   id: string;
+  kind?: 'path' | 'circle';
   points: Point[];
   closed: boolean;
   fill: string;
@@ -13,7 +24,7 @@ export interface Shape {
   bezierOverride: number | null;
   hidden: boolean;
   locked: boolean;
-  /** User-supplied display name. Empty / undefined falls back to "polygon" / "line". */
+  /** User-supplied display name. Empty / undefined falls back to "polygon" / "line" / "circle". */
   name?: string;
 }
 
@@ -39,6 +50,6 @@ export interface ViewState {
 }
 
 export interface Drawing {
-  type: 'line' | 'polygon';
+  type: 'line' | 'polygon' | 'circle';
   points: Point[];
 }
