@@ -51,20 +51,23 @@ export async function saveFile(): Promise<void> {
 }
 
 export async function saveFileAs(): Promise<void> {
-  const store = useStore.getState();
-  const text = serializeProject(store.settings, store.shapes);
-  const suggested = store.fileName || 'vectorheart.svg';
+  const initial = useStore.getState();
+  const suggested = initial.fileName || 'vectorheart.svg';
   if (!supportsFsApi()) {
-    downloadText(suggested, text);
-    store.clearDirty();
+    // No async dialog — capture and write the current state.
+    downloadText(suggested, serializeProject(initial.settings, initial.shapes));
+    initial.clearDirty();
     return;
   }
   const handle = await pickSaveHandle(suggested);
   if (!handle) return;
+  // Re-read after the picker resolves so any edits made while the dialog was
+  // open are written, not the stale snapshot.
+  const fresh = useStore.getState();
   try {
-    await writeToHandle(handle, text);
-    store.setFileMeta(handle.name, handle);
-    store.clearDirty();
+    await writeToHandle(handle, serializeProject(fresh.settings, fresh.shapes));
+    fresh.setFileMeta(handle.name, handle);
+    fresh.clearDirty();
   } catch (e) {
     alert(`Save failed: ${(e as Error).message}`);
   }

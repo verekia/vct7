@@ -70,9 +70,14 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
     const onPointerDown = (e: PointerEvent) => {
       if (e.button === 1 || (e.button === 0 && useStore.getState().spaceHeld)) {
         e.preventDefault();
-        const v = useStore.getState().view;
-        panning = { startX: e.clientX, startY: e.clientY, viewX: v.x, viewY: v.y };
-        svg.classList.add('panning');
+        const state = useStore.getState();
+        panning = {
+          startX: e.clientX,
+          startY: e.clientY,
+          viewX: state.view.x,
+          viewY: state.view.y,
+        };
+        state.setPanning(true);
         return;
       }
       if (e.button !== 0) return;
@@ -151,7 +156,7 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
     const onPointerUp = () => {
       if (panning) {
         panning = null;
-        svg.classList.remove('panning');
+        useStore.getState().setPanning(false);
       }
       draggingShape = null;
       draggingVertex = null;

@@ -87,4 +87,57 @@ describe('parseProject round-trip', () => {
   it('throws on invalid XML', () => {
     expect(() => parseProject('<not valid')).toThrow();
   });
+
+  // Regression: `if (bz)` correctly treats the string "0" as truthy, so a
+  // global bezier of exactly 0 round-trips. (Easy bug to introduce later.)
+  it('preserves bezier === 0 across round-trip', () => {
+    const settings: ProjectSettings = { ...sampleSettings, bezier: 0 };
+    const text = serializeProject(settings, []);
+    expect(parseProject(text).settings.bezier).toBe(0);
+  });
+
+  // Regression: a per-shape bezierOverride of 0 (forced sharp) must come back
+  // as 0, not null. `bezierOverride !== null` is the intent, not a truthy check.
+  it('preserves shape bezierOverride === 0', () => {
+    const shape: Shape = { ...sampleShapes[0], bezierOverride: 0 };
+    const text = serializeProject(sampleSettings, [shape]);
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].bezierOverride).toBe(0);
+  });
+
+  // Regression: bezierOverride === null must NOT appear in the SVG output and
+  // must come back as null (not 0).
+  it('preserves null bezierOverride (no attribute written)', () => {
+    const shape: Shape = { ...sampleShapes[1], bezierOverride: null };
+    const text = serializeProject(sampleSettings, [shape]);
+    expect(text).not.toMatch(/data-vh-bezier="[\d.]+"\s*\/>/);
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].bezierOverride).toBe(null);
+  });
+
+  // Foreign / pre-existing `<path>` elements without `data-vh-points` must not
+  // be imported as editable shapes — the editor only owns paths it tagged.
+  it('ignores <path> elements without data-vh-points', () => {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" fill="white"/>
+  <path d="M0 0 L10 10" fill="red"/>
+  <path d="M5 5 L20 20" data-vh-points="5,5 20,20" data-vh-closed="false"/>
+</svg>`;
+    const parsed = parseProject(svg);
+    expect(parsed.shapes).toHaveLength(1);
+    expect(parsed.shapes[0].points).toEqual([
+      [5, 5],
+      [20, 20],
+    ]);
+  });
+
+  it('falls back to defaults when SVG omits all vh metadata', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"/>`;
+    const parsed = parseProject(svg);
+    expect(parsed.settings.width).toBe(200);
+    expect(parsed.settings.height).toBe(100);
+    expect(parsed.settings.bezier).toBe(0);
+    expect(parsed.shapes).toEqual([]);
+  });
 });

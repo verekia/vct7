@@ -10,6 +10,22 @@ const parseAngles = (text: string): number[] =>
     .map((s) => parseFloat(s))
     .filter((n) => Number.isFinite(n));
 
+// `<input type="color">` requires `#rrggbb`; expand a 3-digit hex if needed.
+const toLongHex = (c: string): string => {
+  if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+  if (/^#[0-9a-f]{3}$/i.test(c)) {
+    return (
+      '#' +
+      c
+        .slice(1)
+        .split('')
+        .map((ch) => ch + ch)
+        .join('')
+    );
+  }
+  return '#ffffff';
+};
+
 export function ProjectPanel() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
@@ -21,6 +37,11 @@ export function ProjectPanel() {
 
   const [bgText, setBgText] = useState(settings.bg);
   useEffect(() => setBgText(settings.bg), [settings.bg]);
+
+  const [widthText, setWidthText] = useState(String(settings.width));
+  const [heightText, setHeightText] = useState(String(settings.height));
+  useEffect(() => setWidthText(String(settings.width)), [settings.width]);
+  useEffect(() => setHeightText(String(settings.height)), [settings.height]);
 
   return (
     <section className="panel">
@@ -68,7 +89,7 @@ export function ProjectPanel() {
         <div className="row">
           <input
             type="color"
-            value={HEX_RE.test(settings.bg) ? settings.bg : '#ffffff'}
+            value={toLongHex(settings.bg)}
             onChange={(e) => setSettings({ bg: e.target.value })}
           />
           <input
@@ -89,20 +110,24 @@ export function ProjectPanel() {
           <input
             type="number"
             min={1}
-            value={settings.width}
-            onChange={(e) => {
-              const v = parseFloat(e.target.value);
+            value={widthText}
+            onChange={(e) => setWidthText(e.target.value)}
+            onBlur={() => {
+              const v = parseFloat(widthText);
               if (Number.isFinite(v) && v > 0) setSettings({ width: v });
+              else setWidthText(String(settings.width));
             }}
           />
           <span>×</span>
           <input
             type="number"
             min={1}
-            value={settings.height}
-            onChange={(e) => {
-              const v = parseFloat(e.target.value);
+            value={heightText}
+            onChange={(e) => setHeightText(e.target.value)}
+            onBlur={() => {
+              const v = parseFloat(heightText);
               if (Number.isFinite(v) && v > 0) setSettings({ height: v });
+              else setHeightText(String(settings.height));
             }}
           />
         </div>

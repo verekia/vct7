@@ -36,3 +36,32 @@ describe('ANGLE_PRESETS', () => {
     expect(ANGLE_PRESETS['15'].length).toBe(24);
   });
 });
+
+describe('snapToAngle - normalization', () => {
+  // -45° and 315° refer to the same ray; either should snap a south-east
+  // cursor to that direction with the same projected coordinates.
+  it('treats -45 and 315 as equivalent', () => {
+    const a = snapToAngle({ x: 0, y: 0 }, { x: 10, y: 9 }, [-45]);
+    const b = snapToAngle({ x: 0, y: 0 }, { x: 10, y: 9 }, [315]);
+    expect(a.angle).toBe(b.angle);
+    expect(a.x).toBeCloseTo(b.x, 9);
+    expect(a.y).toBeCloseTo(b.y, 9);
+  });
+
+  // Snapping a cursor that's exactly orthogonal to all configured rays should
+  // still pick *some* angle (the closest by distance) rather than crashing or
+  // returning the cursor unchanged.
+  it('always picks an angle when at least one is provided', () => {
+    const r = snapToAngle({ x: 0, y: 0 }, { x: 0, y: 10 }, [0, 180]);
+    expect(r.angle).not.toBe(null);
+  });
+
+  // With both 0° and 180° configured, cursors on either side snap to the
+  // appropriate ray (positive projection in both cases).
+  it('snaps to 180° when cursor is on the negative x-axis', () => {
+    const r = snapToAngle({ x: 0, y: 0 }, { x: -10, y: 0 }, [0, 180]);
+    expect(r.angle).toBe(180);
+    expect(r.x).toBeCloseTo(-10, 5);
+    expect(r.y).toBeCloseTo(0, 5);
+  });
+});

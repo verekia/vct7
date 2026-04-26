@@ -6,6 +6,7 @@ export function Statusbar() {
       <span>Enter / dbl-click: finish line</span>
       <span>Space + drag: pan</span>
       <span>Wheel: zoom</span>
+      <span>F: fit view</span>
     </footer>
   );
 }

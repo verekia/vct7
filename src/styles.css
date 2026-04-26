@@ -344,8 +344,8 @@ label > span {
   fill: var(--bg-0);
   stroke: var(--accent);
   stroke-width: 1.5;
-  cursor: move;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .vertex-handle.selected {
@@ -353,6 +353,18 @@ label > span {
   stroke: #fff;
 }
 
-.shape-hit {
+/* Shape & vertex hit-test only in the select tool. In line/polygon tools the
+   user is drawing; clicks must pass through existing shapes to land on the
+   canvas. */
+.canvas-svg.tool-select .shape-hit {
   cursor: move;
+}
+
+.canvas-svg.tool-select .vertex-handle {
+  cursor: move;
+  pointer-events: all;
+}
+
+.canvas-svg:not(.tool-select) .shape-hit {
+  pointer-events: none;
 }

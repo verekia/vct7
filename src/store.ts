@@ -19,9 +19,12 @@ export interface AppState {
   rawCursor: Point;
   snapDisabled: boolean;
   spaceHeld: boolean;
+  panning: boolean;
   fileName: string;
   fileHandle: unknown;
   dirty: boolean;
+  /** Bumped when the canvas should re-fit the artboard to the viewport. */
+  fitNonce: number;
   // Imperative helpers
   setTool: (t: Tool) => void;
   setSettings: (patch: Partial<ProjectSettings>) => void;
@@ -29,6 +32,7 @@ export interface AppState {
   setCursor: (cursor: Point, raw: Point) => void;
   setSnapDisabled: (v: boolean) => void;
   setSpaceHeld: (v: boolean) => void;
+  setPanning: (v: boolean) => void;
   startDrawing: (type: 'line' | 'polygon', at: Point) => void;
   appendDrawingPoint: (p: Point) => void;
   cancelDrawing: () => void;
@@ -45,6 +49,7 @@ export interface AppState {
   setFileMeta: (name: string, handle: unknown) => void;
   markDirty: () => void;
   clearDirty: () => void;
+  requestFit: () => void;
 }
 
 const DEFAULT_VIEW: ViewState = { x: 0, y: 0, scale: 1 };
@@ -61,9 +66,11 @@ export const useStore = create<AppState>((set) => ({
   rawCursor: [0, 0],
   snapDisabled: false,
   spaceHeld: false,
+  panning: false,
   fileName: 'untitled.svg',
   fileHandle: null,
   dirty: false,
+  fitNonce: 0,
 
   setTool: (t) => set({ tool: t, drawing: null, selectedVertex: null }),
   setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch }, dirty: true })),
@@ -71,6 +78,7 @@ export const useStore = create<AppState>((set) => ({
   setCursor: (cursor, raw) => set({ cursor, rawCursor: raw }),
   setSnapDisabled: (v) => set({ snapDisabled: v }),
   setSpaceHeld: (v) => set({ spaceHeld: v }),
+  setPanning: (v) => set({ panning: v }),
 
   startDrawing: (type, at) => set({ drawing: { type, points: [at] } }),
   appendDrawingPoint: (p) =>
@@ -80,12 +88,15 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       if (!s.drawing || s.drawing.points.length < 2) return { drawing: null };
       const isPolygon = s.drawing.type === 'polygon';
+      // A polygon needs ≥ 3 vertices to be a real fill region; below that, fall
+      // back to an open polyline so we never emit a degenerate Z over a chord.
+      const willClose = closed && isPolygon && s.drawing.points.length >= 3;
       const newShape: Shape = {
         id: makeId(),
         points: s.drawing.points.map((p) => [p[0], p[1]] as Point),
-        closed: closed && isPolygon,
-        fill: isPolygon ? '#000000' : 'none',
-        stroke: isPolygon ? 'none' : '#000000',
+        closed: willClose,
+        fill: willClose ? '#000000' : 'none',
+        stroke: willClose ? 'none' : '#000000',
         strokeWidth: 2,
         bezierOverride: null,
       };
@@ -147,16 +158,17 @@ export const useStore = create<AppState>((set) => ({
       };
     }),
   setProject: (settings, shapes) =>
-    set({
+    set((s) => ({
       settings,
       shapes,
       selectedShapeId: null,
       selectedVertex: null,
       drawing: null,
       dirty: false,
-    }),
+      fitNonce: s.fitNonce + 1,
+    })),
   newProject: () =>
-    set({
+    set((s) => ({
       settings: { ...DEFAULT_SETTINGS },
       shapes: [],
       selectedShapeId: null,
@@ -165,10 +177,12 @@ export const useStore = create<AppState>((set) => ({
       fileName: 'untitled.svg',
       fileHandle: null,
       dirty: false,
-    }),
+      fitNonce: s.fitNonce + 1,
+    })),
   setFileMeta: (name, handle) => set({ fileName: name, fileHandle: handle }),
   markDirty: () => set({ dirty: true }),
   clearDirty: () => set({ dirty: false }),
+  requestFit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),
 }));
 
 export const effectiveBezier = (shape: Shape, settings: ProjectSettings): number =>

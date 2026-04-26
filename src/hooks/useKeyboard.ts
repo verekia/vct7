@@ -64,6 +64,7 @@ export function useKeyboard() {
       if (e.key === 'v' || e.key === 'V') state.setTool('select');
       else if (e.key === 'l' || e.key === 'L') state.setTool('line');
       else if (e.key === 'p' || e.key === 'P') state.setTool('polygon');
+      else if (e.key === 'f' || e.key === 'F') state.requestFit();
     };
 
     const onKeyUp = (e: KeyboardEvent) => {

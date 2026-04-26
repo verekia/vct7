@@ -26,13 +26,16 @@ export function Canvas() {
     return () => ro.disconnect();
   }, []);
 
-  // Fit view once initially after we know the size.
+  // Refit when explicitly requested (initial mount, file load, F shortcut, …).
+  // Resizing the window alone must NOT reset the user's view.
   const settings = useStore((s) => s.settings);
   const setView = useStore((s) => s.setView);
-  const fittedRef = useRef(false);
+  const fitNonce = useStore((s) => s.fitNonce);
+  const lastFitNonce = useRef(-1);
   useEffect(() => {
-    if (fittedRef.current) return;
     if (size.w <= 1 || size.h <= 1) return;
+    if (lastFitNonce.current === fitNonce) return;
+    lastFitNonce.current = fitNonce;
     const pad = 40;
     const scale = Math.min(
       (size.w - pad * 2) / settings.width,
@@ -44,8 +47,7 @@ export function Canvas() {
       x: (size.w - settings.width * s) / 2,
       y: (size.h - settings.height * s) / 2,
     });
-    fittedRef.current = true;
-  }, [size, settings.width, settings.height, setView]);
+  }, [fitNonce, size.w, size.h, settings.width, settings.height, setView]);
 
   useCanvasInteractions(svgRef);
 
@@ -58,11 +60,16 @@ export function Canvas() {
   const selectedVertex = useStore((s) => s.selectedVertex);
   const snapDisabled = useStore((s) => s.snapDisabled);
   const spaceHeld = useStore((s) => s.spaceHeld);
+  const panning = useStore((s) => s.panning);
 
   const selectedShape = shapes.find((s) => s.id === selectedShapeId) ?? null;
   const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`;
 
-  const cls = ['canvas-svg', tool === 'select' ? 'tool-select' : '', spaceHeld ? 'space' : '']
+  const cls = [
+    'canvas-svg',
+    tool === 'select' ? 'tool-select' : '',
+    panning ? 'panning' : spaceHeld ? 'space' : '',
+  ]
     .filter(Boolean)
     .join(' ');
 
@@ -136,17 +143,24 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
         strokeLinejoin="round"
         strokeLinecap="round"
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
+      {/*
+        Hit target: invisible (opacity:0) but `pointer-events="all"` so it
+        catches both fill (closed shapes) and stroke (open lines) regardless of
+        their actual paint values, with a generous stroke width for easy clicking.
+      */}
       <path
         d={d}
         className="shape-hit"
         data-shape-id={shape.id}
-        fill={shape.closed ? 'rgba(0,0,0,0.001)' : 'none'}
-        stroke="rgba(0,0,0,0.001)"
-        strokeWidth={Math.max(8, shape.strokeWidth + 6)}
+        fill={shape.closed ? '#000' : 'none'}
+        stroke="#000"
+        strokeWidth={Math.max(10, shape.strokeWidth + 8)}
         strokeLinejoin="round"
         strokeLinecap="round"
-        pointerEvents={shape.closed ? 'visiblePainted' : 'visibleStroke'}
+        pointerEvents={shape.closed ? 'all' : 'stroke'}
+        opacity={0}
         vectorEffect="non-scaling-stroke"
       />
     </g>
