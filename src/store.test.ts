@@ -83,6 +83,8 @@ describe('store: deleteVertex', () => {
           stroke: '#000',
           strokeWidth: 2,
           bezierOverride: null,
+          hidden: false,
+          locked: false,
         },
       ],
       selectedShapeId: 's1',
@@ -109,6 +111,8 @@ describe('store: deleteVertex', () => {
           stroke: 'none',
           strokeWidth: 2,
           bezierOverride: null,
+          hidden: false,
+          locked: false,
         },
       ],
       selectedShapeId: 's1',
@@ -147,6 +151,73 @@ describe('store: fit + project lifecycle', () => {
     s.markDirty();
     s.setProject({ ...DEFAULT_SETTINGS }, []);
     expect(useStore.getState().dirty).toBe(false);
+  });
+});
+
+describe('store: layer ordering and toggles', () => {
+  // Last shape in the array renders on top (later = higher z). The layer panel
+  // is just a UI inversion of this; reorder operates on the array order.
+  const seed = () =>
+    useStore.setState({
+      shapes: ['a', 'b', 'c', 'd'].map((id) => ({
+        id,
+        points: [
+          [0, 0],
+          [10, 10],
+        ],
+        closed: false,
+        fill: 'none',
+        stroke: '#000',
+        strokeWidth: 1,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+      })),
+    });
+
+  it('moves a shape forward in z-order', () => {
+    seed();
+    useStore.getState().reorderShape(0, 2);
+    expect(useStore.getState().shapes.map((s) => s.id)).toEqual(['b', 'c', 'a', 'd']);
+  });
+
+  it('moves a shape back in z-order', () => {
+    seed();
+    useStore.getState().reorderShape(3, 1);
+    expect(useStore.getState().shapes.map((s) => s.id)).toEqual(['a', 'd', 'b', 'c']);
+  });
+
+  it('is a no-op for from === to', () => {
+    seed();
+    const before = useStore.getState().shapes;
+    useStore.getState().reorderShape(2, 2);
+    expect(useStore.getState().shapes).toBe(before);
+  });
+
+  it('toggleShapeVisibility flips the hidden flag', () => {
+    seed();
+    useStore.getState().toggleShapeVisibility('b');
+    expect(useStore.getState().shapes.find((s) => s.id === 'b')!.hidden).toBe(true);
+    useStore.getState().toggleShapeVisibility('b');
+    expect(useStore.getState().shapes.find((s) => s.id === 'b')!.hidden).toBe(false);
+  });
+
+  // Locking the active selection clears it so canvas interactions don't keep
+  // operating on a now-uneditable target.
+  it('toggleShapeLock clears selection when locking the selected shape', () => {
+    seed();
+    useStore.setState({ selectedShapeId: 'c', selectedVertex: { shapeId: 'c', index: 0 } });
+    useStore.getState().toggleShapeLock('c');
+    expect(useStore.getState().shapes.find((s) => s.id === 'c')!.locked).toBe(true);
+    expect(useStore.getState().selectedShapeId).toBe(null);
+    expect(useStore.getState().selectedVertex).toBe(null);
+  });
+
+  it('toggleShapeLock leaves selection alone when locking a different shape', () => {
+    seed();
+    useStore.setState({ selectedShapeId: 'a' });
+    useStore.getState().toggleShapeLock('c');
+    expect(useStore.getState().selectedShapeId).toBe('a');
   });
 });
 

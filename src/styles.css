@@ -1,13 +1,23 @@
 :root {
-  --bg-0: #0c0d10;
-  --bg-1: #14161b;
-  --bg-2: #1c1f26;
-  --bg-3: #262a33;
-  --line: #2c313c;
-  --text: #d8dde6;
-  --muted: #8a93a3;
+  /* Surfaces — dark with a tiny warm shift on each step so panels stack
+     visibly without chunky borders. */
+  --bg-0: #0a0b0f;
+  --bg-1: #12141a;
+  --bg-2: #181b22;
+  --bg-3: #21252e;
+  --line: #2a2f3a;
+  --line-strong: #3a4150;
+  --text: #e3e6ec;
+  --muted: #7c8593;
+  --muted-2: #5a626f;
   --accent: #ff3b30;
+  --accent-dim: #4a1a18;
   --accent-2: #ffa39d;
+  --signal: #ffb547;
+
+  --panel-pad-x: 14px;
+  --panel-pad-y: 12px;
+  --row-h: 24px;
 }
 
 * {
@@ -29,20 +39,33 @@ body,
     Consolas,
     monospace;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 #root {
   display: grid;
-  grid-template-rows: 44px 1fr 24px;
+  grid-template-rows: 42px 1fr 24px;
 }
+
+/* ───────── Topbar ───────── */
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  background: var(--bg-1);
+  background: linear-gradient(180deg, #16191f 0%, #11131a 100%);
   border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+.topbar::after {
+  /* Hairline highlight at the top edge — a precision-tool detail. */
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 59, 48, 0.35), transparent);
 }
 
 .brand {
@@ -55,24 +78,28 @@ body,
   color: var(--accent);
   letter-spacing: 1px;
   font-weight: 700;
+  text-shadow: 0 0 12px rgba(255, 59, 48, 0.45);
 }
 
 .brand-name {
-  letter-spacing: 4px;
+  letter-spacing: 5px;
   text-transform: uppercase;
   font-weight: 600;
+  font-size: 12px;
 }
 
 .file-name {
   color: var(--muted);
-  margin-left: 14px;
-  font-size: 12px;
+  margin-left: 12px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
 }
 
 .dirty-mark {
   color: var(--accent);
-  width: 8px;
+  width: 10px;
   display: inline-block;
+  text-align: center;
 }
 
 .topbar-group {
@@ -80,12 +107,14 @@ body,
   gap: 4px;
 }
 
+/* ───────── Buttons ───────── */
+
 button {
   background: var(--bg-2);
   color: var(--text);
   border: 1px solid var(--line);
   font: inherit;
-  padding: 5px 10px;
+  padding: 4px 10px;
   cursor: pointer;
   letter-spacing: 0.5px;
   border-radius: 0;
@@ -97,13 +126,19 @@ button {
 
 button:hover {
   background: var(--bg-3);
-  border-color: #3a4150;
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+button:active {
+  background: var(--bg-1);
 }
 
 button.active {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 59, 48, 0.25);
 }
 
 button.danger {
@@ -118,8 +153,15 @@ button.danger:hover {
 
 button.small {
   font-size: 11px;
-  padding: 3px 7px;
+  padding: 2px 7px;
 }
+
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ───────── Inputs ───────── */
 
 input[type='text'],
 input[type='number'] {
@@ -129,15 +171,24 @@ input[type='number'] {
   font: inherit;
   padding: 4px 7px;
   width: 100%;
+  letter-spacing: 0.3px;
+}
+
+input[type='text']:focus,
+input[type='number']:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #0e0f13;
 }
 
 input[type='number'] {
   width: 70px;
+  font-variant-numeric: tabular-nums;
 }
 
 input[type='color'] {
   width: 28px;
-  height: 28px;
+  height: 26px;
   padding: 0;
   border: 1px solid var(--line);
   background: transparent;
@@ -154,8 +205,9 @@ label {
   flex-direction: column;
   gap: 4px;
   margin-bottom: 10px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
+  letter-spacing: 0.4px;
 }
 
 label > span {
@@ -181,31 +233,86 @@ label.checkbox > span {
   display: inline;
 }
 
+/* ───────── Workspace shell ───────── */
+
 .workspace {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 240px 1fr 280px;
   min-height: 0;
 }
 
-.left-panel {
-  background: var(--bg-1);
-  border-right: 1px solid var(--line);
+.side-panel {
+  background: linear-gradient(180deg, var(--bg-1) 0%, #0f1117 100%);
   overflow-y: auto;
-  padding-bottom: 20px;
+  padding-bottom: 24px;
+  /* Faint horizontal scanline to suggest a CRT/console surface — 1% white. */
+  background-image:
+    linear-gradient(180deg, var(--bg-1) 0%, #0f1117 100%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.012) 0px,
+      rgba(255, 255, 255, 0.012) 1px,
+      transparent 1px,
+      transparent 3px
+    );
 }
 
+.side-panel-left {
+  border-right: 1px solid var(--line);
+}
+
+.side-panel-right {
+  border-left: 1px solid var(--line);
+}
+
+.side-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.side-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.side-panel::-webkit-scrollbar-thumb {
+  background: var(--bg-3);
+}
+
+.side-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+}
+
+/* ───────── Panel ───────── */
+
 .panel {
-  padding: 12px 14px;
+  padding: var(--panel-pad-y) var(--panel-pad-x);
   border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+.panel:last-child {
+  border-bottom: none;
 }
 
 .panel h2 {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
-  letter-spacing: 2px;
+  letter-spacing: 3px;
   text-transform: uppercase;
-  margin: 0 0 10px;
-  font-weight: 500;
+  margin: 0 0 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel h2::before {
+  /* Status-light marker. Small, square, accented — reads as "active section". */
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  display: inline-block;
+  box-shadow: 0 0 6px rgba(255, 59, 48, 0.6);
 }
 
 .tool-grid {
@@ -214,24 +321,36 @@ label.checkbox > span {
   gap: 4px;
 }
 
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+}
+
 .tool {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 4px;
+  gap: 5px;
+  padding: 9px 4px 7px;
+  letter-spacing: 1px;
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .tool .tk {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
   border: 1px solid var(--line);
-  padding: 1px 6px;
+  padding: 0 6px;
+  letter-spacing: 1px;
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .tool.active .tk {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .row {
@@ -249,7 +368,9 @@ label.checkbox > span {
 .kv-key {
   color: var(--muted);
   width: 60px;
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .kv-value {
@@ -265,18 +386,38 @@ label.checkbox > span {
 .hint {
   font-size: 11px;
   color: var(--muted);
-  margin: 8px 0 0;
-  min-height: 1.45em;
+  margin: 4px 0 0;
+  line-height: 1.55;
+  letter-spacing: 0.3px;
 }
+
+.inspector-empty .hint {
+  border-left: 2px solid var(--accent-dim);
+  padding: 4px 0 4px 10px;
+}
+
+/* ───────── Canvas surface ───────── */
 
 .canvas-wrap {
   position: relative;
   background: var(--bg-0);
   overflow: hidden;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: 40px 40px;
+    /* faint dot grid for a CAD-feel — denser at edges via vignette below */ radial-gradient(
+    rgba(255, 255, 255, 0.035) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+  background-position: -1px -1px;
+}
+
+.canvas-wrap::after {
+  /* Subtle vignette so the canvas feels like a screen, not a flat fill. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.4) 100%);
 }
 
 .canvas-svg {
@@ -285,6 +426,8 @@ label.checkbox > span {
   height: 100%;
   cursor: crosshair;
   user-select: none;
+  position: relative;
+  z-index: 1;
 }
 
 .canvas-svg.tool-select {
@@ -301,28 +444,60 @@ label.checkbox > span {
 
 .canvas-hud {
   position: absolute;
-  bottom: 10px;
-  right: 10px;
+  bottom: 12px;
+  right: 12px;
   display: flex;
-  gap: 12px;
-  background: var(--bg-1);
+  gap: 14px;
+  background: rgba(18, 20, 26, 0.92);
   border: 1px solid var(--line);
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 5px 12px;
+  font-size: 10px;
   color: var(--muted);
   pointer-events: none;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+  backdrop-filter: blur(6px);
+}
+
+.canvas-hud > span:not(:first-child)::before {
+  content: '·';
+  color: var(--line-strong);
+  margin-right: 14px;
+  margin-left: -10px;
 }
 
 .statusbar {
   display: flex;
-  gap: 18px;
+  gap: 14px;
   align-items: center;
   padding: 0 14px;
-  background: var(--bg-1);
+  background: linear-gradient(180deg, #11131a 0%, #0c0e13 100%);
   border-top: 1px solid var(--line);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
+
+.statusbar > span {
+  position: relative;
+  padding-left: 12px;
+}
+
+.statusbar > span::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  background: var(--muted-2);
+}
+
+/* ───────── Drawing-time visual feedback ───────── */
 
 .snap-guide {
   stroke: var(--accent);
@@ -333,20 +508,8 @@ label.checkbox > span {
 }
 
 .grid line {
-  /* `difference` against white-on-bg auto-inverts: gives a faint dark grid on
-     a white artboard and a faint light grid on a dark one. */
-  stroke: #ffffff;
+  stroke: rgba(255, 255, 255, 0.07);
   stroke-width: 1;
-  mix-blend-mode: difference;
-  opacity: 0.18;
-}
-
-.snap-target {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-  pointer-events: none;
 }
 
 .preview-shape {
@@ -386,9 +549,6 @@ label.checkbox > span {
   stroke: #fff;
 }
 
-/* Shape & vertex hit-test only in the select tool. In line/polygon tools the
-   user is drawing; clicks must pass through existing shapes to land on the
-   canvas. */
 .canvas-svg.tool-select .shape-hit {
   cursor: move;
 }
@@ -400,4 +560,125 @@ label.checkbox > span {
 
 .canvas-svg:not(.tool-select) .shape-hit {
   pointer-events: none;
+}
+
+/* ───────── Layer panel ───────── */
+
+.layer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.layer-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  background: var(--bg-2);
+  border: 1px solid transparent;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text);
+  user-select: none;
+  letter-spacing: 0.4px;
+  transition:
+    background 0.08s,
+    border-color 0.08s;
+}
+
+.layer-row:hover {
+  background: var(--bg-3);
+}
+
+.layer-row.selected {
+  background: linear-gradient(90deg, rgba(255, 59, 48, 0.12), transparent 60%);
+  border-left-color: var(--accent);
+}
+
+.layer-row.dragging {
+  opacity: 0.4;
+}
+
+.layer-row.drop-above::before,
+.layer-row.drop-below::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 4px rgba(255, 59, 48, 0.7);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.layer-row.drop-above::before {
+  top: -2px;
+}
+
+.layer-row.drop-below::after {
+  bottom: -2px;
+}
+
+.layer-row.is-hidden .layer-name,
+.layer-row.is-hidden .layer-meta {
+  color: var(--muted-2);
+  font-style: italic;
+}
+
+.layer-handle {
+  color: var(--muted-2);
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  padding: 0 1px;
+}
+
+.layer-row.dragging .layer-handle {
+  cursor: grabbing;
+}
+
+.layer-row:hover .layer-handle {
+  color: var(--muted);
+}
+
+.layer-icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  padding: 2px 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+}
+
+.layer-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.layer-row.is-hidden .layer-icon-btn[title^='Show'],
+.layer-row.is-locked .layer-icon-btn[title^='Unlock'] {
+  color: var(--accent);
+}
+
+.layer-name {
+  flex: 1;
+  text-transform: lowercase;
+}
+
+.layer-meta {
+  color: var(--muted-2);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
 }

@@ -50,12 +50,19 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       `stroke-width="${fmt(shape.strokeWidth)}"`,
       `stroke-linejoin="round"`,
       `stroke-linecap="round"`,
+    ];
+    // `visibility="hidden"` is the SVG-native attribute, so external viewers
+    // honor the toggle even though `data-vh-hidden` is what we read back.
+    if (shape.hidden) attrs.push(`visibility="hidden"`);
+    attrs.push(
       `data-vh-points="${shape.points.map((p) => `${fmt(p[0])},${fmt(p[1])}`).join(' ')}"`,
       `data-vh-closed="${shape.closed}"`,
-    ];
+    );
     if (shape.bezierOverride !== null) {
       attrs.push(`data-vh-bezier="${fmt(shape.bezierOverride)}"`);
     }
+    if (shape.hidden) attrs.push(`data-vh-hidden="true"`);
+    if (shape.locked) attrs.push(`data-vh-locked="true"`);
     lines.push(`  <path ${attrs.join(' ')}/>`);
   }
   lines.push('</svg>');
@@ -148,6 +155,8 @@ export function parseProject(text: string): ParsedProject {
       stroke: path.getAttribute('stroke') ?? 'none',
       strokeWidth: parseFloat(path.getAttribute('stroke-width') ?? '2'),
       bezierOverride,
+      hidden: path.getAttribute('data-vh-hidden') === 'true',
+      locked: path.getAttribute('data-vh-locked') === 'true',
     });
   }
 

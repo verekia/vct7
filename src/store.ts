@@ -50,6 +50,10 @@ export interface AppState {
   moveVertex: (id: string, index: number, p: Point) => void;
   deleteShape: (id: string) => void;
   deleteVertex: (shapeId: string, index: number) => void;
+  toggleShapeVisibility: (id: string) => void;
+  toggleShapeLock: (id: string) => void;
+  /** Move the shape at `from` to position `to` in the shape array (z-order). */
+  reorderShape: (from: number, to: number) => void;
   setProject: (settings: ProjectSettings, shapes: Shape[]) => void;
   newProject: () => void;
   setFileMeta: (name: string, handle: unknown) => void;
@@ -109,6 +113,8 @@ export const useStore = create<AppState>((set) => ({
         stroke: willClose ? 'none' : '#000000',
         strokeWidth: 2,
         bezierOverride: null,
+        hidden: false,
+        locked: false,
       };
       return {
         drawing: null,
@@ -166,6 +172,36 @@ export const useStore = create<AppState>((set) => ({
         selectedVertex: null,
         dirty: true,
       };
+    }),
+  toggleShapeVisibility: (id) =>
+    set((s) => ({
+      shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, hidden: !sh.hidden } : sh)),
+      dirty: true,
+    })),
+  toggleShapeLock: (id) =>
+    set((s) => {
+      const target = s.shapes.find((sh) => sh.id === id);
+      if (!target) return s;
+      const nextLocked = !target.locked;
+      // Locking the currently-selected shape clears the selection so canvas
+      // interactions don't keep operating on a now-uneditable target.
+      const clearSel = nextLocked && s.selectedShapeId === id;
+      return {
+        shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, locked: nextLocked } : sh)),
+        selectedShapeId: clearSel ? null : s.selectedShapeId,
+        selectedVertex: clearSel ? null : s.selectedVertex,
+        dirty: true,
+      };
+    }),
+  reorderShape: (from, to) =>
+    set((s) => {
+      if (from === to) return s;
+      if (from < 0 || from >= s.shapes.length) return s;
+      const clamped = Math.max(0, Math.min(s.shapes.length - 1, to));
+      const next = s.shapes.slice();
+      const [moved] = next.splice(from, 1);
+      next.splice(clamped, 0, moved);
+      return { shapes: next, dirty: true };
     }),
   setProject: (settings, shapes) =>
     set((s) => ({

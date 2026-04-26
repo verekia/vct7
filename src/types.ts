@@ -11,6 +11,8 @@ export interface Shape {
   strokeWidth: number;
   /** When null, the project's global bezier value applies. */
   bezierOverride: number | null;
+  hidden: boolean;
+  locked: boolean;
 }
 
 export interface ProjectSettings {

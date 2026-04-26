@@ -61,11 +61,12 @@ export function ProjectPanel() {
           }}
         />
       </label>
-      <div className="row">
+      <div className="preset-grid">
         {Object.keys(ANGLE_PRESETS).map((key) => (
           <button
             key={key}
             type="button"
+            className="small"
             onClick={() => setSettings({ snapAngles: ANGLE_PRESETS[key] })}
           >
             {key === 'ortho' ? '0/90' : `${key}°`}

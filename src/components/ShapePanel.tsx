@@ -29,7 +29,18 @@ export function ShapePanel() {
   const updateShape = useStore((s) => s.updateShape);
   const deleteShape = useStore((s) => s.deleteShape);
 
-  if (!shape) return null;
+  if (!shape) {
+    return (
+      <section className="panel inspector-empty">
+        <h2>Inspector</h2>
+        <p className="hint">
+          No layer selected.
+          <br />
+          Pick one from the layers panel or use the Select tool (V) on the canvas.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <ShapePanelInner
@@ -61,7 +72,7 @@ function ShapePanelInner({
 
   return (
     <section className="panel">
-      <h2>Selected</h2>
+      <h2>Inspector</h2>
       <div className="row">
         <span className="kv-key">Type</span>
         <span className="kv-value">{shape.closed ? 'polygon' : 'line'}</span>

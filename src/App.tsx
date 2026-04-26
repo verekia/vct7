@@ -3,6 +3,7 @@ import { Topbar } from './components/Topbar';
 import { Toolbar } from './components/Toolbar';
 import { ProjectPanel } from './components/ProjectPanel';
 import { ShapePanel } from './components/ShapePanel';
+import { LayerPanel } from './components/LayerPanel';
 import { Canvas } from './components/Canvas';
 import { Statusbar } from './components/Statusbar';
 import { useKeyboard } from './hooks/useKeyboard';
@@ -67,12 +68,15 @@ export function App() {
     <>
       <Topbar />
       <main className="workspace">
-        <aside className="left-panel">
+        <aside className="side-panel side-panel-left">
           <Toolbar />
+          <LayerPanel />
           <ProjectPanel />
-          <ShapePanel />
         </aside>
         <Canvas />
+        <aside className="side-panel side-panel-right">
+          <ShapePanel />
+        </aside>
       </main>
       <Statusbar />
     </>

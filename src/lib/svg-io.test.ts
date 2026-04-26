@@ -26,6 +26,8 @@ const sampleShapes: Shape[] = [
     stroke: 'none',
     strokeWidth: 1,
     bezierOverride: 0.5,
+    hidden: false,
+    locked: false,
   },
   {
     id: 'b',
@@ -38,6 +40,8 @@ const sampleShapes: Shape[] = [
     stroke: '#000',
     strokeWidth: 2,
     bezierOverride: null,
+    hidden: false,
+    locked: false,
   },
 ];
 
@@ -142,5 +146,29 @@ describe('parseProject round-trip', () => {
     expect(parsed.settings.height).toBe(100);
     expect(parsed.settings.bezier).toBe(0);
     expect(parsed.shapes).toEqual([]);
+  });
+
+  // Hidden/locked are editor-only flags: round-trip via data-vh-* attributes,
+  // and omit them from the output when false so we don't bloat saved files.
+  it('round-trips hidden/locked flags and omits them when false', () => {
+    const shapes: Shape[] = [
+      { ...sampleShapes[0], hidden: true, locked: true },
+      { ...sampleShapes[1], hidden: false, locked: false },
+    ];
+    const text = serializeProject(sampleSettings, shapes);
+    expect(text).toContain('data-vh-hidden="true"');
+    expect(text).toContain('data-vh-locked="true"');
+    // The hidden flag also emits `visibility="hidden"` so external viewers honor it.
+    expect(text).toContain('visibility="hidden"');
+    // The visible/unlocked shape must not contaminate the file.
+    const bBlock = text.match(/data-vh-points="20,200[\s\S]*?\/>/)?.[0] ?? '';
+    expect(bBlock).not.toContain('data-vh-hidden');
+    expect(bBlock).not.toContain('data-vh-locked');
+
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].hidden).toBe(true);
+    expect(parsed.shapes[0].locked).toBe(true);
+    expect(parsed.shapes[1].hidden).toBe(false);
+    expect(parsed.shapes[1].locked).toBe(false);
   });
 });

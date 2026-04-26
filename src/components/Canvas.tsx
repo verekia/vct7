@@ -104,9 +104,11 @@ export function Canvas() {
             vectorEffect="non-scaling-stroke"
           />
 
-          {shapes.map((shape) => (
-            <ShapeNode key={shape.id} shape={shape} bezier={effectiveBezier(shape, settings)} />
-          ))}
+          {shapes.map((shape) =>
+            shape.hidden ? null : (
+              <ShapeNode key={shape.id} shape={shape} bezier={effectiveBezier(shape, settings)} />
+            ),
+          )}
 
           {selectedShape && (
             <SelectionLayer
@@ -233,7 +235,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
         strokeWidth={Math.max(10, shape.strokeWidth + 8)}
         strokeLinejoin="round"
         strokeLinecap="round"
-        pointerEvents={shape.closed ? 'all' : 'stroke'}
+        pointerEvents={shape.locked ? 'none' : shape.closed ? 'all' : 'stroke'}
         opacity={0}
         vectorEffect="non-scaling-stroke"
       />
@@ -262,6 +264,7 @@ function SelectionLayer({
           className={`vertex-handle${selectedIndex === i ? ' selected' : ''}`}
           data-shape-id={shape.id}
           data-vertex-index={i}
+          pointerEvents={shape.locked ? 'none' : undefined}
         />
       ))}
     </g>
