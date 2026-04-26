@@ -261,19 +261,27 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const rect = svg.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
       const v = useStore.getState().view;
-      const cx = (mx - v.x) / v.scale;
-      const cy = (my - v.y) / v.scale;
-      const factor = Math.exp(-e.deltaY * 0.0015);
-      const next = Math.max(0.05, Math.min(40, v.scale * factor));
-      useStore.getState().setView({
-        scale: next,
-        x: mx - cx * next,
-        y: my - cy * next,
-      });
+      if (e.ctrlKey || e.metaKey) {
+        const rect = svg.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const cx = (mx - v.x) / v.scale;
+        const cy = (my - v.y) / v.scale;
+        const factor = Math.exp(-e.deltaY * 0.015);
+        const next = Math.max(0.05, Math.min(40, v.scale * factor));
+        useStore.getState().setView({
+          scale: next,
+          x: mx - cx * next,
+          y: my - cy * next,
+        });
+      } else {
+        useStore.getState().setView({
+          scale: v.scale,
+          x: v.x - e.deltaX,
+          y: v.y - e.deltaY,
+        });
+      }
     };
 
     svg.addEventListener('pointerdown', onPointerDown);

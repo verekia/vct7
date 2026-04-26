@@ -63,6 +63,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     }
     if (shape.hidden) attrs.push(`data-vh-hidden="true"`);
     if (shape.locked) attrs.push(`data-vh-locked="true"`);
+    if (shape.name) attrs.push(`data-vh-name="${escapeAttr(shape.name)}"`);
     lines.push(`  <path ${attrs.join(' ')}/>`);
   }
   lines.push('</svg>');
@@ -147,6 +148,7 @@ export function parseProject(text: string): ParsedProject {
     const overrideNum = overrideAttr === null ? NaN : parseFloat(overrideAttr);
     const bezierOverride = Number.isFinite(overrideNum) ? overrideNum : null;
 
+    const nameAttr = path.getAttribute('data-vh-name');
     shapes.push({
       id: makeId(),
       points,
@@ -157,6 +159,7 @@ export function parseProject(text: string): ParsedProject {
       bezierOverride,
       hidden: path.getAttribute('data-vh-hidden') === 'true',
       locked: path.getAttribute('data-vh-locked') === 'true',
+      ...(nameAttr ? { name: nameAttr } : {}),
     });
   }
 

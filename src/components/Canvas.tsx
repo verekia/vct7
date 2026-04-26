@@ -144,7 +144,8 @@ export function Canvas() {
               className="snap-target"
               cx={fmt(snapTarget[0])}
               cy={fmt(snapTarget[1])}
-              r={9 / view.scale}
+              r={7 / view.scale}
+              pointerEvents="none"
             />
           )}
         </g>

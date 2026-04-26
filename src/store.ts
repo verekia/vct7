@@ -52,6 +52,7 @@ export interface AppState {
   deleteVertex: (shapeId: string, index: number) => void;
   toggleShapeVisibility: (id: string) => void;
   toggleShapeLock: (id: string) => void;
+  renameShape: (id: string, name: string) => void;
   /** Move the shape at `from` to position `to` in the shape array (z-order). */
   reorderShape: (from: number, to: number) => void;
   setProject: (settings: ProjectSettings, shapes: Shape[]) => void;
@@ -178,6 +179,16 @@ export const useStore = create<AppState>((set) => ({
       shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, hidden: !sh.hidden } : sh)),
       dirty: true,
     })),
+  renameShape: (id, name) =>
+    set((s) => {
+      const trimmed = name.trim();
+      return {
+        shapes: s.shapes.map((sh) =>
+          sh.id !== id ? sh : { ...sh, name: trimmed || undefined },
+        ),
+        dirty: true,
+      };
+    }),
   toggleShapeLock: (id) =>
     set((s) => {
       const target = s.shapes.find((sh) => sh.id === id);

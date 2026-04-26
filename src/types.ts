@@ -13,6 +13,8 @@ export interface Shape {
   bezierOverride: number | null;
   hidden: boolean;
   locked: boolean;
+  /** User-supplied display name. Empty / undefined falls back to "polygon" / "line". */
+  name?: string;
 }
 
 export interface ProjectSettings {

@@ -1,5 +1,7 @@
-import { useState, type DragEvent } from 'react';
-import { useStore } from '../store';
+import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useStore, effectiveBezier } from '../store';
+import { bbox, pointsToPath } from '../lib/geometry';
+import type { Shape } from '../types';
 
 interface DropTarget {
   id: string;
@@ -9,13 +11,16 @@ interface DropTarget {
 export function LayerPanel() {
   const shapes = useStore((s) => s.shapes);
   const selectedShapeId = useStore((s) => s.selectedShapeId);
+  const settings = useStore((s) => s.settings);
   const selectShape = useStore((s) => s.selectShape);
   const toggleShapeVisibility = useStore((s) => s.toggleShapeVisibility);
   const toggleShapeLock = useStore((s) => s.toggleShapeLock);
   const reorderShape = useStore((s) => s.reorderShape);
+  const renameShape = useStore((s) => s.renameShape);
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const clearDrag = () => {
     setDraggingId(null);
@@ -65,7 +70,6 @@ export function LayerPanel() {
   if (shapes.length === 0) {
     return (
       <section className="panel">
-        <h2>Layers</h2>
         <p className="hint">No layers yet — draw a line or polygon.</p>
       </section>
     );
@@ -75,7 +79,6 @@ export function LayerPanel() {
 
   return (
     <section className="panel">
-      <h2>Layers</h2>
       <ol
         className="layer-list"
         onDrop={onDrop}
@@ -133,13 +136,128 @@ export function LayerPanel() {
               >
                 {shape.locked ? <LockIcon /> : <UnlockIcon />}
               </button>
-              <span className="layer-name">{shape.closed ? 'polygon' : 'line'}</span>
-              <span className="layer-meta">{shape.points.length} pts</span>
+              <ShapePreview shape={shape} bezier={effectiveBezier(shape, settings)} />
+              <Swatches shape={shape} />
+              {editingId === shape.id ? (
+                <NameInput
+                  initial={shape.name ?? defaultLayerName(shape)}
+                  onCommit={(v) => {
+                    renameShape(shape.id, v);
+                    setEditingId(null);
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <span
+                  className="layer-name"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setEditingId(shape.id);
+                  }}
+                >
+                  {shape.name || defaultLayerName(shape)}
+                </span>
+              )}
             </li>
           );
         })}
       </ol>
     </section>
+  );
+}
+
+function defaultLayerName(shape: Shape): string {
+  return shape.closed ? 'polygon' : 'line';
+}
+
+function NameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (v: string) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [value, setValue] = useState(initial);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  return (
+    <input
+      ref={ref}
+      className="layer-name-input"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => onCommit(value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        }
+        e.stopPropagation();
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
+function Swatches({ shape }: { shape: Shape }) {
+  if (shape.closed) {
+    return (
+      <span className="layer-swatches" aria-hidden>
+        <Swatch color={shape.fill} title={`Fill ${shape.fill}`} />
+        <Swatch color={shape.stroke} title={`Stroke ${shape.stroke}`} />
+      </span>
+    );
+  }
+  return (
+    <span className="layer-swatches" aria-hidden>
+      <Swatch color={shape.stroke} title={`Stroke ${shape.stroke}`} />
+    </span>
+  );
+}
+
+function Swatch({ color, title }: { color: string; title: string }) {
+  const isNone = !color || color === 'none' || color === 'transparent';
+  return (
+    <span
+      className={`layer-swatch${isNone ? ' is-none' : ''}`}
+      style={isNone ? undefined : { background: color }}
+      title={title}
+    />
+  );
+}
+
+function ShapePreview({ shape, bezier }: { shape: Shape; bezier: number }) {
+  const box = bbox(shape.points);
+  const pad = 1;
+  const w = Math.max(box.w, 0.0001);
+  const h = Math.max(box.h, 0.0001);
+  const vb = `${box.x - pad} ${box.y - pad} ${w + pad * 2} ${h + pad * 2}`;
+  const d = pointsToPath(shape.points, shape.closed, bezier);
+  const fill = shape.closed ? (shape.fill === 'none' ? 'transparent' : shape.fill) : 'none';
+  const stroke = shape.stroke === 'none' ? 'transparent' : shape.stroke;
+  return (
+    <span className="layer-preview" aria-hidden>
+      <svg viewBox={vb} width="20" height="20" preserveAspectRatio="xMidYMid meet">
+        <path
+          d={d}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={1.2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    </span>
   );
 }
 

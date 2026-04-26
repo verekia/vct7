@@ -32,7 +32,6 @@ export function ShapePanel() {
   if (!shape) {
     return (
       <section className="panel inspector-empty">
-        <h2>Inspector</h2>
         <p className="hint">
           No layer selected.
           <br />
@@ -72,7 +71,6 @@ function ShapePanelInner({
 
   return (
     <section className="panel">
-      <h2>Inspector</h2>
       <div className="row">
         <span className="kv-key">Type</span>
         <span className="kv-value">{shape.closed ? 'polygon' : 'line'}</span>

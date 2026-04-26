@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { Topbar } from './components/Topbar';
-import { Toolbar } from './components/Toolbar';
 import { ProjectPanel } from './components/ProjectPanel';
 import { ShapePanel } from './components/ShapePanel';
 import { LayerPanel } from './components/LayerPanel';
@@ -69,9 +68,8 @@ export function App() {
       <Topbar />
       <main className="workspace">
         <aside className="side-panel side-panel-left">
-          <Toolbar />
-          <LayerPanel />
           <ProjectPanel />
+          <LayerPanel />
         </aside>
         <Canvas />
         <aside className="side-panel side-panel-right">

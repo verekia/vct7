@@ -4,11 +4,13 @@ import { ANGLE_PRESETS } from '../lib/snap';
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
 
-const parseAngles = (text: string): number[] =>
-  text
-    .split(/[\s,]+/)
-    .map((s) => parseFloat(s))
-    .filter((n) => Number.isFinite(n));
+const PRESET_LABELS: Record<string, string> = {
+  ortho: '90°',
+  '45': '45°',
+  '30': '30°',
+  '60': '60°',
+  '15': '15°',
+};
 
 // `<input type="color">` requires `#rrggbb`; expand a 3-digit hex if needed.
 const toLongHex = (c: string): string => {
@@ -30,11 +32,6 @@ export function ProjectPanel() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
 
-  const [anglesText, setAnglesText] = useState(settings.snapAngles.join(','));
-  useEffect(() => {
-    setAnglesText(settings.snapAngles.join(','));
-  }, [settings.snapAngles]);
-
   const [bgText, setBgText] = useState(settings.bg);
   useEffect(() => setBgText(settings.bg), [settings.bg]);
 
@@ -48,31 +45,21 @@ export function ProjectPanel() {
 
   return (
     <section className="panel">
-      <h2>Project</h2>
       <label>
-        <span>Snap angles (deg)</span>
-        <input
-          type="text"
-          value={anglesText}
-          onChange={(e) => setAnglesText(e.target.value)}
-          onBlur={() => {
-            const parsed = parseAngles(anglesText);
-            setSettings({ snapAngles: parsed });
-          }}
-        />
+        <span>Snap angles</span>
+        <div className="preset-grid">
+          {Object.keys(ANGLE_PRESETS).map((key) => (
+            <button
+              key={key}
+              type="button"
+              className="small"
+              onClick={() => setSettings({ snapAngles: ANGLE_PRESETS[key] })}
+            >
+              {PRESET_LABELS[key] ?? `${key}°`}
+            </button>
+          ))}
+        </div>
       </label>
-      <div className="preset-grid">
-        {Object.keys(ANGLE_PRESETS).map((key) => (
-          <button
-            key={key}
-            type="button"
-            className="small"
-            onClick={() => setSettings({ snapAngles: ANGLE_PRESETS[key] })}
-          >
-            {key === 'ortho' ? '0/90' : `${key}°`}
-          </button>
-        ))}
-      </div>
 
       <label>
         <span>
@@ -137,37 +124,42 @@ export function ProjectPanel() {
         </div>
       </label>
 
-      <label>
-        <span>Grid size</span>
-        <input
-          type="number"
-          min={1}
-          value={gridSizeText}
-          onChange={(e) => setGridSizeText(e.target.value)}
-          onBlur={() => {
-            const v = parseFloat(gridSizeText);
-            if (Number.isFinite(v) && v > 0) setSettings({ gridSize: v });
-            else setGridSizeText(String(settings.gridSize));
-          }}
-        />
-      </label>
-      <div className="row">
-        <label className="checkbox">
+      <div className="field">
+        <span className="field-label">Grid</span>
+        <div className="row">
           <input
-            type="checkbox"
-            checked={settings.gridVisible}
-            onChange={(e) => setSettings({ gridVisible: e.target.checked })}
+            type="number"
+            min={1}
+            style={{ width: 60 }}
+            value={gridSizeText}
+            onChange={(e) => {
+              const next = e.target.value;
+              setGridSizeText(next);
+              const v = parseFloat(next);
+              if (Number.isFinite(v) && v > 0) setSettings({ gridSize: v });
+            }}
+            onBlur={() => {
+              const v = parseFloat(gridSizeText);
+              if (!Number.isFinite(v) || v <= 0) setGridSizeText(String(settings.gridSize));
+            }}
           />
-          <span>Show grid (G)</span>
-        </label>
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={settings.gridSnap}
-            onChange={(e) => setSettings({ gridSnap: e.target.checked })}
-          />
-          <span>Snap to grid</span>
-        </label>
+          <label className="checkbox" title="Show grid (G)">
+            <input
+              type="checkbox"
+              checked={settings.gridVisible}
+              onChange={(e) => setSettings({ gridVisible: e.target.checked })}
+            />
+            <span>Show</span>
+          </label>
+          <label className="checkbox" title="Snap to grid">
+            <input
+              type="checkbox"
+              checked={settings.gridSnap}
+              onChange={(e) => setSettings({ gridSnap: e.target.checked })}
+            />
+            <span>Snap</span>
+          </label>
+        </div>
       </div>
     </section>
   );
