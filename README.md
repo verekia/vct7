@@ -1,45 +1,65 @@
 # vectorheart
 
-A focused SVG editor for *vectorheart* compositions — diagonals, parallels, sharp
-corners, optional rounding. The editor is intentionally minimal:
+A focused SVG editor for _vectorheart_ compositions — diagonals, parallels,
+sharp corners, optional rounding. The editor is intentionally minimal:
 
 - **Angle snapping** — every line segment snaps to one of a per-project angle
-  set (default `0,45,90,…`). Hold `Shift` for free angle.
+  set (default `0,45,90,…`). Hold `Shift` for a free angle.
 - **Global bezier rounding** — one slider rounds every corner across the whole
-  composition. Per-shape override is available.
-- **Lines and filled shapes** — line tool for open polylines, polygon tool for
-  filled closed shapes.
-- **SVG-as-project-file** — the SVG you save *is* the project file. Settings and
-  control points are stored in `data-vh-*` attributes so the file is still a
-  perfectly valid SVG that any browser/Figma/Illustrator can render.
+  composition. Per-shape override is also available.
+- **Adaptive curve direction** — at each interior vertex the rounding direction
+  is chosen by the angle: obtuse / right corners (≥ 90°) bulge outward like a
+  classic fillet, while acute corners (< 90°) pull inward to form a cusp. Heart
+  shapes get their top-cusp + side-bumps for free.
+- **Lines and filled shapes** — `Line` for open polylines, `Polygon` for filled
+  closed shapes.
+- **SVG-as-project-file** — the SVG you save _is_ the project file. Settings
+  and control points are stored in `data-vh-*` attributes so the file is still
+  a perfectly valid SVG that any browser/Figma/Illustrator can render.
 - **File System Access API** — `Cmd/Ctrl+S` writes back to the same file you
   opened. No download dialog on every save.
+
+## Stack
+
+Vite 8 · React 19 · TypeScript 6 · Zustand 5 · Vitest 4 · oxlint 1 · oxfmt 0.46
 
 ## Run
 
 ```sh
-npm run dev
-# then open http://localhost:5173
+npm install
+npm run dev      # http://localhost:5173
 ```
 
-`serve` is just a static file server. Any static server works; the File System
-Access API needs a secure origin (`localhost` or HTTPS).
+## Scripts
+
+| Script                 | Action                                  |
+| ---------------------- | --------------------------------------- |
+| `npm run dev`          | Vite dev server                         |
+| `npm run build`        | Type-check + production build           |
+| `npm run preview`      | Preview the built bundle                |
+| `npm run typecheck`    | `tsc -b --noEmit`                       |
+| `npm run lint`         | oxlint                                  |
+| `npm run format`       | oxfmt (write)                           |
+| `npm run format:check` | oxfmt (check only)                      |
+| `npm run test`         | Vitest run                              |
+| `npm run test:watch`   | Vitest watch mode                       |
+| `npm run check`        | typecheck + lint + format check + tests |
 
 ## Shortcuts
 
-| Key | Action |
-|---|---|
-| `V` / `L` / `P` | Select / Line / Polygon tool |
-| `Shift` | Disable angle snapping while held |
-| `Space` + drag | Pan |
-| Wheel | Zoom |
-| `Enter` / dbl-click / right-click | Finish current line/polygon |
-| `Esc` | Cancel current draw / deselect |
-| `Delete` / `Backspace` | Delete selected vertex (or shape) |
-| `Cmd/Ctrl+S` | Save (writes back to same file) |
-| `Cmd/Ctrl+Shift+S` | Save As |
-| `Cmd/Ctrl+O` | Open |
-| `Cmd/Ctrl+N` | New project |
+| Key                               | Action                            |
+| --------------------------------- | --------------------------------- |
+| `V` / `L` / `P`                   | Select / Line / Polygon tool      |
+| `Shift`                           | Disable angle snapping while held |
+| `Space` + drag                    | Pan                               |
+| Wheel                             | Zoom                              |
+| `Enter` / dbl-click / right-click | Finish current line/polygon       |
+| `Esc`                             | Cancel current draw / deselect    |
+| `Delete` / `Backspace`            | Delete selected vertex (or shape) |
+| `Cmd/Ctrl+S`                      | Save (writes back to same file)   |
+| `Cmd/Ctrl+Shift+S`                | Save As                           |
+| `Cmd/Ctrl+O`                      | Open                              |
+| `Cmd/Ctrl+N`                      | New project                       |
 
 ## File format
 
@@ -58,6 +78,6 @@ A saved file is a normal SVG with a few extra attributes:
 </svg>
 ```
 
-`d` is the rendered path (with rounding baked in). `data-vh-points` keeps the
+`d` is the rendered path with rounding baked in. `data-vh-points` keeps the
 editable control polyline so the editor can re-open the file losslessly.
 `data-vh-bezier` on a path overrides the project-wide value for that shape.

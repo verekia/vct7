@@ -8,23 +8,30 @@
   --muted: #8a93a3;
   --accent: #ff3b30;
   --accent-2: #ffa39d;
-  --ok: #6ee7b7;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body,
+#root {
   margin: 0;
   height: 100%;
   background: var(--bg-0);
   color: var(--text);
-  font: 13px/1.45 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font:
+    13px/1.45 ui-monospace,
+    'JetBrains Mono',
+    'SF Mono',
+    Menlo,
+    Consolas,
+    monospace;
   overflow: hidden;
 }
 
-body {
+#root {
   display: grid;
   grid-template-rows: 44px 1fr 24px;
 }
@@ -68,10 +75,6 @@ body {
   display: inline-block;
 }
 
-.dirty .dirty-mark::before {
-  content: "●";
-}
-
 .topbar-group {
   display: flex;
   gap: 4px;
@@ -86,7 +89,10 @@ button {
   cursor: pointer;
   letter-spacing: 0.5px;
   border-radius: 0;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s,
+    border-color 0.1s;
 }
 
 button:hover {
@@ -115,8 +121,8 @@ button.small {
   padding: 3px 7px;
 }
 
-input[type="text"],
-input[type="number"] {
+input[type='text'],
+input[type='number'] {
   background: var(--bg-0);
   border: 1px solid var(--line);
   color: var(--text);
@@ -125,11 +131,11 @@ input[type="number"] {
   width: 100%;
 }
 
-input[type="number"] {
+input[type='number'] {
   width: 70px;
 }
 
-input[type="color"] {
+input[type='color'] {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -138,7 +144,7 @@ input[type="color"] {
   cursor: pointer;
 }
 
-input[type="range"] {
+input[type='range'] {
   width: 100%;
   accent-color: var(--accent);
 }
@@ -219,14 +225,7 @@ label > span {
   flex-wrap: wrap;
 }
 
-.row-between {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  align-items: center;
-}
-
-.row > input[type="text"] {
+.row > input[type='text'] {
   flex: 1;
   min-width: 0;
 }
@@ -261,10 +260,10 @@ label > span {
   background-image:
     linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: 40px 40px, 40px 40px;
+  background-size: 40px 40px;
 }
 
-#canvas {
+.canvas-svg {
   display: block;
   width: 100%;
   height: 100%;
@@ -272,15 +271,15 @@ label > span {
   user-select: none;
 }
 
-#canvas.tool-select {
+.canvas-svg.tool-select {
   cursor: default;
 }
 
-#canvas.panning {
+.canvas-svg.panning {
   cursor: grabbing;
 }
 
-#canvas.space {
+.canvas-svg.space {
   cursor: grab;
 }
 
@@ -309,7 +308,6 @@ label > span {
   color: var(--muted);
 }
 
-/* SVG element styling (overlay graphics) */
 .snap-guide {
   stroke: var(--accent);
   stroke-width: 0.5;
@@ -318,18 +316,11 @@ label > span {
   pointer-events: none;
 }
 
-.preview-line {
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  fill: none;
-  stroke-dasharray: 6 4;
-  pointer-events: none;
-}
-
 .preview-shape {
   stroke: var(--accent);
   stroke-width: 1.5;
   fill: none;
+  stroke-dasharray: 6 4;
   pointer-events: none;
 }
 
@@ -363,13 +354,5 @@ label > span {
 }
 
 .shape-hit {
-  fill: transparent;
-  stroke: transparent;
-  stroke-width: 14;
-  cursor: move;
-}
-
-.shape-hit:hover ~ .selection-outline,
-.shape-hit:hover {
   cursor: move;
 }
