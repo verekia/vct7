@@ -72,7 +72,7 @@ export function Canvas() {
   const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`;
 
   const cls = [
-    'canvas-svg',
+    'canvas-svg block w-full h-full select-none relative z-[1]',
     tool === 'select' ? 'tool-select' : '',
     panning ? 'panning' : spaceHeld ? 'space' : '',
   ]
@@ -80,7 +80,7 @@ export function Canvas() {
     .join(' ');
 
   return (
-    <div ref={wrapRef} className="canvas-wrap">
+    <div ref={wrapRef} className="canvas-surface relative bg-bg-0 overflow-hidden">
       <svg
         ref={svgRef}
         className={cls}
@@ -164,7 +164,7 @@ export function Canvas() {
           )}
         </g>
       </svg>
-      <div className="canvas-hud">
+      <div className="hud-dots absolute bottom-3 right-3 flex gap-3.5 bg-[rgba(18,20,26,0.92)] border border-line px-3 py-[5px] text-[10px] text-muted pointer-events-none tracking-[1.5px] uppercase tabular-nums z-[2] backdrop-blur-[6px]">
         <span>
           {Math.round(cursor[0])}, {Math.round(cursor[1])}
         </span>
@@ -197,7 +197,7 @@ function GridLayer({
   }, [size, boardW, boardH]);
   if (screenSpacing < 4) return null;
   return (
-    <g className="grid" pointerEvents="none">
+    <g className="grid-layer" pointerEvents="none">
       {lines.xs.map((x) => (
         <line
           key={`x${x}`}

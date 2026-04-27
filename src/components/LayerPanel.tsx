@@ -82,8 +82,10 @@ export function LayerPanel() {
 
   if (shapes.length === 0) {
     return (
-      <section className="panel">
-        <p className="hint">No layers yet — draw a line, polygon, or circle.</p>
+      <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
+        <p className="text-[11px] text-muted mt-1 leading-[1.55] tracking-[0.3px]">
+          No layers yet — draw a line, polygon, or circle.
+        </p>
       </section>
     );
   }
@@ -91,9 +93,9 @@ export function LayerPanel() {
   const visual = shapes.toReversed();
 
   return (
-    <section className="panel">
+    <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
       <ol
-        className="layer-list"
+        className="list-none m-0 p-0 flex flex-col gap-px"
         onDrop={onDrop}
         onDragOver={(e) => {
           if (draggingId) e.preventDefault();
@@ -103,17 +105,23 @@ export function LayerPanel() {
           const isSelected = selectedSet.has(shape.id);
           const isDragging = shape.id === draggingId;
           const drop = dropTarget?.id === shape.id ? dropTarget.position : null;
+          const base =
+            'group/row relative flex items-center gap-1.5 pl-1 pr-1.5 py-1 border border-l-2 border-transparent cursor-pointer text-[11px] text-text select-none tracking-[0.4px] transition-[background,border-color] duration-75';
+          const stateBg = isSelected
+            ? 'bg-[linear-gradient(90deg,rgba(255,59,48,0.12),transparent_60%)] border-l-accent'
+            : 'bg-bg-2 hover:bg-bg-3';
           const cls = [
-            'layer-row',
-            isSelected ? 'selected' : '',
-            isDragging ? 'dragging' : '',
-            shape.hidden ? 'is-hidden' : '',
-            shape.locked ? 'is-locked' : '',
+            base,
+            stateBg,
+            isDragging ? 'opacity-40' : '',
             drop === 'above' ? 'drop-above' : '',
             drop === 'below' ? 'drop-below' : '',
           ]
             .filter(Boolean)
             .join(' ');
+          const handleCursor = isDragging ? 'cursor-grabbing' : 'cursor-grab';
+          const showHighlighted = shape.hidden ? 'text-accent' : '';
+          const lockHighlighted = shape.locked ? 'text-accent' : '';
           return (
             <li
               key={shape.id}
@@ -124,12 +132,15 @@ export function LayerPanel() {
               onDragEnd={clearDrag}
               onClick={(e) => onRowClick(e, shape.id)}
             >
-              <span className="layer-handle" aria-hidden>
+              <span
+                className={`text-muted-2 flex items-center px-px group-hover/row:text-muted ${handleCursor}`}
+                aria-hidden
+              >
                 <DragHandleIcon />
               </span>
               <button
                 type="button"
-                className="layer-icon-btn"
+                className={`bg-transparent border-transparent px-[3px] py-[2px] flex items-center justify-center tracking-normal hover:bg-black/30 hover:text-text ${showHighlighted || 'text-muted'}`}
                 title={shape.hidden ? 'Show layer' : 'Hide layer'}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -140,7 +151,7 @@ export function LayerPanel() {
               </button>
               <button
                 type="button"
-                className="layer-icon-btn"
+                className={`bg-transparent border-transparent px-[3px] py-[2px] flex items-center justify-center tracking-normal hover:bg-black/30 hover:text-text ${lockHighlighted || 'text-muted'}`}
                 title={shape.locked ? 'Unlock layer' : 'Lock layer'}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -149,8 +160,12 @@ export function LayerPanel() {
               >
                 {shape.locked ? <LockIcon /> : <UnlockIcon />}
               </button>
-              <ShapePreview shape={shape} bezier={effectiveBezier(shape, settings)} />
-              <Swatches shape={shape} />
+              <ShapePreview
+                shape={shape}
+                bezier={effectiveBezier(shape, settings)}
+                dim={shape.hidden}
+              />
+              <Swatches shape={shape} dim={shape.hidden} />
               {editingId === shape.id ? (
                 <NameInput
                   initial={shape.name ?? defaultLayerName(shape)}
@@ -162,7 +177,9 @@ export function LayerPanel() {
                 />
               ) : (
                 <span
-                  className="layer-name"
+                  className={`flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap ${
+                    shape.hidden ? 'italic text-muted-2' : ''
+                  }`}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     setEditingId(shape.id);
@@ -202,7 +219,7 @@ function NameInput({
   return (
     <input
       ref={ref}
-      className="layer-name-input"
+      className="flex-1 min-w-0 bg-bg-1 border border-accent text-text text-[11px] tracking-[0.4px] px-1 py-px outline-none"
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => onCommit(value)}
@@ -222,17 +239,18 @@ function NameInput({
   );
 }
 
-function Swatches({ shape }: { shape: Shape }) {
+function Swatches({ shape, dim }: { shape: Shape; dim: boolean }) {
+  const wrap = `flex gap-0.5 shrink-0${dim ? ' opacity-40' : ''}`;
   if (shape.closed) {
     return (
-      <span className="layer-swatches" aria-hidden>
+      <span className={wrap} aria-hidden>
         <Swatch color={shape.fill} title={`Fill ${shape.fill}`} />
         <Swatch color={shape.stroke} title={`Stroke ${shape.stroke}`} />
       </span>
     );
   }
   return (
-    <span className="layer-swatches" aria-hidden>
+    <span className={wrap} aria-hidden>
       <Swatch color={shape.stroke} title={`Stroke ${shape.stroke}`} />
     </span>
   );
@@ -240,25 +258,21 @@ function Swatches({ shape }: { shape: Shape }) {
 
 function Swatch({ color, title }: { color: string; title: string }) {
   const isNone = !color || color === 'none' || color === 'transparent';
-  return (
-    <span
-      className={`layer-swatch${isNone ? ' is-none' : ''}`}
-      style={isNone ? undefined : { background: color }}
-      title={title}
-    />
-  );
+  const cls = `w-2.5 h-2.5 border border-line inline-block${isNone ? ' swatch-none' : ''}`;
+  return <span className={cls} style={isNone ? undefined : { background: color }} title={title} />;
 }
 
-function ShapePreview({ shape, bezier }: { shape: Shape; bezier: number }) {
+function ShapePreview({ shape, bezier, dim }: { shape: Shape; bezier: number; dim: boolean }) {
   const fill = shape.closed ? (shape.fill === 'none' ? 'transparent' : shape.fill) : 'none';
   const stroke = shape.stroke === 'none' ? 'transparent' : shape.stroke;
   const pad = 1;
+  const wrap = `flex items-center justify-center w-5 h-5 text-muted shrink-0${dim ? ' opacity-40' : ''}`;
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
     const r = dist(shape.points[0], shape.points[1]) || 0.0001;
     const vb = `${cx - r - pad} ${cy - r - pad} ${r * 2 + pad * 2} ${r * 2 + pad * 2}`;
     return (
-      <span className="layer-preview" aria-hidden>
+      <span className={wrap} aria-hidden>
         <svg viewBox={vb} width="20" height="20" preserveAspectRatio="xMidYMid meet">
           <circle
             cx={cx}
@@ -279,7 +293,7 @@ function ShapePreview({ shape, bezier }: { shape: Shape; bezier: number }) {
   const vb = `${box.x - pad} ${box.y - pad} ${w + pad * 2} ${h + pad * 2}`;
   const d = pointsToPath(shape.points, shape.closed, bezier);
   return (
-    <span className="layer-preview" aria-hidden>
+    <span className={wrap} aria-hidden>
       <svg viewBox={vb} width="20" height="20" preserveAspectRatio="xMidYMid meet">
         <path
           d={d}

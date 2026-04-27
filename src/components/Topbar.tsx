@@ -11,17 +11,19 @@ export function Topbar() {
   const redo = useStore((s) => s.redo);
 
   return (
-    <header className="topbar">
-      <div className="brand">
-        <span className="brand-mark">[ VH ]</span>
-        <span className="brand-name">vectorheart</span>
-        <span className="file-name">{fileName}</span>
-        <span className="dirty-mark">{dirty ? '●' : ''}</span>
+    <header className="topbar-surface relative grid grid-cols-[1fr_auto_1fr] items-center px-3.5 border-b border-line">
+      <div className="flex items-baseline gap-2.5">
+        <span className="text-accent tracking-[1px] font-bold [text-shadow:0_0_12px_rgba(255,59,48,0.45)]">
+          [ VH ]
+        </span>
+        <span className="tracking-[5px] uppercase font-semibold text-xs">vectorheart</span>
+        <span className="text-muted ml-3 text-[11px] tracking-[0.5px]">{fileName}</span>
+        <span className="text-accent w-2.5 inline-block text-center">{dirty ? '●' : ''}</span>
       </div>
-      <div className="topbar-tools">
+      <div className="flex justify-center gap-1 py-1.5">
         <Toolbar />
       </div>
-      <div className="topbar-group">
+      <div className="flex gap-1 justify-self-end">
         <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl/Cmd+Z)">
           Undo
         </button>

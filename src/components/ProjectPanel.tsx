@@ -47,17 +47,20 @@ export function ProjectPanel() {
   useEffect(() => setGridSizeText(String(settings.gridSize)), [settings.gridSize]);
 
   return (
-    <section className="panel">
-      <div className="field">
-        <span className="field-label">Snap angles</span>
-        <div className="preset-grid">
+    <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
+      <div className="flex flex-col gap-1 mb-2.5 text-[11px] text-muted tracking-[0.4px]">
+        <span className="flex justify-between items-center gap-1.5">Snap angles</span>
+        <div className="grid grid-cols-5 gap-[3px]">
           {Object.keys(ANGLE_PRESETS).map((key) => {
             const isActive = sameAngles(settings.snapAngles, ANGLE_PRESETS[key]);
+            const cls = isActive
+              ? 'text-[11px] px-[7px] py-[2px] bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(255,59,48,0.25)]'
+              : 'text-[11px] px-[7px] py-[2px]';
             return (
               <button
                 key={key}
                 type="button"
-                className={`small${isActive ? ' active' : ''}`}
+                className={cls}
                 onClick={() => setSettings({ snapAngles: ANGLE_PRESETS[key] })}
               >
                 {PRESET_LABELS[key] ?? `${key}°`}
@@ -69,7 +72,7 @@ export function ProjectPanel() {
 
       <label>
         <span>
-          Global bezier <span className="num">{settings.bezier.toFixed(2)}</span>
+          Global bezier <span className="text-text tabular-nums">{settings.bezier.toFixed(2)}</span>
         </span>
         <input
           type="range"
@@ -83,7 +86,7 @@ export function ProjectPanel() {
 
       <label>
         <span>Background</span>
-        <div className="row">
+        <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="color"
             value={toLongHex(settings.bg)}
@@ -91,6 +94,7 @@ export function ProjectPanel() {
           />
           <input
             type="text"
+            className="flex-1 min-w-0"
             value={bgText}
             onChange={(e) => setBgText(e.target.value)}
             onBlur={() => {
@@ -103,7 +107,7 @@ export function ProjectPanel() {
 
       <label>
         <span>Canvas size</span>
-        <div className="row">
+        <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="number"
             min={1}
@@ -130,9 +134,9 @@ export function ProjectPanel() {
         </div>
       </label>
 
-      <div className="field">
-        <span className="field-label">Grid</span>
-        <div className="row">
+      <div className="flex flex-col gap-1 mb-2.5 text-[11px] text-muted tracking-[0.4px]">
+        <span className="flex justify-between items-center gap-1.5">Grid</span>
+        <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="number"
             min={1}

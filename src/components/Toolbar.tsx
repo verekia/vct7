@@ -14,14 +14,18 @@ export function Toolbar() {
   const setTool = useStore((s) => s.setTool);
 
   return (
-    <div className="tool-grid">
+    <div className="flex gap-1">
       {TOOLS.map((t) => {
         const Icon = t.icon;
+        const isActive = tool === t.id;
+        const cls = isActive
+          ? 'flex items-center justify-center w-7 h-7 p-0 bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(255,59,48,0.25)]'
+          : 'flex items-center justify-center w-7 h-7 p-0 text-muted';
         return (
           <button
             key={t.id}
             type="button"
-            className={`tool${tool === t.id ? ' active' : ''}`}
+            className={cls}
             title={`${t.label} (${t.key})`}
             onClick={() => setTool(t.id)}
             aria-label={t.label}
