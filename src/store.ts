@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Drawing, Point, ProjectSettings, Shape, Tool, ViewState } from './types';
 import { DEFAULT_SETTINGS, makeId } from './lib/svg-io';
+import { blendColor, findColorBelow, mix, parseHex, toHex } from './lib/blend';
 
 export interface SelectedVertex {
   shapeId: string;
@@ -119,6 +120,22 @@ export interface AppState {
   renameShape: (id: string, name: string) => void;
   /** Move the shape at `from` to position `to` in the shape array (z-order). */
   reorderShape: (from: number, to: number) => void;
+  /**
+   * Bake the shape's blend mode into its fill / stroke by pre-computing the
+   * blended color against whatever opaque layer sits underneath, then clear the
+   * blend mode. Lets the SVG render correctly in viewers that don't support
+   * `mix-blend-mode`. Multi-shape calls apply bottom-to-top so each shape sees
+   * the already-baked layers below it (matching what was on screen).
+   */
+  applyBlending: (ids: string[]) => void;
+  /**
+   * Bake the shape's opacity into its fill / stroke via source-over alpha
+   * compositing against the layer beneath, then clear opacity to 1. Same
+   * "single opaque backdrop" assumption as applyBlending. For visual fidelity
+   * when both opacity and a non-normal blend mode are set, run applyBlending
+   * first — applyOpacity always uses straight α-over.
+   */
+  applyOpacity: (ids: string[]) => void;
   setProject: (settings: ProjectSettings, shapes: Shape[]) => void;
   newProject: () => void;
   setFileMeta: (name: string, handle: unknown) => void;
@@ -414,6 +431,56 @@ export const useStore = create<AppState>((set) => ({
       const next = s.shapes.slice();
       const [moved] = next.splice(from, 1);
       next.splice(clamped, 0, moved);
+      return { ...pushSnapshot(s), shapes: next, dirty: true };
+    }),
+  applyBlending: (ids) =>
+    set((s) => {
+      if (ids.length === 0) return s;
+      const idSet = new Set(ids);
+      // Process in array order (bottom-to-top z): each baked shape becomes the
+      // backdrop for shapes above it, matching what was visually rendered.
+      let next = s.shapes;
+      let changed = false;
+      for (let i = 0; i < next.length; i++) {
+        const sh = next[i];
+        if (!idSet.has(sh.id)) continue;
+        const mode = sh.blendMode;
+        if (!mode || mode === 'normal') continue;
+        const bottom = findColorBelow(next, s.settings, sh.id);
+        const fillRgb = parseHex(sh.fill);
+        const strokeRgb = parseHex(sh.stroke);
+        const patch: Partial<Shape> = { blendMode: undefined };
+        if (fillRgb) patch.fill = toHex(blendColor(bottom, fillRgb, mode));
+        if (strokeRgb) patch.stroke = toHex(blendColor(bottom, strokeRgb, mode));
+        if (next === s.shapes) next = s.shapes.slice();
+        next[i] = { ...sh, ...patch };
+        changed = true;
+      }
+      if (!changed) return s;
+      return { ...pushSnapshot(s), shapes: next, dirty: true };
+    }),
+  applyOpacity: (ids) =>
+    set((s) => {
+      if (ids.length === 0) return s;
+      const idSet = new Set(ids);
+      let next = s.shapes;
+      let changed = false;
+      for (let i = 0; i < next.length; i++) {
+        const sh = next[i];
+        if (!idSet.has(sh.id)) continue;
+        const op = sh.opacity;
+        if (op === undefined || op >= 1) continue;
+        const bottom = findColorBelow(next, s.settings, sh.id);
+        const fillRgb = parseHex(sh.fill);
+        const strokeRgb = parseHex(sh.stroke);
+        const patch: Partial<Shape> = { opacity: undefined };
+        if (fillRgb) patch.fill = toHex(mix(bottom, fillRgb, op));
+        if (strokeRgb) patch.stroke = toHex(mix(bottom, strokeRgb, op));
+        if (next === s.shapes) next = s.shapes.slice();
+        next[i] = { ...sh, ...patch };
+        changed = true;
+      }
+      if (!changed) return s;
       return { ...pushSnapshot(s), shapes: next, dirty: true };
     }),
   setProject: (settings, shapes) =>

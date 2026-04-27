@@ -102,6 +102,9 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
         `style="mix-blend-mode:${shape.blendMode}"`,
       );
     }
+    if (shape.opacity !== undefined && shape.opacity < 1) {
+      baseAttrs.push(`opacity="${fmt(Math.max(0, shape.opacity))}"`);
+    }
 
     if (isCircle && !partialArc) {
       const [cx, cy] = shape.points[0];
@@ -231,6 +234,12 @@ export function parseProject(text: string): ParsedProject {
       blendAttr && BLEND_MODE_SET.has(blendAttr) && blendAttr !== 'normal'
         ? (blendAttr as BlendMode)
         : undefined;
+    const opacityAttr = el.getAttribute('opacity');
+    const opacityNum = opacityAttr === null ? NaN : parseFloat(opacityAttr);
+    const opacity =
+      Number.isFinite(opacityNum) && opacityNum < 1
+        ? Math.max(0, Math.min(1, opacityNum))
+        : undefined;
     shapes.push({
       id: makeId(),
       ...(isCircle ? { kind: 'circle' as const } : {}),
@@ -245,6 +254,7 @@ export function parseProject(text: string): ParsedProject {
       ...(nameAttr ? { name: nameAttr } : {}),
       ...(arc ? { arc } : {}),
       ...(blendMode ? { blendMode } : {}),
+      ...(opacity !== undefined ? { opacity } : {}),
     });
   }
 

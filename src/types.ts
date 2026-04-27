@@ -47,6 +47,8 @@ export interface Shape {
    * means no blending (the default).
    */
   blendMode?: BlendMode;
+  /** Element opacity in [0, 1]. Absent / `1` means fully opaque (the default). */
+  opacity?: number;
 }
 
 export type BlendMode =

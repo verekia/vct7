@@ -587,3 +587,143 @@ describe('store: undo / redo', () => {
     expect(after.future).toEqual([]);
   });
 });
+
+describe('store: applyBlending', () => {
+  // Bake a multiply-blend layer atop a red backdrop into a static fill so the
+  // exported SVG renders identically in viewers that ignore mix-blend-mode.
+  it('bakes the blend mode into the fill and clears blendMode', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'bg',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#ff0000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'top',
+          points: [
+            [2, 2],
+            [8, 8],
+          ],
+          closed: true,
+          fill: '#808080',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          blendMode: 'multiply',
+        },
+      ],
+    });
+    useStore.getState().applyBlending(['top']);
+    const top = useStore.getState().shapes.find((s) => s.id === 'top')!;
+    expect(top.blendMode).toBeUndefined();
+    // 0x80/255 ≈ 0.502, multiply with red (1,0,0) → (~0.502, 0, 0) → #800000.
+    expect(top.fill).toBe('#800000');
+  });
+
+  it('is a no-op for shapes with no blend mode', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#123456',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    });
+    const before = useStore.getState().shapes;
+    useStore.getState().applyBlending(['a']);
+    expect(useStore.getState().shapes).toBe(before);
+    expect(useStore.getState().past).toEqual([]);
+  });
+});
+
+describe('store: applyOpacity', () => {
+  // Bake α=0.5 white over red into the static fill so the SVG has no opacity
+  // attribute and renders identically. mix(red, white, 0.5) = (1, 0.5, 0.5).
+  it('alpha-composites the fill against the layer below and clears opacity', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'bg',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#ff0000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'top',
+          points: [
+            [2, 2],
+            [8, 8],
+          ],
+          closed: true,
+          fill: '#ffffff',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          opacity: 0.5,
+        },
+      ],
+    });
+    useStore.getState().applyOpacity(['top']);
+    const top = useStore.getState().shapes.find((s) => s.id === 'top')!;
+    expect(top.opacity).toBeUndefined();
+    // 0.5*1 + 0.5*1 = 1 (R), 0.5*1 + 0.5*0 = 0.5 (G/B) → #ff8080.
+    expect(top.fill).toBe('#ff8080');
+  });
+
+  it('is a no-op when opacity is undefined or 1', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#123456',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    });
+    const before = useStore.getState().shapes;
+    useStore.getState().applyOpacity(['a']);
+    expect(useStore.getState().shapes).toBe(before);
+    expect(useStore.getState().past).toEqual([]);
+  });
+});
