@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blendColor, findColorBelow, parseHex, toHex } from './blend';
+import { blendColor, findColorBelow, mix, parseHex, toHex } from './blend';
 import { DEFAULT_SETTINGS } from './svg-io';
 import type { Shape } from '../types';
 
@@ -72,6 +72,25 @@ describe('blendColor', () => {
     const out = blendColor([1, 0, 0], [0, 0, 1], 'luminosity');
     // Lum(blue) = 0.11; the result should be quite dark.
     expect(out[0] + out[1] + out[2]).toBeLessThan(1);
+  });
+});
+
+describe('mix (source-over alpha compositing)', () => {
+  it('alpha=1 returns top, alpha=0 returns bottom', () => {
+    expect(mix([0.2, 0.4, 0.6], [1, 0, 0], 1)).toEqual([1, 0, 0]);
+    expect(mix([0.2, 0.4, 0.6], [1, 0, 0], 0)).toEqual([0.2, 0.4, 0.6]);
+  });
+
+  it('alpha=0.5 averages each channel', () => {
+    const out = mix([1, 1, 1], [0, 0, 0], 0.5);
+    expect(out[0]).toBeCloseTo(0.5, 5);
+    expect(out[1]).toBeCloseTo(0.5, 5);
+    expect(out[2]).toBeCloseTo(0.5, 5);
+  });
+
+  it('clamps alpha into [0, 1]', () => {
+    expect(mix([0, 0, 0], [1, 1, 1], 2)).toEqual([1, 1, 1]);
+    expect(mix([0, 0, 0], [1, 1, 1], -1)).toEqual([0, 0, 0]);
   });
 });
 

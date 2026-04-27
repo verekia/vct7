@@ -48,6 +48,7 @@ export function ShapePanel() {
   const deleteShape = useStore((s) => s.deleteShape);
   const deleteShapes = useStore((s) => s.deleteShapes);
   const applyBlending = useStore((s) => s.applyBlending);
+  const applyOpacity = useStore((s) => s.applyOpacity);
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds);
@@ -74,6 +75,7 @@ export function ShapePanel() {
         updateShape={updateShape}
         deleteShape={deleteShape}
         applyBlending={applyBlending}
+        applyOpacity={applyOpacity}
       />
     );
   }
@@ -99,12 +101,15 @@ export function ShapePanel() {
       updateShape={updateShape}
       deleteShapes={deleteShapes}
       applyBlending={applyBlending}
+      applyOpacity={applyOpacity}
     />
   );
 }
 
-const APPLY_BLENDING_BTN =
+const APPLY_BTN =
   'text-[11px] px-[7px] py-[2px] bg-[#2563eb] text-white border-[#3b82f6] hover:bg-[#1d4ed8] hover:border-[#60a5fa] hover:text-white';
+
+const opacityValue = (s: Shape): number => s.opacity ?? 1;
 
 function ShapePanelInner({
   shape,
@@ -112,12 +117,14 @@ function ShapePanelInner({
   updateShape,
   deleteShape,
   applyBlending,
+  applyOpacity,
 }: {
   shape: Shape;
   globalBezier: number;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShape: (id: string) => void;
   applyBlending: (ids: string[]) => void;
+  applyOpacity: (ids: string[]) => void;
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke);
   const [fillText, setFillText] = useState(shape.fill);
@@ -223,7 +230,7 @@ function ShapePanelInner({
           {shape.blendMode && shape.blendMode !== 'normal' && (
             <button
               type="button"
-              className={APPLY_BLENDING_BTN}
+              className={APPLY_BTN}
               onClick={() => applyBlending([shape.id])}
               title="Bake this blend mode into the fill / stroke so the SVG renders correctly without mix-blend-mode support."
             >
@@ -241,6 +248,34 @@ function ShapePanelInner({
             </option>
           ))}
         </select>
+      </label>
+
+      <label>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Opacity</span>
+          {opacityValue(shape) < 1 && (
+            <button
+              type="button"
+              className={APPLY_BTN}
+              onClick={() => applyOpacity([shape.id])}
+              title="Bake this opacity into the fill / stroke by alpha-compositing against the layer below, then reset opacity to 1."
+            >
+              Apply opacity
+            </button>
+          )}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={opacityValue(shape)}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            updateShape(shape.id, { opacity: v >= 1 ? undefined : v });
+          }}
+        />
+        <span className="text-text tabular-nums">{opacityValue(shape).toFixed(2)}</span>
       </label>
 
       {isCircle && <ArcControls shape={shape} updateShape={updateShape} />}
@@ -376,6 +411,7 @@ function MultiShapePanel({
   updateShape,
   deleteShapes,
   applyBlending,
+  applyOpacity,
 }: {
   shapes: Shape[];
   kind: ShapeKind;
@@ -383,6 +419,7 @@ function MultiShapePanel({
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShapes: (ids: string[]) => void;
   applyBlending: (ids: string[]) => void;
+  applyOpacity: (ids: string[]) => void;
 }) {
   const showFill = kind !== 'line';
   const showBezier = kind !== 'circle';
@@ -392,11 +429,13 @@ function MultiShapePanel({
   const widths = shapes.map((s) => s.strokeWidth);
   const overrides = shapes.map((s) => s.bezierOverride);
   const blends = shapes.map((s) => blendValue(s.blendMode));
+  const opacities = shapes.map(opacityValue);
   const strokeUniform = allSame(strokes);
   const fillUniform = allSame(fills);
   const widthUniform = allSame(widths);
   const overrideUniform = allSame(overrides);
   const blendUniform = allSame(blends);
+  const opacityUniform = allSame(opacities);
 
   const [strokeText, setStrokeText] = useState(strokeUniform ? strokes[0] : '');
   const [fillText, setFillText] = useState(fillUniform ? fills[0] : '');
@@ -540,7 +579,7 @@ function MultiShapePanel({
           {shapes.some((sh) => sh.blendMode && sh.blendMode !== 'normal') && (
             <button
               type="button"
-              className={APPLY_BLENDING_BTN}
+              className={APPLY_BTN}
               onClick={() => applyBlending(shapes.map((sh) => sh.id))}
               title="Bake each shape's blend mode into the fill / stroke so the SVG renders correctly without mix-blend-mode support."
             >
@@ -563,6 +602,36 @@ function MultiShapePanel({
             </option>
           ))}
         </select>
+      </label>
+
+      <label>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Opacity</span>
+          {opacities.some((o) => o < 1) && (
+            <button
+              type="button"
+              className={APPLY_BTN}
+              onClick={() => applyOpacity(shapes.map((sh) => sh.id))}
+              title="Bake each shape's opacity into its fill / stroke by alpha-compositing against the layer below, then reset opacity to 1."
+            >
+              Apply opacity
+            </button>
+          )}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={opacityUniform ? opacities[0] : 1}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            applyAll({ opacity: v >= 1 ? undefined : v });
+          }}
+        />
+        <span className="text-text tabular-nums">
+          {opacityUniform ? opacities[0].toFixed(2) : 'Mixed'}
+        </span>
       </label>
 
       <div className="flex gap-1.5 items-center flex-wrap">

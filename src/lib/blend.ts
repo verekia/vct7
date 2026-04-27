@@ -107,6 +107,16 @@ const setSat = (c: RGB, s: number): RGB => {
   return out;
 };
 
+/** Source-over alpha composite of `top` (with alpha α) onto opaque `bottom`. */
+export const mix = (bottom: RGB, top: RGB, alpha: number): RGB => {
+  const a = clamp01(alpha);
+  return [
+    a * top[0] + (1 - a) * bottom[0],
+    a * top[1] + (1 - a) * bottom[1],
+    a * top[2] + (1 - a) * bottom[2],
+  ];
+};
+
 export function blendColor(bottom: RGB, top: RGB, mode: BlendMode): RGB {
   switch (mode) {
     case 'normal':

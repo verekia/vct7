@@ -289,6 +289,24 @@ describe('parseProject round-trip', () => {
     expect(parsed.shapes[1].blendMode).toBeUndefined();
   });
 
+  it('round-trips opacity < 1 via the standard SVG opacity attribute', () => {
+    const shape: Shape = { ...sampleShapes[0], opacity: 0.4 };
+    const text = serializeProject(sampleSettings, [shape]);
+    expect(text).toContain('opacity="0.4"');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].opacity).toBe(0.4);
+  });
+
+  it('omits opacity attribute when undefined or 1 (and parses no opacity as undefined)', () => {
+    const a: Shape = { ...sampleShapes[0] };
+    const b: Shape = { ...sampleShapes[1], opacity: 1 };
+    const text = serializeProject(sampleSettings, [a, b]);
+    expect(text).not.toContain('opacity=');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].opacity).toBeUndefined();
+    expect(parsed.shapes[1].opacity).toBeUndefined();
+  });
+
   // An unknown blend value is dropped on parse rather than carried through.
   it('ignores unknown blend mode values on parse', () => {
     const svg = `<?xml version="1.0" encoding="UTF-8"?>

@@ -188,11 +188,11 @@ export function LayerPanel() {
                   {shape.name || defaultLayerName(shape)}
                 </span>
               )}
-              {shape.blendMode && shape.blendMode !== 'normal' && (
+              {needsApply(shape) && (
                 <span
                   className="w-1.5 h-1.5 rounded-full bg-[#3b82f6] shrink-0"
-                  title={`Uses ${shape.blendMode} blending — apply it from the shape panel to bake the color.`}
-                  aria-label="Has blend mode"
+                  title={applyHint(shape)}
+                  aria-label="Has unbaked blend mode or opacity"
                 />
               )}
             </li>
@@ -207,6 +207,17 @@ function defaultLayerName(shape: Shape): string {
   if (shape.kind === 'circle') return 'circle';
   return shape.closed ? 'polygon' : 'line';
 }
+
+const hasBlend = (sh: Shape): boolean => !!sh.blendMode && sh.blendMode !== 'normal';
+const hasOpacity = (sh: Shape): boolean => sh.opacity !== undefined && sh.opacity < 1;
+const needsApply = (sh: Shape): boolean => hasBlend(sh) || hasOpacity(sh);
+
+const applyHint = (sh: Shape): string => {
+  const parts: string[] = [];
+  if (hasBlend(sh)) parts.push(`${sh.blendMode} blending`);
+  if (hasOpacity(sh)) parts.push(`${sh.opacity!.toFixed(2)} opacity`);
+  return `Uses ${parts.join(' + ')} — apply it from the shape panel to bake the color.`;
+};
 
 function NameInput({
   initial,

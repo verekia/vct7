@@ -235,6 +235,7 @@ function GridLayer({
 function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
   const blendStyle: CSSProperties | undefined =
     shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
+  const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined;
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
     const r = dist(shape.points[0], shape.points[1]);
@@ -253,6 +254,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
             vectorEffect="non-scaling-stroke"
             pointerEvents="none"
             style={blendStyle}
+            opacity={opacity}
           />
           <path
             d={d}
@@ -282,6 +284,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
           style={blendStyle}
+          opacity={opacity}
         />
         <circle
           cx={fmt(cx)}
@@ -312,6 +315,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
         vectorEffect="non-scaling-stroke"
         pointerEvents="none"
         style={blendStyle}
+        opacity={opacity}
       />
       {/*
         Hit target: invisible (opacity:0) but `pointer-events="all"` so it

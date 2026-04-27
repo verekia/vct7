@@ -657,3 +657,73 @@ describe('store: applyBlending', () => {
     expect(useStore.getState().past).toEqual([]);
   });
 });
+
+describe('store: applyOpacity', () => {
+  // Bake α=0.5 white over red into the static fill so the SVG has no opacity
+  // attribute and renders identically. mix(red, white, 0.5) = (1, 0.5, 0.5).
+  it('alpha-composites the fill against the layer below and clears opacity', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'bg',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#ff0000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'top',
+          points: [
+            [2, 2],
+            [8, 8],
+          ],
+          closed: true,
+          fill: '#ffffff',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          opacity: 0.5,
+        },
+      ],
+    });
+    useStore.getState().applyOpacity(['top']);
+    const top = useStore.getState().shapes.find((s) => s.id === 'top')!;
+    expect(top.opacity).toBeUndefined();
+    // 0.5*1 + 0.5*1 = 1 (R), 0.5*1 + 0.5*0 = 0.5 (G/B) → #ff8080.
+    expect(top.fill).toBe('#ff8080');
+  });
+
+  it('is a no-op when opacity is undefined or 1', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#123456',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    });
+    const before = useStore.getState().shapes;
+    useStore.getState().applyOpacity(['a']);
+    expect(useStore.getState().shapes).toBe(before);
+    expect(useStore.getState().past).toEqual([]);
+  });
+});
