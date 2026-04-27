@@ -263,6 +263,9 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         state.selectVertex({ shapeId: ref.shapeId, index: idx });
         draggingVertex = { shapeId: ref.shapeId, index: idx };
         state.setVertexDragging(true);
+        // Snapshot the pre-drag state so the whole drag collapses to one undo.
+        // moveVertex() itself doesn't push history.
+        state.pushHistory();
         return;
       }
 
@@ -349,6 +352,8 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
             startCursor: pendingSelect.startCanvas,
             startPoints,
           };
+          // One undo entry for the whole translate gesture.
+          state.pushHistory();
           pendingSelect = null;
           return;
         }

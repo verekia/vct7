@@ -25,6 +25,8 @@ const reset = () => {
     fileHandle: null,
     dirty: false,
     fitNonce: 0,
+    past: [],
+    future: [],
   });
 };
 
@@ -432,5 +434,156 @@ describe('store: setTool cancels in-progress drawing', () => {
     expect(useStore.getState().drawing).not.toBe(null);
     s.setTool('select');
     expect(useStore.getState().drawing).toBe(null);
+  });
+});
+
+describe('store: undo / redo', () => {
+  const seed = () =>
+    useStore.setState({
+      shapes: ['a', 'b'].map((id) => ({
+        id,
+        points: [
+          [0, 0],
+          [10, 10],
+        ],
+        closed: false,
+        fill: 'none',
+        stroke: '#000',
+        strokeWidth: 1,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+      })),
+    });
+
+  it('undo restores shapes after delete; redo re-applies the delete', () => {
+    seed();
+    const before = useStore.getState().shapes;
+    useStore.getState().deleteShape('a');
+    expect(useStore.getState().shapes.map((s) => s.id)).toEqual(['b']);
+
+    useStore.getState().undo();
+    expect(useStore.getState().shapes).toEqual(before);
+
+    useStore.getState().redo();
+    expect(useStore.getState().shapes.map((s) => s.id)).toEqual(['b']);
+  });
+
+  it('a new mutation after undo discards the redo stack', () => {
+    seed();
+    useStore.getState().deleteShape('a');
+    useStore.getState().undo();
+    expect(useStore.getState().future.length).toBe(1);
+
+    useStore.getState().deleteShape('b');
+    expect(useStore.getState().future.length).toBe(0);
+    // Only one undo-able step remains: removing 'b'. Undoing it brings 'b'
+    // back; the previously redoable delete-of-'a' is gone for good.
+    useStore.getState().undo();
+    expect(useStore.getState().shapes.map((s) => s.id)).toEqual(['a', 'b']);
+  });
+
+  it('coalesces consecutive setSettings calls with the same patch shape into one entry', () => {
+    seed();
+    const s = useStore.getState();
+    s.setSettings({ bezier: 0.1 });
+    s.setSettings({ bezier: 0.2 });
+    s.setSettings({ bezier: 0.3 });
+    // All three slider ticks collapse to a single undo step that returns to
+    // the pre-drag value.
+    expect(useStore.getState().past.length).toBe(1);
+    useStore.getState().undo();
+    expect(useStore.getState().settings.bezier).toBe(DEFAULT_SETTINGS.bezier);
+  });
+
+  it('coalesces updateShape calls with the same id and key set', () => {
+    seed();
+    const s = useStore.getState();
+    s.updateShape('a', { fill: '#111' });
+    s.updateShape('a', { fill: '#222' });
+    s.updateShape('a', { fill: '#333' });
+    expect(useStore.getState().past.length).toBe(1);
+    useStore.getState().undo();
+    expect(useStore.getState().shapes.find((sh) => sh.id === 'a')!.fill).toBe('none');
+  });
+
+  it('does not coalesce updateShape across different shape ids', () => {
+    seed();
+    const s = useStore.getState();
+    s.updateShape('a', { fill: '#111' });
+    s.updateShape('b', { fill: '#222' });
+    expect(useStore.getState().past.length).toBe(2);
+  });
+
+  it('move ops do not snapshot themselves; history must come from pushHistory()', () => {
+    seed();
+    const s = useStore.getState();
+    s.moveShape('a', [
+      [5, 5],
+      [15, 15],
+    ]);
+    s.moveShape('a', [
+      [6, 6],
+      [16, 16],
+    ]);
+    // No auto-snapshot for continuous moves — undo would do nothing.
+    expect(useStore.getState().past.length).toBe(0);
+
+    // Simulate the pointerdown handler taking a single snapshot, then dragging.
+    s.pushHistory();
+    s.moveShape('a', [
+      [100, 100],
+      [110, 110],
+    ]);
+    s.moveShape('a', [
+      [200, 200],
+      [210, 210],
+    ]);
+    expect(useStore.getState().past.length).toBe(1);
+    s.undo();
+    // Undo returns to the state captured at pushHistory() — i.e. the second
+    // moveShape result above ([6,6] / [16,16]).
+    expect(useStore.getState().shapes.find((sh) => sh.id === 'a')!.points).toEqual([
+      [6, 6],
+      [16, 16],
+    ]);
+  });
+
+  it('setProject clears past and future', () => {
+    seed();
+    useStore.getState().deleteShape('a');
+    expect(useStore.getState().past.length).toBeGreaterThan(0);
+    useStore.getState().setProject({ ...DEFAULT_SETTINGS }, []);
+    expect(useStore.getState().past).toEqual([]);
+    expect(useStore.getState().future).toEqual([]);
+  });
+
+  it('undo prunes selection to ids that exist in the restored state', () => {
+    seed();
+    const s = useStore.getState();
+    // Create a third shape via commitDrawing and select it.
+    s.startDrawing('line', [0, 0]);
+    s.appendDrawingPoint([5, 5]);
+    s.commitDrawing(false);
+    const newId = useStore.getState().shapes[2].id;
+    s.selectShapes(['a', newId]);
+    expect(useStore.getState().selectedShapeIds).toEqual(['a', newId]);
+
+    s.undo(); // Removes the new shape.
+    // After undo, the new shape is gone — selection drops it but keeps 'a'.
+    expect(useStore.getState().shapes.map((sh) => sh.id)).toEqual(['a', 'b']);
+    expect(useStore.getState().selectedShapeIds).toEqual(['a']);
+  });
+
+  it('undo / redo are no-ops when their stacks are empty', () => {
+    seed();
+    const before = useStore.getState();
+    useStore.getState().undo();
+    useStore.getState().redo();
+    const after = useStore.getState();
+    expect(after.shapes).toBe(before.shapes);
+    expect(after.settings).toBe(before.settings);
+    expect(after.past).toEqual([]);
+    expect(after.future).toEqual([]);
   });
 });

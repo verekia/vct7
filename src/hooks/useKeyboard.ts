@@ -29,6 +29,20 @@ export function useKeyboard() {
         newProject();
         return;
       }
+      // Undo / Redo. Ctrl+Y is the Windows redo convention; Shift+Z is mac.
+      if (meta && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        useStore.getState().undo();
+        return;
+      }
+      if (
+        meta &&
+        ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y' || e.key === 'Y')
+      ) {
+        e.preventDefault();
+        useStore.getState().redo();
+        return;
+      }
 
       if (isEditableTarget(e.target)) return;
 

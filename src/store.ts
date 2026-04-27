@@ -12,6 +12,48 @@ export interface BoxSelect {
   end: Point;
 }
 
+interface HistoryEntry {
+  shapes: Shape[];
+  settings: ProjectSettings;
+  /** Identifies a logical edit so rapid repeats (slider drags) collapse. */
+  coalesceKey?: string;
+  pushedAt: number;
+}
+
+const MAX_HISTORY = 100;
+/** Repeated pushes with the same coalesceKey within this window replace the top entry. */
+const COALESCE_WINDOW_MS = 800;
+const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+const pushSnapshot = (
+  s: { past: HistoryEntry[]; shapes: Shape[]; settings: ProjectSettings },
+  coalesceKey?: string,
+): { past: HistoryEntry[]; future: HistoryEntry[] } => {
+  const t = now();
+  const top = s.past[s.past.length - 1];
+  if (
+    coalesceKey &&
+    top &&
+    top.coalesceKey === coalesceKey &&
+    t - top.pushedAt < COALESCE_WINDOW_MS
+  ) {
+    // The existing top already captured the pre-edit state; just slide the
+    // window forward so a continuous drag keeps coalescing.
+    const past = s.past.slice();
+    past[past.length - 1] = { ...top, pushedAt: t };
+    return { past, future: [] };
+  }
+  const entry: HistoryEntry = {
+    shapes: s.shapes,
+    settings: s.settings,
+    coalesceKey,
+    pushedAt: t,
+  };
+  const past = s.past.length >= MAX_HISTORY ? s.past.slice(-(MAX_HISTORY - 1)) : s.past.slice();
+  past.push(entry);
+  return { past, future: [] };
+};
+
 export interface AppState {
   shapes: Shape[];
   selectedShapeIds: string[];
@@ -38,6 +80,9 @@ export interface AppState {
   dirty: boolean;
   /** Bumped when the canvas should re-fit the artboard to the viewport. */
   fitNonce: number;
+  /** History stacks for undo/redo. Entries snapshot `{shapes, settings}` only. */
+  past: HistoryEntry[];
+  future: HistoryEntry[];
   // Imperative helpers
   setTool: (t: Tool) => void;
   setSettings: (patch: Partial<ProjectSettings>) => void;
@@ -80,6 +125,16 @@ export interface AppState {
   markDirty: () => void;
   clearDirty: () => void;
   requestFit: () => void;
+  /**
+   * Snapshot the current document state into the undo stack. Atomic mutators
+   * call this themselves; continuous mutators (move shapes/vertices) do not, so
+   * callers (canvas hooks) must invoke this once at drag start. A repeat call
+   * with the same `coalesceKey` within the coalesce window replaces the top
+   * entry instead of pushing — this is what makes a slider drag a single undo.
+   */
+  pushHistory: (coalesceKey?: string) => void;
+  undo: () => void;
+  redo: () => void;
 }
 
 const DEFAULT_VIEW: ViewState = { x: 0, y: 0, scale: 1 };
@@ -105,9 +160,16 @@ export const useStore = create<AppState>((set) => ({
   fileHandle: null,
   dirty: false,
   fitNonce: 0,
+  past: [],
+  future: [],
 
   setTool: (t) => set({ tool: t, drawing: null, selectedVertex: null }),
-  setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch }, dirty: true })),
+  setSettings: (patch) =>
+    set((s) => ({
+      ...pushSnapshot(s, `settings:${Object.keys(patch).toSorted().join(',')}`),
+      settings: { ...s.settings, ...patch },
+      dirty: true,
+    })),
   setView: (patch) => set((s) => ({ view: { ...s.view, ...patch } })),
   setCursor: (cursor, raw) => set({ cursor, rawCursor: raw }),
   setSnapDisabled: (v) => set({ snapDisabled: v }),
@@ -143,6 +205,7 @@ export const useStore = create<AppState>((set) => ({
         locked: false,
       };
       return {
+        ...pushSnapshot(s),
         drawing: null,
         shapes: [...s.shapes, newShape],
         selectedShapeIds: [newShape.id],
@@ -216,6 +279,7 @@ export const useStore = create<AppState>((set) => ({
     }),
   updateShape: (id, patch) =>
     set((s) => ({
+      ...pushSnapshot(s, `updateShape:${id}:${Object.keys(patch).toSorted().join(',')}`),
       shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)),
       dirty: true,
     })),
@@ -263,6 +327,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       const remaining = s.selectedShapeIds.filter((x) => x !== id);
       return {
+        ...pushSnapshot(s),
         shapes: s.shapes.filter((sh) => sh.id !== id),
         selectedShapeIds: remaining,
         selectionAnchorId: s.selectionAnchorId === id ? null : s.selectionAnchorId,
@@ -275,6 +340,7 @@ export const useStore = create<AppState>((set) => ({
       if (ids.length === 0) return s;
       const idSet = new Set(ids);
       return {
+        ...pushSnapshot(s),
         shapes: s.shapes.filter((sh) => !idSet.has(sh.id)),
         selectedShapeIds: s.selectedShapeIds.filter((x) => !idSet.has(x)),
         selectionAnchorId:
@@ -290,6 +356,7 @@ export const useStore = create<AppState>((set) => ({
       if (!shape) return s;
       if (shape.points.length <= 2) {
         return {
+          ...pushSnapshot(s),
           shapes: s.shapes.filter((sh) => sh.id !== shapeId),
           selectedShapeIds: s.selectedShapeIds.filter((x) => x !== shapeId),
           selectionAnchorId: s.selectionAnchorId === shapeId ? null : s.selectionAnchorId,
@@ -298,6 +365,7 @@ export const useStore = create<AppState>((set) => ({
         };
       }
       return {
+        ...pushSnapshot(s),
         shapes: s.shapes.map((sh) =>
           sh.id !== shapeId ? sh : { ...sh, points: sh.points.filter((_, i) => i !== index) },
         ),
@@ -307,6 +375,7 @@ export const useStore = create<AppState>((set) => ({
     }),
   toggleShapeVisibility: (id) =>
     set((s) => ({
+      ...pushSnapshot(s),
       shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, hidden: !sh.hidden } : sh)),
       dirty: true,
     })),
@@ -314,6 +383,7 @@ export const useStore = create<AppState>((set) => ({
     set((s) => {
       const trimmed = name.trim();
       return {
+        ...pushSnapshot(s, `renameShape:${id}`),
         shapes: s.shapes.map((sh) => (sh.id !== id ? sh : { ...sh, name: trimmed || undefined })),
         dirty: true,
       };
@@ -328,6 +398,7 @@ export const useStore = create<AppState>((set) => ({
       const stripSel = nextLocked && s.selectedShapeIds.includes(id);
       const nextSel = stripSel ? s.selectedShapeIds.filter((x) => x !== id) : s.selectedShapeIds;
       return {
+        ...pushSnapshot(s),
         shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, locked: nextLocked } : sh)),
         selectedShapeIds: nextSel,
         selectionAnchorId: stripSel && s.selectionAnchorId === id ? null : s.selectionAnchorId,
@@ -343,7 +414,7 @@ export const useStore = create<AppState>((set) => ({
       const next = s.shapes.slice();
       const [moved] = next.splice(from, 1);
       next.splice(clamped, 0, moved);
-      return { shapes: next, dirty: true };
+      return { ...pushSnapshot(s), shapes: next, dirty: true };
     }),
   setProject: (settings, shapes) =>
     set((s) => ({
@@ -355,6 +426,10 @@ export const useStore = create<AppState>((set) => ({
       drawing: null,
       dirty: false,
       fitNonce: s.fitNonce + 1,
+      // Loading a fresh document discards any existing undo trail — undoing
+      // back into the previous file's state would surprise the user.
+      past: [],
+      future: [],
     })),
   newProject: () =>
     set((s) => ({
@@ -368,11 +443,67 @@ export const useStore = create<AppState>((set) => ({
       fileHandle: null,
       dirty: false,
       fitNonce: s.fitNonce + 1,
+      past: [],
+      future: [],
     })),
   setFileMeta: (name, handle) => set({ fileName: name, fileHandle: handle }),
   markDirty: () => set({ dirty: true }),
   clearDirty: () => set({ dirty: false }),
   requestFit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),
+  pushHistory: (coalesceKey) => set((s) => pushSnapshot(s, coalesceKey)),
+  undo: () =>
+    set((s) => {
+      const top = s.past[s.past.length - 1];
+      if (!top) return s;
+      const past = s.past.slice(0, -1);
+      const redoEntry: HistoryEntry = {
+        shapes: s.shapes,
+        settings: s.settings,
+        pushedAt: now(),
+      };
+      const future = [...s.future, redoEntry];
+      // Selection prune: keep only ids that still exist in the restored shapes.
+      const restoredIds = new Set(top.shapes.map((sh) => sh.id));
+      const selectedShapeIds = s.selectedShapeIds.filter((id) => restoredIds.has(id));
+      return {
+        past,
+        future,
+        shapes: top.shapes,
+        settings: top.settings,
+        selectedShapeIds,
+        selectionAnchorId:
+          s.selectionAnchorId && restoredIds.has(s.selectionAnchorId) ? s.selectionAnchorId : null,
+        selectedVertex: null,
+        drawing: null,
+        dirty: true,
+      };
+    }),
+  redo: () =>
+    set((s) => {
+      const top = s.future[s.future.length - 1];
+      if (!top) return s;
+      const future = s.future.slice(0, -1);
+      const undoEntry: HistoryEntry = {
+        shapes: s.shapes,
+        settings: s.settings,
+        pushedAt: now(),
+      };
+      const past = [...s.past, undoEntry];
+      const restoredIds = new Set(top.shapes.map((sh) => sh.id));
+      const selectedShapeIds = s.selectedShapeIds.filter((id) => restoredIds.has(id));
+      return {
+        past,
+        future,
+        shapes: top.shapes,
+        settings: top.settings,
+        selectedShapeIds,
+        selectionAnchorId:
+          s.selectionAnchorId && restoredIds.has(s.selectionAnchorId) ? s.selectionAnchorId : null,
+        selectedVertex: null,
+        drawing: null,
+        dirty: true,
+      };
+    }),
 }));
 
 export const effectiveBezier = (shape: Shape, settings: ProjectSettings): number =>
