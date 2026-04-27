@@ -3,6 +3,20 @@ export type Point = readonly [number, number];
 export type Tool = 'select' | 'line' | 'polygon' | 'circle';
 
 /**
+ * Optional partial-circle range for `kind === 'circle'` shapes. When absent,
+ * the shape is a full circle. Angles are degrees, measured clockwise from
+ * 3 o'clock (matching SVG screen coordinates). `style` decides how the arc
+ * is closed: `'wedge'` adds straight edges back to the center (pie slice),
+ * `'chord'` connects the endpoints with a straight line (D-shape), and
+ * `'open'` leaves the curve unfilled.
+ */
+export interface ArcRange {
+  start: number;
+  end: number;
+  style: 'wedge' | 'chord' | 'open';
+}
+
+/**
  * Shape representation — `kind` is optional with implicit default `'path'` so
  * older projects (and tests) keep round-tripping without an explicit field.
  *
@@ -26,6 +40,8 @@ export interface Shape {
   locked: boolean;
   /** User-supplied display name. Empty / undefined falls back to "polygon" / "line" / "circle". */
   name?: string;
+  /** Partial-circle range. Only meaningful when `kind === 'circle'`. */
+  arc?: ArcRange;
 }
 
 export interface ProjectSettings {

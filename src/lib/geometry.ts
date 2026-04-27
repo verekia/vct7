@@ -1,10 +1,45 @@
-import type { Point } from '../types';
+import type { ArcRange, Point } from '../types';
 
 const RAD_TO_DEG = 180 / Math.PI;
+const DEG_TO_RAD = Math.PI / 180;
 
 export const dist = (a: Point, b: Point): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 export const fmt = (n: number): number => (Number.isFinite(n) ? Number(n.toFixed(3)) : 0);
+
+/** Sweep size, normalized to [0, 360]. A zero start/end pair means a full turn. */
+export const arcSweep = (arc: ArcRange): number => {
+  const raw = (((arc.end - arc.start) % 360) + 360) % 360;
+  return raw === 0 ? 360 : raw;
+};
+
+/** True when this arc is a real partial slice (not a full 360° turn). */
+export const isPartialArc = (arc: ArcRange | undefined): arc is ArcRange =>
+  !!arc && arcSweep(arc) < 360;
+
+/**
+ * Build the SVG `d` for a partial circle. The renderer should fall back to a
+ * native `<circle>` when the arc is a full turn — this helper assumes
+ * `isPartialArc(arc)` is true.
+ */
+export function arcToPath(cx: number, cy: number, r: number, arc: ArcRange): string {
+  const sweep = arcSweep(arc);
+  const startRad = arc.start * DEG_TO_RAD;
+  const endRad = (arc.start + sweep) * DEG_TO_RAD;
+  const x1 = cx + r * Math.cos(startRad);
+  const y1 = cy + r * Math.sin(startRad);
+  const x2 = cx + r * Math.cos(endRad);
+  const y2 = cy + r * Math.sin(endRad);
+  const large = sweep > 180 ? 1 : 0;
+  const arcSeg = `A ${fmt(r)} ${fmt(r)} 0 ${large} 1 ${fmt(x2)} ${fmt(y2)}`;
+  if (arc.style === 'wedge') {
+    return `M ${fmt(cx)} ${fmt(cy)} L ${fmt(x1)} ${fmt(y1)} ${arcSeg} Z`;
+  }
+  if (arc.style === 'chord') {
+    return `M ${fmt(x1)} ${fmt(y1)} ${arcSeg} Z`;
+  }
+  return `M ${fmt(x1)} ${fmt(y1)} ${arcSeg}`;
+}
 
 interface CornerSegments {
   /** Point on the previous edge near `cur`, where the rounding starts. */
