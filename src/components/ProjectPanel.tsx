@@ -131,6 +131,14 @@ export function ProjectPanel() {
               else setHeightText(String(settings.height));
             }}
           />
+          <label className="checkbox" title="Hide parts of shapes that fall outside the artboard">
+            <input
+              type="checkbox"
+              checked={settings.clip}
+              onChange={(e) => setSettings({ clip: e.target.checked })}
+            />
+            <span>Clip</span>
+          </label>
         </div>
       </label>
 

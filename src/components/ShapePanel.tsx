@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { dist, isPartialArc } from '../lib/geometry';
-import type { ArcRange, Shape } from '../types';
+import type { ArcRange, BlendMode, Shape } from '../types';
+import { BLEND_MODES } from '../types';
+
+const blendValue = (b: BlendMode | undefined): BlendMode => b ?? 'normal';
+const blendPatch = (v: string): Partial<Shape> => ({
+  blendMode: v === 'normal' ? undefined : (v as BlendMode),
+});
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
 
@@ -203,6 +209,20 @@ function ShapePanelInner({
         </label>
       )}
 
+      <label>
+        <span>Blend mode</span>
+        <select
+          value={blendValue(shape.blendMode)}
+          onChange={(e) => updateShape(shape.id, blendPatch(e.target.value))}
+        >
+          {BLEND_MODES.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </label>
+
       {isCircle && <ArcControls shape={shape} updateShape={updateShape} />}
 
       {!isCircle && (
@@ -349,10 +369,12 @@ function MultiShapePanel({
   const fills = shapes.map((s) => s.fill);
   const widths = shapes.map((s) => s.strokeWidth);
   const overrides = shapes.map((s) => s.bezierOverride);
+  const blends = shapes.map((s) => blendValue(s.blendMode));
   const strokeUniform = allSame(strokes);
   const fillUniform = allSame(fills);
   const widthUniform = allSame(widths);
   const overrideUniform = allSame(overrides);
+  const blendUniform = allSame(blends);
 
   const [strokeText, setStrokeText] = useState(strokeUniform ? strokes[0] : '');
   const [fillText, setFillText] = useState(fillUniform ? fills[0] : '');
@@ -489,6 +511,25 @@ function MultiShapePanel({
           </span>
         </label>
       )}
+
+      <label>
+        <span>Blend mode</span>
+        <select
+          value={blendUniform ? blends[0] : ''}
+          onChange={(e) => applyAll(blendPatch(e.target.value))}
+        >
+          {!blendUniform && (
+            <option value="" disabled>
+              Mixed
+            </option>
+          )}
+          {BLEND_MODES.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="flex gap-1.5 items-center flex-wrap">
         <button

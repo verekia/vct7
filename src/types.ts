@@ -42,7 +42,49 @@ export interface Shape {
   name?: string;
   /** Partial-circle range. Only meaningful when `kind === 'circle'`. */
   arc?: ArcRange;
+  /**
+   * CSS `mix-blend-mode` value applied to the rendered shape. Absent / `'normal'`
+   * means no blending (the default).
+   */
+  blendMode?: BlendMode;
 }
+
+export type BlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity';
+
+export const BLEND_MODES: readonly BlendMode[] = [
+  'normal',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+];
 
 export interface ProjectSettings {
   /** Allowed snap angles in degrees. Empty array disables snapping. */
@@ -57,6 +99,8 @@ export interface ProjectSettings {
   gridSize: number;
   gridVisible: boolean;
   gridSnap: boolean;
+  /** Clip rendered shapes to the artboard rectangle. */
+  clip: boolean;
 }
 
 export interface ViewState {

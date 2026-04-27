@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useStore } from '../store';
 import { effectiveBezier } from '../store';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry';
@@ -108,11 +109,20 @@ export function Canvas() {
             vectorEffect="non-scaling-stroke"
           />
 
-          {shapes.map((shape) =>
-            shape.hidden ? null : (
-              <ShapeNode key={shape.id} shape={shape} bezier={effectiveBezier(shape, settings)} />
-            ),
+          {settings.clip && (
+            <defs>
+              <clipPath id="vh-artboard-clip">
+                <rect x={0} y={0} width={settings.width} height={settings.height} />
+              </clipPath>
+            </defs>
           )}
+          <g clipPath={settings.clip ? 'url(#vh-artboard-clip)' : undefined}>
+            {shapes.map((shape) =>
+              shape.hidden ? null : (
+                <ShapeNode key={shape.id} shape={shape} bezier={effectiveBezier(shape, settings)} />
+              ),
+            )}
+          </g>
 
           {selectedShapes.map((shape) => (
             <SelectionLayer
@@ -223,6 +233,10 @@ function GridLayer({
 }
 
 function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
+  const blendStyle: CSSProperties | undefined =
+    shape.blendMode && shape.blendMode !== 'normal'
+      ? { mixBlendMode: shape.blendMode }
+      : undefined;
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
     const r = dist(shape.points[0], shape.points[1]);
@@ -240,6 +254,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
             strokeLinecap="round"
             vectorEffect="non-scaling-stroke"
             pointerEvents="none"
+            style={blendStyle}
           />
           <path
             d={d}
@@ -268,6 +283,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
           strokeWidth={shape.strokeWidth}
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
+          style={blendStyle}
         />
         <circle
           cx={fmt(cx)}
@@ -297,6 +313,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
         strokeLinecap="round"
         vectorEffect="non-scaling-stroke"
         pointerEvents="none"
+        style={blendStyle}
       />
       {/*
         Hit target: invisible (opacity:0) but `pointer-events="all"` so it

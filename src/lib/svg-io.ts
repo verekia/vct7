@@ -1,7 +1,9 @@
-import type { ArcRange, Point, ProjectSettings, Shape } from '../types';
+import type { ArcRange, BlendMode, Point, ProjectSettings, Shape } from '../types';
+import { BLEND_MODES } from '../types';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
 
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
+const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES);
 
 const parseArcAttr = (raw: string | null): ArcRange | undefined => {
   if (!raw) return undefined;
@@ -18,11 +20,12 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
   bezier: 0,
   bg: '#ffffff',
-  width: 800,
-  height: 800,
-  gridSize: 20,
+  width: 1000,
+  height: 1000,
+  gridSize: 100,
   gridVisible: false,
   gridSnap: false,
+  clip: false,
 };
 
 const escapeAttr = (v: string): string =>
@@ -46,13 +49,22 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       ` data-vh-bg="${escapeAttr(settings.bg)}"` +
       ` data-vh-grid-size="${fmt(settings.gridSize)}"` +
       ` data-vh-grid-visible="${settings.gridVisible}"` +
-      ` data-vh-grid-snap="${settings.gridSnap}">`,
+      ` data-vh-grid-snap="${settings.gridSnap}"` +
+      ` data-vh-clip="${settings.clip}">`,
   );
   lines.push(
     `  <rect x="0" y="0" width="${fmt(settings.width)}" height="${fmt(
       settings.height,
     )}" fill="${escapeAttr(settings.bg)}"/>`,
   );
+  if (settings.clip) {
+    lines.push(
+      `  <defs><clipPath id="vh-artboard-clip"><rect x="0" y="0" width="${fmt(
+        settings.width,
+      )}" height="${fmt(settings.height)}"/></clipPath></defs>`,
+    );
+    lines.push(`  <g clip-path="url(#vh-artboard-clip)">`);
+  }
   for (const shape of shapes) {
     const isCircle = shape.kind === 'circle' && shape.points.length >= 2;
     const partialArc = isCircle && isPartialArc(shape.arc) ? shape.arc : undefined;
@@ -82,6 +94,14 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.hidden) baseAttrs.push(`data-vh-hidden="true"`);
     if (shape.locked) baseAttrs.push(`data-vh-locked="true"`);
     if (shape.name) baseAttrs.push(`data-vh-name="${escapeAttr(shape.name)}"`);
+    if (shape.blendMode && shape.blendMode !== 'normal') {
+      // Both: data-vh-blend for round-trip, inline style so external browser
+      // viewers honor the blending without our editor metadata.
+      baseAttrs.push(
+        `data-vh-blend="${shape.blendMode}"`,
+        `style="mix-blend-mode:${shape.blendMode}"`,
+      );
+    }
 
     if (isCircle && !partialArc) {
       const [cx, cy] = shape.points[0];
@@ -100,6 +120,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       lines.push(`  <path d="${d}" ${baseAttrs.join(' ')}/>`);
     }
   }
+  if (settings.clip) lines.push('  </g>');
   lines.push('</svg>');
   return lines.join('\n');
 }
@@ -162,6 +183,8 @@ export function parseProject(text: string): ParsedProject {
   if (gridVisible) settings.gridVisible = gridVisible === 'true';
   const gridSnap = svg.getAttribute('data-vh-grid-snap');
   if (gridSnap) settings.gridSnap = gridSnap === 'true';
+  const clip = svg.getAttribute('data-vh-clip');
+  if (clip) settings.clip = clip === 'true';
 
   const shapes: Shape[] = [];
   // Iterate path AND circle elements in document order so z-order survives.
@@ -203,6 +226,11 @@ export function parseProject(text: string): ParsedProject {
 
     const nameAttr = el.getAttribute('data-vh-name');
     const arc = isCircle ? parseArcAttr(el.getAttribute('data-vh-arc')) : undefined;
+    const blendAttr = el.getAttribute('data-vh-blend');
+    const blendMode: BlendMode | undefined =
+      blendAttr && BLEND_MODE_SET.has(blendAttr) && blendAttr !== 'normal'
+        ? (blendAttr as BlendMode)
+        : undefined;
     shapes.push({
       id: makeId(),
       ...(isCircle ? { kind: 'circle' as const } : {}),
@@ -216,6 +244,7 @@ export function parseProject(text: string): ParsedProject {
       locked: el.getAttribute('data-vh-locked') === 'true',
       ...(nameAttr ? { name: nameAttr } : {}),
       ...(arc ? { arc } : {}),
+      ...(blendMode ? { blendMode } : {}),
     });
   }
 

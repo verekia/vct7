@@ -11,6 +11,7 @@ const sampleSettings: ProjectSettings = {
   gridSize: 25,
   gridVisible: true,
   gridSnap: false,
+  clip: false,
 };
 
 const sampleShapes: Shape[] = [
@@ -263,6 +264,39 @@ describe('parseProject round-trip', () => {
     expect(parsed.settings.height).toBe(100);
     expect(parsed.settings.bezier).toBe(0);
     expect(parsed.shapes).toEqual([]);
+  });
+
+  // Per-shape blend mode round-trips via data-vh-blend, and is reflected in
+  // an inline `style="mix-blend-mode:..."` so external browser viewers honor it.
+  it('round-trips a blendMode and emits an inline mix-blend-mode style', () => {
+    const shape: Shape = { ...sampleShapes[0], blendMode: 'multiply' };
+    const text = serializeProject(sampleSettings, [shape]);
+    expect(text).toContain('data-vh-blend="multiply"');
+    expect(text).toContain('style="mix-blend-mode:multiply"');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].blendMode).toBe('multiply');
+  });
+
+  // The default ('normal' or undefined) must NOT pollute the SVG output.
+  it('omits blend mode attributes when blendMode is undefined or normal', () => {
+    const a: Shape = { ...sampleShapes[0] };
+    const b: Shape = { ...sampleShapes[1], blendMode: 'normal' };
+    const text = serializeProject(sampleSettings, [a, b]);
+    expect(text).not.toContain('data-vh-blend');
+    expect(text).not.toContain('mix-blend-mode');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].blendMode).toBeUndefined();
+    expect(parsed.shapes[1].blendMode).toBeUndefined();
+  });
+
+  // An unknown blend value is dropped on parse rather than carried through.
+  it('ignores unknown blend mode values on parse', () => {
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <path d="M0 0 L10 10" data-vh-points="0,0 10,10" data-vh-closed="false" data-vh-blend="bogus"/>
+</svg>`;
+    const parsed = parseProject(svg);
+    expect(parsed.shapes[0].blendMode).toBeUndefined();
   });
 
   // Hidden/locked are editor-only flags: round-trip via data-vh-* attributes,
