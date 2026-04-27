@@ -49,8 +49,8 @@ export function ShapePanel() {
 
   if (selectedShapes.length === 0) {
     return (
-      <section className="panel inspector-empty">
-        <p className="hint">
+      <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
+        <p className="text-[11px] text-muted mt-1 leading-[1.55] tracking-[0.3px] border-l-2 border-accent-dim py-1 pl-2.5">
           No layer selected.
           <br />
           Pick one from the layers panel or use the Select tool (V) on the canvas.
@@ -73,8 +73,8 @@ export function ShapePanel() {
   const kinds = selectedShapes.map(kindOf);
   if (!allSame(kinds)) {
     return (
-      <section className="panel inspector-empty">
-        <p className="hint">
+      <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
+        <p className="text-[11px] text-muted mt-1 leading-[1.55] tracking-[0.3px] border-l-2 border-accent-dim py-1 pl-2.5">
           {selectedShapes.length} layers selected — mixed types.
           <br />
           Pick layers of the same type to edit them together.
@@ -118,14 +118,16 @@ function ShapePanelInner({
   const typeLabel = isCircle ? 'circle' : shape.closed ? 'polygon' : 'line';
 
   return (
-    <section className="panel">
-      <div className="row">
-        <span className="kv-key">Type</span>
-        <span className="kv-value">{typeLabel}</span>
+    <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
+      <div className="flex gap-1.5 items-center flex-wrap">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Type</span>
+        <span className="text-text text-xs">{typeLabel}</span>
       </div>
-      <div className="row">
-        <span className="kv-key">{isCircle ? 'Radius' : 'Points'}</span>
-        <span className="kv-value">
+      <div className="flex gap-1.5 items-center flex-wrap">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">
+          {isCircle ? 'Radius' : 'Points'}
+        </span>
+        <span className="text-text text-xs">
           {isCircle && shape.points.length >= 2
             ? dist(shape.points[0], shape.points[1]).toFixed(2)
             : shape.points.length}
@@ -134,7 +136,7 @@ function ShapePanelInner({
 
       <label>
         <span>Stroke</span>
-        <div className="row">
+        <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="color"
             value={sanitizeColor(shape.stroke)}
@@ -172,7 +174,7 @@ function ShapePanelInner({
       {showFill && (
         <label>
           <span>Fill</span>
-          <div className="row">
+          <div className="flex gap-1.5 items-center flex-wrap">
             <input
               type="color"
               value={sanitizeColor(shape.fill)}
@@ -192,7 +194,7 @@ function ShapePanelInner({
             />
             <button
               type="button"
-              className="small"
+              className="text-[11px] px-[7px] py-[2px]"
               onClick={() => updateShape(shape.id, { fill: 'none' })}
             >
               none
@@ -205,12 +207,12 @@ function ShapePanelInner({
 
       {!isCircle && (
         <label>
-          <span className="row">
+          <span className="flex gap-1.5 items-center flex-wrap">
             <span style={{ flex: 1 }}>Bezier override</span>
             {shape.bezierOverride !== null && (
               <button
                 type="button"
-                className="small"
+                className="text-[11px] px-[7px] py-[2px]"
                 onClick={() => updateShape(shape.id, { bezierOverride: null })}
               >
                 use global
@@ -225,7 +227,7 @@ function ShapePanelInner({
             value={bezierValue}
             onChange={(e) => updateShape(shape.id, { bezierOverride: parseFloat(e.target.value) })}
           />
-          <span className="num">
+          <span className="text-text tabular-nums">
             {shape.bezierOverride === null
               ? `— (global ${globalBezier.toFixed(2)})`
               : shape.bezierOverride.toFixed(2)}
@@ -233,8 +235,12 @@ function ShapePanelInner({
         </label>
       )}
 
-      <div className="row">
-        <button type="button" className="danger" onClick={() => deleteShape(shape.id)}>
+      <div className="flex gap-1.5 items-center flex-wrap">
+        <button
+          type="button"
+          className="text-accent hover:bg-accent hover:text-white hover:border-accent"
+          onClick={() => deleteShape(shape.id)}
+        >
           Delete shape
         </button>
       </div>
@@ -264,7 +270,7 @@ function ArcControls({
   return (
     <>
       <label>
-        <span className="row">
+        <span className="flex gap-1.5 items-center flex-wrap">
           <span style={{ flex: 1 }}>Partial arc</span>
           <input
             type="checkbox"
@@ -374,15 +380,15 @@ function MultiShapePanel({
   const typeLabel = kind === 'circle' ? `${shapes.length} circles` : `${shapes.length} ${kind}s`;
 
   return (
-    <section className="panel">
-      <div className="row">
-        <span className="kv-key">Type</span>
-        <span className="kv-value">{typeLabel}</span>
+    <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
+      <div className="flex gap-1.5 items-center flex-wrap">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Type</span>
+        <span className="text-text text-xs">{typeLabel}</span>
       </div>
 
       <label>
         <span>Stroke</span>
-        <div className="row">
+        <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="color"
             value={sanitizeColor(strokeUniform ? strokes[0] : '#000000')}
@@ -422,7 +428,7 @@ function MultiShapePanel({
       {showFill && (
         <label>
           <span>Fill</span>
-          <div className="row">
+          <div className="flex gap-1.5 items-center flex-wrap">
             <input
               type="color"
               value={sanitizeColor(fillUniform ? fills[0] : '#000000')}
@@ -441,7 +447,11 @@ function MultiShapePanel({
                 }
               }}
             />
-            <button type="button" className="small" onClick={() => applyAll({ fill: 'none' })}>
+            <button
+              type="button"
+              className="text-[11px] px-[7px] py-[2px]"
+              onClick={() => applyAll({ fill: 'none' })}
+            >
               none
             </button>
           </div>
@@ -450,12 +460,12 @@ function MultiShapePanel({
 
       {showBezier && (
         <label>
-          <span className="row">
+          <span className="flex gap-1.5 items-center flex-wrap">
             <span style={{ flex: 1 }}>Bezier override</span>
             {overrides.some((o) => o !== null) && (
               <button
                 type="button"
-                className="small"
+                className="text-[11px] px-[7px] py-[2px]"
                 onClick={() => applyAll({ bezierOverride: null })}
               >
                 use global
@@ -470,7 +480,7 @@ function MultiShapePanel({
             value={bezierForRange}
             onChange={(e) => applyAll({ bezierOverride: parseFloat(e.target.value) })}
           />
-          <span className="num">
+          <span className="text-text tabular-nums">
             {!overrideUniform
               ? 'Mixed'
               : overrides[0] === null
@@ -480,10 +490,10 @@ function MultiShapePanel({
         </label>
       )}
 
-      <div className="row">
+      <div className="flex gap-1.5 items-center flex-wrap">
         <button
           type="button"
-          className="danger"
+          className="text-accent hover:bg-accent hover:text-white hover:border-accent"
           onClick={() => deleteShapes(shapes.map((s) => s.id))}
         >
           Delete {shapes.length} shapes

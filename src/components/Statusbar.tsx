@@ -1,6 +1,6 @@
 export function Statusbar() {
   return (
-    <footer className="statusbar">
+    <footer className="statusbar-surface flex gap-3.5 items-center px-3.5 border-t border-line text-[10px] text-muted tracking-[1px] uppercase">
       <span>Shift: free angle</span>
       <span>Esc: cancel</span>
       <span>Enter / dbl-click: finish line</span>

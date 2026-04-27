@@ -66,13 +66,13 @@ export function App() {
   return (
     <>
       <Topbar />
-      <main className="workspace">
-        <aside className="side-panel side-panel-left">
+      <main className="grid grid-cols-[240px_1fr_280px] min-h-0">
+        <aside className="panel-surface overflow-y-auto pb-6 border-r border-line">
           <ProjectPanel />
           <LayerPanel />
         </aside>
         <Canvas />
-        <aside className="side-panel side-panel-right">
+        <aside className="panel-surface overflow-y-auto pb-6 border-l border-line">
           <ShapePanel />
         </aside>
       </main>
