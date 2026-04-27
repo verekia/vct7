@@ -178,6 +178,67 @@ describe('parseProject round-trip', () => {
     ]);
   });
 
+  // Partial circles serialize as <path> with an arc command rather than as
+  // <circle>, since native circles can't represent a sweep. The data-vh-arc
+  // attribute carries start, end, and style for round-trip.
+  it('round-trips a partial-arc circle as a tagged <path>', () => {
+    const arcShape: Shape = {
+      id: 'a',
+      kind: 'circle',
+      points: [
+        [50, 60],
+        [70, 60],
+      ],
+      closed: true,
+      fill: '#0f0',
+      stroke: '#000',
+      strokeWidth: 2,
+      bezierOverride: null,
+      hidden: false,
+      locked: false,
+      arc: { start: 0, end: 180, style: 'chord' },
+    };
+    const text = serializeProject(sampleSettings, [arcShape]);
+    expect(text).toContain('<path ');
+    expect(text).not.toContain('<circle ');
+    expect(text).toContain('data-vh-kind="circle"');
+    expect(text).toContain('data-vh-arc="0,180,chord"');
+
+    resetIds(1);
+    const parsed = parseProject(text);
+    expect(parsed.shapes).toHaveLength(1);
+    const back = parsed.shapes[0];
+    expect(back.kind).toBe('circle');
+    expect(back.arc).toEqual({ start: 0, end: 180, style: 'chord' });
+    expect(back.points).toEqual([
+      [50, 60],
+      [70, 60],
+    ]);
+  });
+
+  // Open arcs render with fill="none" so external viewers don't fill the chord.
+  it('serializes an open partial circle with fill="none"', () => {
+    const arcShape: Shape = {
+      id: 'a',
+      kind: 'circle',
+      points: [
+        [0, 0],
+        [10, 0],
+      ],
+      closed: true,
+      fill: '#abc',
+      stroke: '#000',
+      strokeWidth: 2,
+      bezierOverride: null,
+      hidden: false,
+      locked: false,
+      arc: { start: 0, end: 90, style: 'open' },
+    };
+    const text = serializeProject(sampleSettings, [arcShape]);
+    expect(text).toContain('fill="none"');
+    expect(text).toContain('data-vh-arc="0,90,open"');
+  });
+
   // If a saved file has a tagged <circle> but its data-vh-points is missing
   // (e.g. hand-edited externally), reconstruct the perimeter anchor from
   // cx/cy/r so the shape stays editable.

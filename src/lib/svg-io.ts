@@ -1,5 +1,18 @@
-import type { Point, ProjectSettings, Shape } from '../types';
-import { dist, fmt, pointsToPath } from './geometry';
+import type { ArcRange, Point, ProjectSettings, Shape } from '../types';
+import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
+
+const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
+
+const parseArcAttr = (raw: string | null): ArcRange | undefined => {
+  if (!raw) return undefined;
+  const parts = raw.split(',').map((s) => s.trim());
+  if (parts.length !== 3) return undefined;
+  const start = parseFloat(parts[0]);
+  const end = parseFloat(parts[1]);
+  const style = parts[2] as ArcRange['style'];
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !ARC_STYLES.has(style)) return undefined;
+  return { start, end, style };
+};
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
@@ -42,12 +55,14 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
   );
   for (const shape of shapes) {
     const isCircle = shape.kind === 'circle' && shape.points.length >= 2;
+    const partialArc = isCircle && isPartialArc(shape.arc) ? shape.arc : undefined;
+    const filled = partialArc ? partialArc.style !== 'open' : shape.closed;
     const baseAttrs = [
-      `fill="${escapeAttr(shape.closed ? shape.fill : 'none')}"`,
+      `fill="${escapeAttr(filled ? shape.fill : 'none')}"`,
       `stroke="${escapeAttr(shape.stroke)}"`,
       `stroke-width="${fmt(shape.strokeWidth)}"`,
     ];
-    if (!isCircle) {
+    if (!isCircle || partialArc) {
       baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
     }
     if (shape.hidden) baseAttrs.push(`visibility="hidden"`);
@@ -56,6 +71,11 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       `data-vh-closed="${shape.closed}"`,
     );
     if (isCircle) baseAttrs.push(`data-vh-kind="circle"`);
+    if (partialArc) {
+      baseAttrs.push(
+        `data-vh-arc="${fmt(partialArc.start)},${fmt(partialArc.end)},${partialArc.style}"`,
+      );
+    }
     if (!isCircle && shape.bezierOverride !== null) {
       baseAttrs.push(`data-vh-bezier="${fmt(shape.bezierOverride)}"`);
     }
@@ -63,12 +83,17 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.locked) baseAttrs.push(`data-vh-locked="true"`);
     if (shape.name) baseAttrs.push(`data-vh-name="${escapeAttr(shape.name)}"`);
 
-    if (isCircle) {
+    if (isCircle && !partialArc) {
       const [cx, cy] = shape.points[0];
       const r = dist(shape.points[0], shape.points[1]);
       lines.push(
         `  <circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}" ${baseAttrs.join(' ')}/>`,
       );
+    } else if (isCircle && partialArc) {
+      const [cx, cy] = shape.points[0];
+      const r = dist(shape.points[0], shape.points[1]);
+      const d = arcToPath(cx, cy, r, partialArc);
+      lines.push(`  <path d="${d}" ${baseAttrs.join(' ')}/>`);
     } else {
       const bz = shape.bezierOverride ?? settings.bezier;
       const d = pointsToPath(shape.points, shape.closed, bz);
@@ -177,6 +202,7 @@ export function parseProject(text: string): ParsedProject {
     }
 
     const nameAttr = el.getAttribute('data-vh-name');
+    const arc = isCircle ? parseArcAttr(el.getAttribute('data-vh-arc')) : undefined;
     shapes.push({
       id: makeId(),
       ...(isCircle ? { kind: 'circle' as const } : {}),
@@ -189,6 +215,7 @@ export function parseProject(text: string): ParsedProject {
       hidden: el.getAttribute('data-vh-hidden') === 'true',
       locked: el.getAttribute('data-vh-locked') === 'true',
       ...(nameAttr ? { name: nameAttr } : {}),
+      ...(arc ? { arc } : {}),
     });
   }
 

@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { bbox, corner, fmt, pointsToPath, polygonWinding } from './geometry';
-import type { Point } from '../types';
+import {
+  arcSweep,
+  arcToPath,
+  bbox,
+  corner,
+  fmt,
+  isPartialArc,
+  pointsToPath,
+  polygonWinding,
+} from './geometry';
+import type { ArcRange, Point } from '../types';
 
 describe('fmt', () => {
   it('rounds to 3 decimals', () => {
@@ -294,5 +303,56 @@ describe('reflex-aware adaptive rounding (heart-style cusp)', () => {
       }
     }
     expect(mirroredCount).toBe(1);
+  });
+});
+
+describe('arc helpers', () => {
+  it('arcSweep treats start === end as a full turn', () => {
+    expect(arcSweep({ start: 0, end: 0, style: 'chord' })).toBe(360);
+    expect(arcSweep({ start: 90, end: 450, style: 'chord' })).toBe(360);
+  });
+
+  it('arcSweep handles wrap-around (end < start)', () => {
+    expect(arcSweep({ start: 350, end: 10, style: 'chord' })).toBe(20);
+  });
+
+  it('isPartialArc rejects undefined and full sweeps', () => {
+    expect(isPartialArc(undefined)).toBe(false);
+    expect(isPartialArc({ start: 0, end: 360, style: 'chord' })).toBe(false);
+    expect(isPartialArc({ start: 0, end: 180, style: 'chord' })).toBe(true);
+  });
+
+  // A 90° wedge centred at the origin should start at the centre, line to
+  // (r, 0), arc to (0, r), and close.
+  it('arcToPath emits a wedge path with M to centre and Z', () => {
+    const arc: ArcRange = { start: 0, end: 90, style: 'wedge' };
+    const d = arcToPath(0, 0, 10, arc);
+    expect(d.startsWith('M 0 0 L 10 0 ')).toBe(true);
+    expect(d).toContain('A 10 10 0 0 1 ');
+    expect(d.endsWith(' Z')).toBe(true);
+  });
+
+  // Chord style omits the line back to centre — start IS the first arc point.
+  it('arcToPath chord style starts at the first arc point', () => {
+    const d = arcToPath(0, 0, 10, { start: 0, end: 90, style: 'chord' });
+    expect(d.startsWith('M 10 0 ')).toBe(true);
+    expect(d.endsWith(' Z')).toBe(true);
+    expect(d).not.toContain('L');
+  });
+
+  // Open style is just the curve — no Z, no L.
+  it('arcToPath open style omits the closing segment', () => {
+    const d = arcToPath(0, 0, 10, { start: 0, end: 90, style: 'open' });
+    expect(d.startsWith('M 10 0 ')).toBe(true);
+    expect(d.endsWith(' Z')).toBe(false);
+    expect(d).not.toContain('L');
+  });
+
+  // The large-arc flag must flip when sweep exceeds 180°.
+  it('arcToPath uses large-arc flag for sweeps over 180°', () => {
+    const small = arcToPath(0, 0, 10, { start: 0, end: 90, style: 'open' });
+    const large = arcToPath(0, 0, 10, { start: 0, end: 270, style: 'open' });
+    expect(small).toContain('A 10 10 0 0 1 ');
+    expect(large).toContain('A 10 10 0 1 1 ');
   });
 });
