@@ -53,25 +53,11 @@ interface CornerSegments {
 }
 
 /**
- * Build the rounded-corner segments at a vertex.
- *
- * Rounding direction is *adaptive* based on the interior angle AND the corner's
- * orientation relative to the polygon's overall winding:
- * - obtuse / right (≥ 90°) → curve bulges TOWARD the vertex (a classic fillet),
- * - convex acute (< 90°, sticks OUT of polygon) → also a fillet,
- * - reflex acute (< 90°, points INTO polygon) → mirror through the chord, so
- *   the curve bulges away from the vertex (an inward cusp).
- *
- * `isReflex` is supplied by the caller from polygon winding; for open polylines
- * there is no interior, so it should always be `false` (always fillet).
+ * Build the rounded-corner segments at a vertex. The curve always bulges
+ * TOWARD the vertex (a classic fillet), regardless of interior angle or
+ * polygon orientation.
  */
-export function corner(
-  prev: Point,
-  cur: Point,
-  next: Point,
-  t: number,
-  isReflex: boolean = false,
-): CornerSegments {
+export function corner(prev: Point, cur: Point, next: Point, t: number): CornerSegments {
   const inDx = cur[0] - prev[0];
   const inDy = cur[1] - prev[1];
   const inLen = Math.hypot(inDx, inDy) || 1;
@@ -91,38 +77,8 @@ export function corner(
   const cosInterior = Math.max(-1, Math.min(1, inUx * outUx + inUy * outUy));
   const interiorAngle = Math.acos(cosInterior) * RAD_TO_DEG;
 
-  let control: Point = cur;
-  if (interiorAngle < 90 && isReflex) {
-    const mx = (a[0] + b[0]) / 2;
-    const my = (a[1] + b[1]) / 2;
-    control = [2 * mx - cur[0], 2 * my - cur[1]];
-  }
-
-  return { a, b, control, interiorAngle };
+  return { a, b, control: cur, interiorAngle };
 }
-
-/**
- * Signed shoelace sum for a polygon. Sign indicates winding direction; the
- * magnitude is twice the polygon's signed area. Used together with per-vertex
- * cross products to classify each corner as convex or reflex.
- */
-export function polygonWinding(points: Point[]): number {
-  let s = 0;
-  const n = points.length;
-  if (n < 3) return 0;
-  for (let i = 0; i < n; i++) {
-    const [x1, y1] = points[i];
-    const [x2, y2] = points[(i + 1) % n];
-    s += x1 * y2 - x2 * y1;
-  }
-  return s;
-}
-
-const isReflexAt = (prev: Point, cur: Point, next: Point, winding: number): boolean => {
-  if (winding === 0) return false;
-  const cross = (cur[0] - prev[0]) * (next[1] - cur[1]) - (cur[1] - prev[1]) * (next[0] - cur[0]);
-  return cross * winding < 0;
-};
 
 /**
  * Render a polyline (or polygon) as an SVG `d` attribute, with corners rounded
@@ -148,13 +104,12 @@ export function pointsToPath(points: Point[], closed: boolean, bezier: number): 
   }
 
   if (closed && n >= 3) {
-    const winding = polygonWinding(points);
     const corners: CornerSegments[] = [];
     for (let i = 0; i < n; i++) {
       const prev = points[(i - 1 + n) % n];
       const cur = points[i];
       const next = points[(i + 1) % n];
-      corners.push(corner(prev, cur, next, t, isReflexAt(prev, cur, next, winding)));
+      corners.push(corner(prev, cur, next, t));
     }
     let d = `M ${fmt(corners[0].b[0])} ${fmt(corners[0].b[1])}`;
     for (let i = 1; i < n; i++) {
