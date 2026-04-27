@@ -60,6 +60,8 @@ npm run dev      # http://localhost:5173
 | `Cmd/Ctrl+Shift+S`                | Save As                           |
 | `Cmd/Ctrl+O`                      | Open                              |
 | `Cmd/Ctrl+N`                      | New project                       |
+| `Cmd/Ctrl+Z`                      | Undo                              |
+| `Cmd/Ctrl+Shift+Z` / `Cmd/Ctrl+Y` | Redo                              |
 
 ## File format
 
