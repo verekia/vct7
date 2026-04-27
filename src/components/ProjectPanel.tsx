@@ -98,9 +98,7 @@ export function ProjectPanel() {
             type="checkbox"
             checked={bgEnabled}
             title="Toggle background"
-            onChange={(e) =>
-              setSettings({ bg: e.target.checked ? lastBgRef.current : null })
-            }
+            onChange={(e) => setSettings({ bg: e.target.checked ? lastBgRef.current : null })}
           />
           <input
             type="color"

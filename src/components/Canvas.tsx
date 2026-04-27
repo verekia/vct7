@@ -59,7 +59,7 @@ export function Canvas() {
   const shapes = useStore((s) => s.shapes);
   const drawing = useStore((s) => s.drawing);
   const selectedShapeIds = useStore((s) => s.selectedShapeIds);
-  const selectedVertex = useStore((s) => s.selectedVertex);
+  const selectedVertices = useStore((s) => s.selectedVertices);
   const snapDisabled = useStore((s) => s.snapDisabled);
   const spaceHeld = useStore((s) => s.spaceHeld);
   const panning = useStore((s) => s.panning);
@@ -145,23 +145,30 @@ export function Canvas() {
               shape={shape}
               // Vertex handles are only meaningful when a single shape is
               // selected — multi-select shows outlines only.
-              selectedIndex={
-                singleSelected && selectedVertex && selectedVertex.shapeId === shape.id
-                  ? selectedVertex.index
-                  : null
+              selectedIndices={
+                singleSelected
+                  ? selectedVertices.filter((v) => v.shapeId === shape.id).map((v) => v.index)
+                  : []
               }
               showVertices={!!singleSelected}
               scale={view.scale}
             />
           ))}
 
-          {vertexDragging && singleSelected && selectedVertex && !snapDisabled && (
-            <VertexDragGuides
-              shape={singleSelected}
-              index={selectedVertex.index}
-              settings={settings}
-            />
-          )}
+          {/* Drag guides anchor on neighbors of one vertex — only meaningful
+              when a single vertex is being moved. Multi-vertex drag is a pure
+              translate so per-vertex angle rays would be noise. */}
+          {vertexDragging &&
+            singleSelected &&
+            selectedVertices.length === 1 &&
+            selectedVertices[0].shapeId === singleSelected.id &&
+            !snapDisabled && (
+              <VertexDragGuides
+                shape={singleSelected}
+                index={selectedVertices[0].index}
+                settings={settings}
+              />
+            )}
 
           {boxSelect && <MarqueeRect box={boxSelect} />}
 
@@ -399,15 +406,16 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
 
 function SelectionLayer({
   shape,
-  selectedIndex,
+  selectedIndices,
   showVertices,
   scale,
 }: {
   shape: Shape;
-  selectedIndex: number | null;
+  selectedIndices: number[];
   showVertices: boolean;
   scale: number;
 }) {
+  const selectedSet = useMemo(() => new Set(selectedIndices), [selectedIndices]);
   let outline;
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
@@ -436,7 +444,7 @@ function SelectionLayer({
             cx={fmt(p[0])}
             cy={fmt(p[1])}
             r={5 / scale}
-            className={`vertex-handle${selectedIndex === i ? ' selected' : ''}`}
+            className={`vertex-handle${selectedSet.has(i) ? ' selected' : ''}`}
             data-shape-id={shape.id}
             data-vertex-index={i}
             pointerEvents={shape.locked ? 'none' : undefined}

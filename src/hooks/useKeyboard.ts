@@ -68,8 +68,8 @@ export function useKeyboard() {
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        if (state.selectedVertex) {
-          state.deleteVertex(state.selectedVertex.shapeId, state.selectedVertex.index);
+        if (state.selectedVertices.length > 0) {
+          state.deleteVertices(state.selectedVertices);
         } else if (state.selectedShapeIds.length > 0) {
           state.deleteShapes(state.selectedShapeIds);
         }

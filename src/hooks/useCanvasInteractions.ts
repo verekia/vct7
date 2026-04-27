@@ -22,7 +22,14 @@ interface DragShapesState {
 
 interface DragVertexState {
   shapeId: string;
+  /** The vertex actually under the pointer — drives snap anchors / targets. */
   index: number;
+  /** Every selected vertex index in `shapeId`. Multi-drag translates them all by the same delta. */
+  indices: number[];
+  /** Frozen pre-drag positions keyed by vertex index. */
+  startPoints: Map<number, Point>;
+  /** Pre-drag canvas cursor — delta is computed against this. */
+  startCursor: Point;
 }
 
 interface PanState {
@@ -91,9 +98,12 @@ const vertexAnchors = (shape: Shape, index: number): Point[] => {
  */
 const collectVertexTargets = (state: AppState, exclude: DragVertexState | null): Point[] => {
   const targets: Point[] = [];
+  // Exclude every vertex currently being moved (multi-drag): they're moving
+  // alongside the cursor and would create false magnetic locks if included.
+  const excludedIndices = exclude ? new Set(exclude.indices) : null;
   for (const shape of state.shapes) {
     for (let i = 0; i < shape.points.length; i++) {
-      if (exclude && exclude.shapeId === shape.id && exclude.index === i) continue;
+      if (exclude && exclude.shapeId === shape.id && excludedIndices!.has(i)) continue;
       targets.push(shape.points[i]);
     }
   }
@@ -144,6 +154,15 @@ const shapesInBox = (shapes: Shape[], box: AABB): string[] => {
   return ids;
 };
 
+const verticesInBox = (shape: Shape, box: AABB): number[] => {
+  const out: number[] = [];
+  for (let i = 0; i < shape.points.length; i++) {
+    const [x, y] = shape.points[i];
+    if (x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY) out.push(i);
+  }
+  return out;
+};
+
 export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
   useEffect(() => {
     const svg = svgRef.current;
@@ -153,7 +172,15 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
     let draggingShapes: DragShapesState | null = null;
     let draggingVertex: DragVertexState | null = null;
     let pendingSelect: PendingSelectState | null = null;
-    let marquee: { start: Point } | null = null;
+    /**
+     * Active marquee. `shape` mode picks shapes (default — replaces / extends
+     * the shape selection); `vertex` mode fires when one shape is selected and
+     * picks vertex indices within it. Mode is decided at drag-upgrade time.
+     */
+    let marquee:
+      | { start: Point; mode: 'shape' }
+      | { start: Point; mode: 'vertex'; shapeId: string }
+      | null = null;
 
     const screenToCanvas = (clientX: number, clientY: number): Point => {
       const rect = svg.getBoundingClientRect();
@@ -258,13 +285,48 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       const ref = findShapeRef(e.target);
       if (ref.shapeId && ref.vertexIndex !== undefined) {
         const idx = parseInt(ref.vertexIndex, 10);
-        // Vertex editing is single-shape only — collapse multi-select to this one.
-        state.selectShape(ref.shapeId);
-        state.selectVertex({ shapeId: ref.shapeId, index: idx });
-        draggingVertex = { shapeId: ref.shapeId, index: idx };
+        const shapeId = ref.shapeId;
+        const isShift = e.shiftKey;
+        const isMeta = e.metaKey || e.ctrlKey;
+        const alreadySelected = state.selectedVertices.some(
+          (v) => v.shapeId === shapeId && v.index === idx,
+        );
+        const ownerSelected =
+          state.selectedShapeIds.length === 1 && state.selectedShapeIds[0] === shapeId;
+        // Decide vertex selection in three cases:
+        //   - shift / meta: toggle vertex in / out, keep multi-select
+        //   - clicking an unselected vertex without modifiers: replace with [v]
+        //   - clicking an already-selected vertex without modifiers: keep the
+        //     existing multi-selection so the drag translates the whole group
+        if (isShift || isMeta) {
+          state.toggleVertexSelection({ shapeId, index: idx });
+        } else if (!alreadySelected || !ownerSelected) {
+          state.selectVertex({ shapeId, index: idx });
+        }
+        // Re-read state because the actions above just mutated it.
+        const nextState = useStore.getState();
+        const indices = nextState.selectedVertices
+          .filter((v) => v.shapeId === shapeId)
+          .map((v) => v.index);
+        // No vertices selected after toggle (shift-clicked the last one off) →
+        // nothing to drag. Skip pushing history / starting a drag.
+        if (indices.length === 0) {
+          return;
+        }
+        const shape = nextState.shapes.find((sh) => sh.id === shapeId);
+        if (!shape) return;
+        const startPoints = new Map<number, Point>();
+        for (const i of indices) startPoints.set(i, [shape.points[i][0], shape.points[i][1]]);
+        draggingVertex = {
+          shapeId,
+          index: idx,
+          indices,
+          startPoints,
+          startCursor: snapped,
+        };
         state.setVertexDragging(true);
         // Snapshot the pre-drag state so the whole drag collapses to one undo.
-        // moveVertex() itself doesn't push history.
+        // moveVertex / moveVertices don't push history themselves.
         state.pushHistory();
         return;
       }
@@ -298,7 +360,26 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       const { snapped, raw } = updateCursor(e.clientX, e.clientY);
 
       if (draggingVertex) {
-        useStore.getState().moveVertex(draggingVertex.shapeId, draggingVertex.index, snapped);
+        const state = useStore.getState();
+        // Translate every selected vertex by the snapped delta. We snap the
+        // *primary* vertex (the one under the pointer at drag start) and
+        // shift the rest by the same vector so their relative arrangement is
+        // preserved.
+        const dx = snapped[0] - draggingVertex.startCursor[0];
+        const dy = snapped[1] - draggingVertex.startCursor[1];
+        if (draggingVertex.indices.length === 1) {
+          // Single vertex: keep the original moveVertex path — it has special
+          // circle-center logic (translates the whole shape) we want to retain.
+          state.moveVertex(draggingVertex.shapeId, draggingVertex.index, snapped);
+        } else {
+          const items: { index: number; point: Point }[] = [];
+          for (const i of draggingVertex.indices) {
+            const start = draggingVertex.startPoints.get(i);
+            if (!start) continue;
+            items.push({ index: i, point: [start[0] + dx, start[1] + dy] });
+          }
+          state.moveVertices(draggingVertex.shapeId, items);
+        }
         return;
       }
       if (draggingShapes) {
@@ -360,7 +441,19 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
 
         // Otherwise upgrade to a marquee. With shift/meta, the marquee adds
         // to the existing selection rather than replacing it (handled at up).
-        marquee = { start: pendingSelect.startCanvas };
+        // When a single shape is already selected, the marquee picks vertices
+        // of *that* shape instead of shapes — the user has expressed intent to
+        // operate on one layer, so dragging on the canvas refines the
+        // operation to the points of that layer.
+        if (state.selectedShapeIds.length === 1) {
+          marquee = {
+            start: pendingSelect.startCanvas,
+            mode: 'vertex',
+            shapeId: state.selectedShapeIds[0],
+          };
+        } else {
+          marquee = { start: pendingSelect.startCanvas, mode: 'shape' };
+        }
         state.setBoxSelect({ start: pendingSelect.startCanvas, end: raw });
         return;
       }
@@ -376,6 +469,7 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       }
 
       if (marquee) {
+        const m = marquee;
         const state = useStore.getState();
         const box = state.boxSelect;
         if (box) {
@@ -385,16 +479,39 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
             maxX: Math.max(box.start[0], box.end[0]),
             maxY: Math.max(box.start[1], box.end[1]),
           };
-          const hit = shapesInBox(state.shapes, aabb);
-          // Shift / meta extend the existing selection; without them, the
-          // marquee replaces what was there.
           const additive = pendingSelect?.shift || pendingSelect?.meta;
-          if (additive) {
-            const set = new Set(state.selectedShapeIds);
-            for (const id of hit) set.add(id);
-            state.selectShapes(Array.from(set));
+          if (m.mode === 'vertex') {
+            const shape = state.shapes.find((sh) => sh.id === m.shapeId);
+            if (shape) {
+              const hit = verticesInBox(shape, aabb);
+              const newOnes = hit.map((index) => ({ shapeId: shape.id, index }));
+              if (additive) {
+                const seen = new Set(
+                  state.selectedVertices.filter((v) => v.shapeId === shape.id).map((v) => v.index),
+                );
+                const merged = state.selectedVertices.slice();
+                for (const v of newOnes) {
+                  if (!seen.has(v.index)) {
+                    merged.push(v);
+                    seen.add(v.index);
+                  }
+                }
+                state.selectVertices(merged);
+              } else {
+                state.selectVertices(newOnes);
+              }
+            }
           } else {
-            state.selectShapes(hit);
+            const hit = shapesInBox(state.shapes, aabb);
+            // Shift / meta extend the existing selection; without them, the
+            // marquee replaces what was there.
+            if (additive) {
+              const set = new Set(state.selectedShapeIds);
+              for (const id of hit) set.add(id);
+              state.selectShapes(Array.from(set));
+            } else {
+              state.selectShapes(hit);
+            }
           }
         }
         state.setBoxSelect(null);

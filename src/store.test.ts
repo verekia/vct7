@@ -8,7 +8,7 @@ const reset = () => {
     shapes: [],
     selectedShapeIds: [],
     selectionAnchorId: null,
-    selectedVertex: null,
+    selectedVertices: [],
     tool: 'line',
     drawing: null,
     view: { x: 0, y: 0, scale: 1 },
@@ -177,7 +177,7 @@ describe('store: deleteVertex', () => {
         },
       ],
       selectedShapeIds: ['s1'],
-      selectedVertex: { shapeId: 's1', index: 0 },
+      selectedVertices: [{ shapeId: 's1', index: 0 }],
     });
     useStore.getState().deleteVertex('s1', 0);
     expect(useStore.getState().shapes).toEqual([]);
@@ -205,7 +205,7 @@ describe('store: deleteVertex', () => {
         },
       ],
       selectedShapeIds: ['s1'],
-      selectedVertex: { shapeId: 's1', index: 1 },
+      selectedVertices: [{ shapeId: 's1', index: 1 }],
     });
     useStore.getState().deleteVertex('s1', 1);
     const shape = useStore.getState().shapes[0];
@@ -214,7 +214,7 @@ describe('store: deleteVertex', () => {
       [10, 10],
       [0, 10],
     ]);
-    expect(useStore.getState().selectedVertex).toBe(null);
+    expect(useStore.getState().selectedVertices).toEqual([]);
   });
 });
 
@@ -298,12 +298,12 @@ describe('store: layer ordering and toggles', () => {
     useStore.setState({
       selectedShapeIds: ['c'],
       selectionAnchorId: 'c',
-      selectedVertex: { shapeId: 'c', index: 0 },
+      selectedVertices: [{ shapeId: 'c', index: 0 }],
     });
     useStore.getState().toggleShapeLock('c');
     expect(useStore.getState().shapes.find((s) => s.id === 'c')!.locked).toBe(true);
     expect(useStore.getState().selectedShapeIds).toEqual([]);
-    expect(useStore.getState().selectedVertex).toBe(null);
+    expect(useStore.getState().selectedVertices).toEqual([]);
   });
 
   it('toggleShapeLock leaves selection alone when locking a different shape', () => {
@@ -419,7 +419,131 @@ describe('store: multi-selection', () => {
     useStore.getState().selectShapes(['a', 'b']);
     useStore.getState().selectVertex({ shapeId: 'b', index: 0 });
     expect(useStore.getState().selectedShapeIds).toEqual(['b']);
-    expect(useStore.getState().selectedVertex).toEqual({ shapeId: 'b', index: 0 });
+    expect(useStore.getState().selectedVertices).toEqual([{ shapeId: 'b', index: 0 }]);
+  });
+
+  it('selectVertices replaces vertex selection and forces single-shape owner', () => {
+    seed();
+    useStore.getState().selectShapes(['a', 'b']);
+    useStore.getState().selectVertices([
+      { shapeId: 'b', index: 0 },
+      { shapeId: 'b', index: 1 },
+    ]);
+    expect(useStore.getState().selectedShapeIds).toEqual(['b']);
+    expect(useStore.getState().selectedVertices).toEqual([
+      { shapeId: 'b', index: 0 },
+      { shapeId: 'b', index: 1 },
+    ]);
+  });
+
+  it('toggleVertexSelection adds, removes, and rescopes to the vertex owner', () => {
+    seed();
+    useStore.getState().selectShape('a');
+    useStore.getState().toggleVertexSelection({ shapeId: 'a', index: 0 });
+    useStore.getState().toggleVertexSelection({ shapeId: 'a', index: 1 });
+    expect(useStore.getState().selectedVertices).toEqual([
+      { shapeId: 'a', index: 0 },
+      { shapeId: 'a', index: 1 },
+    ]);
+    useStore.getState().toggleVertexSelection({ shapeId: 'a', index: 0 });
+    expect(useStore.getState().selectedVertices).toEqual([{ shapeId: 'a', index: 1 }]);
+    // Toggling a vertex on a different shape collapses to that single vertex.
+    useStore.getState().toggleVertexSelection({ shapeId: 'b', index: 0 });
+    expect(useStore.getState().selectedShapeIds).toEqual(['b']);
+    expect(useStore.getState().selectedVertices).toEqual([{ shapeId: 'b', index: 0 }]);
+  });
+
+  it('moveVertices translates a subset of a shape’s points in a single update', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 's1',
+          points: [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+            [0, 10],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    });
+    useStore.getState().moveVertices('s1', [
+      { index: 0, point: [5, 5] },
+      { index: 2, point: [15, 15] },
+    ]);
+    expect(useStore.getState().shapes[0].points).toEqual([
+      [5, 5],
+      [10, 0],
+      [15, 15],
+      [0, 10],
+    ]);
+  });
+
+  it('deleteVertices drops the listed indices and removes shapes that fall below 2 points', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'keep',
+          points: [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+            [0, 10],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'doomed',
+          points: [
+            [0, 0],
+            [5, 5],
+            [10, 10],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+      selectedShapeIds: ['keep', 'doomed'],
+      selectionAnchorId: 'doomed',
+      selectedVertices: [
+        { shapeId: 'keep', index: 1 },
+        { shapeId: 'doomed', index: 0 },
+        { shapeId: 'doomed', index: 1 },
+      ],
+    });
+    useStore.getState().deleteVertices([
+      { shapeId: 'keep', index: 1 },
+      { shapeId: 'doomed', index: 0 },
+      { shapeId: 'doomed', index: 1 },
+    ]);
+    const shapes = useStore.getState().shapes;
+    expect(shapes.map((s) => s.id)).toEqual(['keep']);
+    expect(shapes[0].points).toEqual([
+      [0, 0],
+      [10, 10],
+      [0, 10],
+    ]);
+    expect(useStore.getState().selectedShapeIds).toEqual(['keep']);
+    expect(useStore.getState().selectionAnchorId).toBe(null);
+    expect(useStore.getState().selectedVertices).toEqual([]);
   });
 });
 

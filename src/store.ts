@@ -60,7 +60,12 @@ export interface AppState {
   selectedShapeIds: string[];
   /** Last shape id that anchored the selection (plain or cmd click). Drives shift+click range. */
   selectionAnchorId: string | null;
-  selectedVertex: SelectedVertex | null;
+  /**
+   * Multi-vertex selection. Always belongs to a single shape — selecting a
+   * vertex collapses any multi-shape selection to that vertex's owner. Empty
+   * array means no vertex is selected.
+   */
+  selectedVertices: SelectedVertex[];
   tool: Tool;
   drawing: Drawing | null;
   view: ViewState;
@@ -107,14 +112,31 @@ export interface AppState {
   toggleShapeSelection: (id: string) => void;
   /** Select every shape between the anchor and toId (inclusive) by array index. */
   selectShapeRange: (toId: string) => void;
+  /** Replace selection with [v] (or clear if null). Collapses shape selection to v's owner. */
   selectVertex: (v: SelectedVertex | null) => void;
+  /** Replace vertex selection with the given list. All entries must share a shape id. */
+  selectVertices: (vs: SelectedVertex[]) => void;
+  /** Add or remove a single vertex from the selection (shift/meta-click). */
+  toggleVertexSelection: (v: SelectedVertex) => void;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   moveShape: (id: string, points: Point[]) => void;
   moveShapes: (deltas: { id: string; points: Point[] }[]) => void;
   moveVertex: (id: string, index: number, p: Point) => void;
+  /**
+   * Move multiple vertices of a single shape to new positions in one update.
+   * Used for multi-vertex drag — caller computes a translated `Point[]` and
+   * passes the indices that changed.
+   */
+  moveVertices: (shapeId: string, items: { index: number; point: Point }[]) => void;
   deleteShape: (id: string) => void;
   deleteShapes: (ids: string[]) => void;
   deleteVertex: (shapeId: string, index: number) => void;
+  /**
+   * Delete every selected vertex from its owning shape. If a shape ends up
+   * with fewer than 2 points, the shape itself is removed. Always pushes a
+   * single history entry.
+   */
+  deleteVertices: (items: SelectedVertex[]) => void;
   toggleShapeVisibility: (id: string) => void;
   toggleShapeLock: (id: string) => void;
   renameShape: (id: string, name: string) => void;
@@ -160,7 +182,7 @@ export const useStore = create<AppState>((set) => ({
   shapes: [],
   selectedShapeIds: [],
   selectionAnchorId: null,
-  selectedVertex: null,
+  selectedVertices: [],
   tool: 'line',
   drawing: null,
   view: { ...DEFAULT_VIEW },
@@ -180,7 +202,7 @@ export const useStore = create<AppState>((set) => ({
   past: [],
   future: [],
 
-  setTool: (t) => set({ tool: t, drawing: null, selectedVertex: null }),
+  setTool: (t) => set({ tool: t, drawing: null, selectedVertices: [] }),
   setSettings: (patch) =>
     set((s) => ({
       ...pushSnapshot(s, `settings:${Object.keys(patch).toSorted().join(',')}`),
@@ -235,13 +257,13 @@ export const useStore = create<AppState>((set) => ({
     set({
       selectedShapeIds: id ? [id] : [],
       selectionAnchorId: id,
-      selectedVertex: null,
+      selectedVertices: [],
     }),
   selectShapes: (ids) =>
     set({
       selectedShapeIds: ids.slice(),
       selectionAnchorId: ids.length ? ids[ids.length - 1] : null,
-      selectedVertex: null,
+      selectedVertices: [],
     }),
   toggleShapeSelection: (id) =>
     set((s) => {
@@ -252,7 +274,7 @@ export const useStore = create<AppState>((set) => ({
         // Anchor on the most recent click — even when removing — so the next
         // shift+click extends from where the user just clicked.
         selectionAnchorId: id,
-        selectedVertex: null,
+        selectedVertices: [],
       };
     }),
   selectShapeRange: (toId) =>
@@ -268,7 +290,7 @@ export const useStore = create<AppState>((set) => ({
         return {
           selectedShapeIds: [toId],
           selectionAnchorId: toId,
-          selectedVertex: null,
+          selectedVertices: [],
         };
       }
       const lo = Math.min(anchorIdx, toIdx);
@@ -278,21 +300,54 @@ export const useStore = create<AppState>((set) => ({
         selectedShapeIds: range,
         // Anchor stays put on shift+click — successive shift+clicks all
         // extend from the same origin, the standard range-select behavior.
-        selectedVertex: null,
+        selectedVertices: [],
       };
     }),
   selectVertex: (v) =>
     set((s) => {
-      if (!v) return { selectedVertex: null };
+      if (!v) return { selectedVertices: [] };
       // Selecting a vertex implies single-shape selection; collapse multi-select.
       if (s.selectedShapeIds.length === 1 && s.selectedShapeIds[0] === v.shapeId) {
-        return { selectedVertex: v };
+        return { selectedVertices: [v] };
       }
       return {
-        selectedVertex: v,
+        selectedVertices: [v],
         selectedShapeIds: [v.shapeId],
         selectionAnchorId: v.shapeId,
       };
+    }),
+  selectVertices: (vs) =>
+    set((s) => {
+      if (vs.length === 0) return { selectedVertices: [] };
+      // Vertex selection is single-shape: trust the first id and force the
+      // shape selection to match. (Caller is expected to pass entries from one shape.)
+      const shapeId = vs[0].shapeId;
+      const same = s.selectedShapeIds.length === 1 && s.selectedShapeIds[0] === shapeId;
+      return {
+        selectedVertices: vs.slice(),
+        ...(same
+          ? {}
+          : {
+              selectedShapeIds: [shapeId],
+              selectionAnchorId: shapeId,
+            }),
+      };
+    }),
+  toggleVertexSelection: (v) =>
+    set((s) => {
+      // Toggling a vertex on a different shape collapses to a single-vertex pick.
+      if (s.selectedShapeIds.length !== 1 || s.selectedShapeIds[0] !== v.shapeId) {
+        return {
+          selectedVertices: [v],
+          selectedShapeIds: [v.shapeId],
+          selectionAnchorId: v.shapeId,
+        };
+      }
+      const has = s.selectedVertices.some((x) => x.shapeId === v.shapeId && x.index === v.index);
+      const next = has
+        ? s.selectedVertices.filter((x) => !(x.shapeId === v.shapeId && x.index === v.index))
+        : [...s.selectedVertices, v];
+      return { selectedVertices: next };
     }),
   updateShape: (id, patch) =>
     set((s) => ({
@@ -340,6 +395,21 @@ export const useStore = create<AppState>((set) => ({
       }),
       dirty: true,
     })),
+  moveVertices: (shapeId, items) =>
+    set((s) => {
+      if (items.length === 0) return s;
+      return {
+        shapes: s.shapes.map((sh) => {
+          if (sh.id !== shapeId) return sh;
+          const next = sh.points.slice();
+          for (const { index, point } of items) {
+            if (index >= 0 && index < next.length) next[index] = point;
+          }
+          return { ...sh, points: next };
+        }),
+        dirty: true,
+      };
+    }),
   deleteShape: (id) =>
     set((s) => {
       const remaining = s.selectedShapeIds.filter((x) => x !== id);
@@ -348,7 +418,7 @@ export const useStore = create<AppState>((set) => ({
         shapes: s.shapes.filter((sh) => sh.id !== id),
         selectedShapeIds: remaining,
         selectionAnchorId: s.selectionAnchorId === id ? null : s.selectionAnchorId,
-        selectedVertex: s.selectedVertex?.shapeId === id ? null : s.selectedVertex,
+        selectedVertices: s.selectedVertices.filter((v) => v.shapeId !== id),
         dirty: true,
       };
     }),
@@ -362,8 +432,7 @@ export const useStore = create<AppState>((set) => ({
         selectedShapeIds: s.selectedShapeIds.filter((x) => !idSet.has(x)),
         selectionAnchorId:
           s.selectionAnchorId && idSet.has(s.selectionAnchorId) ? null : s.selectionAnchorId,
-        selectedVertex:
-          s.selectedVertex && idSet.has(s.selectedVertex.shapeId) ? null : s.selectedVertex,
+        selectedVertices: s.selectedVertices.filter((v) => !idSet.has(v.shapeId)),
         dirty: true,
       };
     }),
@@ -377,7 +446,7 @@ export const useStore = create<AppState>((set) => ({
           shapes: s.shapes.filter((sh) => sh.id !== shapeId),
           selectedShapeIds: s.selectedShapeIds.filter((x) => x !== shapeId),
           selectionAnchorId: s.selectionAnchorId === shapeId ? null : s.selectionAnchorId,
-          selectedVertex: null,
+          selectedVertices: [],
           dirty: true,
         };
       }
@@ -386,7 +455,51 @@ export const useStore = create<AppState>((set) => ({
         shapes: s.shapes.map((sh) =>
           sh.id !== shapeId ? sh : { ...sh, points: sh.points.filter((_, i) => i !== index) },
         ),
-        selectedVertex: null,
+        selectedVertices: [],
+        dirty: true,
+      };
+    }),
+  deleteVertices: (items) =>
+    set((s) => {
+      if (items.length === 0) return s;
+      // Group indices by shape so each shape is rebuilt once.
+      const byShape = new Map<string, Set<number>>();
+      for (const { shapeId, index } of items) {
+        let bucket = byShape.get(shapeId);
+        if (!bucket) {
+          bucket = new Set();
+          byShape.set(shapeId, bucket);
+        }
+        bucket.add(index);
+      }
+      const removedShapeIds = new Set<string>();
+      const nextShapes: Shape[] = [];
+      for (const sh of s.shapes) {
+        const drop = byShape.get(sh.id);
+        if (!drop) {
+          nextShapes.push(sh);
+          continue;
+        }
+        // Filtering points whose original index is in `drop`. If the result has
+        // fewer than 2 points the shape is no longer a real geometry — drop it.
+        const kept = sh.points.filter((_, i) => !drop.has(i));
+        if (kept.length < 2) {
+          removedShapeIds.add(sh.id);
+          continue;
+        }
+        nextShapes.push({ ...sh, points: kept });
+      }
+      return {
+        ...pushSnapshot(s),
+        shapes: nextShapes,
+        selectedShapeIds: removedShapeIds.size
+          ? s.selectedShapeIds.filter((id) => !removedShapeIds.has(id))
+          : s.selectedShapeIds,
+        selectionAnchorId:
+          s.selectionAnchorId && removedShapeIds.has(s.selectionAnchorId)
+            ? null
+            : s.selectionAnchorId,
+        selectedVertices: [],
         dirty: true,
       };
     }),
@@ -419,7 +532,10 @@ export const useStore = create<AppState>((set) => ({
         shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, locked: nextLocked } : sh)),
         selectedShapeIds: nextSel,
         selectionAnchorId: stripSel && s.selectionAnchorId === id ? null : s.selectionAnchorId,
-        selectedVertex: stripSel && s.selectedVertex?.shapeId === id ? null : s.selectedVertex,
+        selectedVertices:
+          stripSel && s.selectedVertices.some((v) => v.shapeId === id)
+            ? s.selectedVertices.filter((v) => v.shapeId !== id)
+            : s.selectedVertices,
         dirty: true,
       };
     }),
@@ -489,7 +605,7 @@ export const useStore = create<AppState>((set) => ({
       shapes,
       selectedShapeIds: [],
       selectionAnchorId: null,
-      selectedVertex: null,
+      selectedVertices: [],
       drawing: null,
       dirty: false,
       fitNonce: s.fitNonce + 1,
@@ -504,7 +620,7 @@ export const useStore = create<AppState>((set) => ({
       shapes: [],
       selectedShapeIds: [],
       selectionAnchorId: null,
-      selectedVertex: null,
+      selectedVertices: [],
       drawing: null,
       fileName: 'untitled.svg',
       fileHandle: null,
@@ -540,7 +656,7 @@ export const useStore = create<AppState>((set) => ({
         selectedShapeIds,
         selectionAnchorId:
           s.selectionAnchorId && restoredIds.has(s.selectionAnchorId) ? s.selectionAnchorId : null,
-        selectedVertex: null,
+        selectedVertices: [],
         drawing: null,
         dirty: true,
       };
@@ -566,7 +682,7 @@ export const useStore = create<AppState>((set) => ({
         selectedShapeIds,
         selectionAnchorId:
           s.selectionAnchorId && restoredIds.has(s.selectionAnchorId) ? s.selectionAnchorId : null,
-        selectedVertex: null,
+        selectedVertices: [],
         drawing: null,
         dirty: true,
       };
