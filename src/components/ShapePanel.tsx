@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
-import { dist } from '../lib/geometry';
-import type { Shape } from '../types';
+import { dist, isPartialArc } from '../lib/geometry';
+import type { ArcRange, Shape } from '../types';
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
 
@@ -112,6 +112,9 @@ function ShapePanelInner({
 
   const bezierValue = shape.bezierOverride ?? globalBezier;
   const isCircle = shape.kind === 'circle';
+  const partial = isCircle && isPartialArc(shape.arc);
+  const arcOpen = partial && shape.arc!.style === 'open';
+  const showFill = isCircle ? !arcOpen : shape.closed;
   const typeLabel = isCircle ? 'circle' : shape.closed ? 'polygon' : 'line';
 
   return (
@@ -166,7 +169,7 @@ function ShapePanelInner({
         />
       </label>
 
-      {shape.closed && (
+      {showFill && (
         <label>
           <span>Fill</span>
           <div className="row">
@@ -197,6 +200,8 @@ function ShapePanelInner({
           </div>
         </label>
       )}
+
+      {isCircle && <ArcControls shape={shape} updateShape={updateShape} />}
 
       {!isCircle && (
         <label>
@@ -234,6 +239,80 @@ function ShapePanelInner({
         </button>
       </div>
     </section>
+  );
+}
+
+function ArcControls({
+  shape,
+  updateShape,
+}: {
+  shape: Shape;
+  updateShape: (id: string, patch: Partial<Shape>) => void;
+}) {
+  const arc = shape.arc;
+  const partial = isPartialArc(arc);
+  const enable = () => {
+    const next: ArcRange = arc ?? { start: 0, end: 180, style: 'chord' };
+    updateShape(shape.id, { arc: next });
+  };
+  const disable = () => updateShape(shape.id, { arc: undefined });
+  const setField = (patch: Partial<ArcRange>) => {
+    if (!arc) return;
+    updateShape(shape.id, { arc: { ...arc, ...patch } });
+  };
+
+  return (
+    <>
+      <label>
+        <span className="row">
+          <span style={{ flex: 1 }}>Partial arc</span>
+          <input
+            type="checkbox"
+            checked={partial}
+            onChange={(e) => (e.target.checked ? enable() : disable())}
+          />
+        </span>
+      </label>
+      {partial && arc && (
+        <>
+          <label>
+            <span>Start angle</span>
+            <input
+              type="number"
+              step={1}
+              value={arc.start}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) setField({ start: v });
+              }}
+            />
+          </label>
+          <label>
+            <span>End angle</span>
+            <input
+              type="number"
+              step={1}
+              value={arc.end}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) setField({ end: v });
+              }}
+            />
+          </label>
+          <label>
+            <span>Style</span>
+            <select
+              value={arc.style}
+              onChange={(e) => setField({ style: e.target.value as ArcRange['style'] })}
+            >
+              <option value="wedge">Wedge (pie slice)</option>
+              <option value="chord">Chord (D-shape)</option>
+              <option value="open">Open arc</option>
+            </select>
+          </label>
+        </>
+      )}
+    </>
   );
 }
 

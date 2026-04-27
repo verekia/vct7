@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { effectiveBezier } from '../store';
-import { dist, fmt, pointsToPath } from '../lib/geometry';
+import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
 import type { BoxSelect } from '../store';
 import type { Drawing, Point, ProjectSettings, Shape } from '../types';
@@ -226,6 +226,37 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
     const r = dist(shape.points[0], shape.points[1]);
+    if (isPartialArc(shape.arc)) {
+      const d = arcToPath(cx, cy, r, shape.arc);
+      const filled = shape.arc.style !== 'open';
+      return (
+        <g data-shape-id={shape.id}>
+          <path
+            d={d}
+            fill={filled ? shape.fill : 'none'}
+            stroke={shape.stroke}
+            strokeWidth={shape.strokeWidth}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+          <path
+            d={d}
+            className="shape-hit"
+            data-shape-id={shape.id}
+            fill={filled ? '#000' : 'none'}
+            stroke="#000"
+            strokeWidth={Math.max(10, shape.strokeWidth + 8)}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            pointerEvents={shape.locked ? 'none' : filled ? 'all' : 'stroke'}
+            opacity={0}
+            vectorEffect="non-scaling-stroke"
+          />
+        </g>
+      );
+    }
     return (
       <g data-shape-id={shape.id}>
         <circle
@@ -300,18 +331,24 @@ function SelectionLayer({
   showVertices: boolean;
   scale: number;
 }) {
-  const outline =
-    shape.kind === 'circle' && shape.points.length >= 2 ? (
-      <circle
-        cx={fmt(shape.points[0][0])}
-        cy={fmt(shape.points[0][1])}
-        r={fmt(dist(shape.points[0], shape.points[1]))}
-        className="selection-outline"
-        fill="none"
-      />
-    ) : (
+  let outline;
+  if (shape.kind === 'circle' && shape.points.length >= 2) {
+    const [cx, cy] = shape.points[0];
+    const r = dist(shape.points[0], shape.points[1]);
+    if (isPartialArc(shape.arc)) {
+      outline = (
+        <path d={arcToPath(cx, cy, r, shape.arc)} className="selection-outline" fill="none" />
+      );
+    } else {
+      outline = (
+        <circle cx={fmt(cx)} cy={fmt(cy)} r={fmt(r)} className="selection-outline" fill="none" />
+      );
+    }
+  } else {
+    outline = (
       <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
     );
+  }
   return (
     <g>
       {outline}
