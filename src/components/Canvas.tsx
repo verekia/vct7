@@ -15,7 +15,10 @@ interface ContainerSize {
 export function Canvas() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [size, setSize] = useState<ContainerSize>({ w: 800, h: 600 });
+  // Start at 0×0 so the fit effect's `size.w <= 1` gate skips the very first
+  // pass — otherwise it'd lock the initial fit to a hardcoded fallback (and
+  // the nonce gate prevents re-running once the real measurement arrives).
+  const [size, setSize] = useState<ContainerSize>({ w: 0, h: 0 });
 
   // Track container size to drive the SVG viewBox.
   useLayoutEffect(() => {
@@ -39,17 +42,28 @@ export function Canvas() {
     if (lastFitNonce.current === fitNonce) return;
     lastFitNonce.current = fitNonce;
     const pad = 40;
-    const scale = Math.min(
-      (size.w - pad * 2) / settings.width,
-      (size.h - pad * 2) / settings.height,
-    );
+    // Fit centers the artboard (= viewBox) in the viewport. The viewBox origin
+    // may be non-zero, so subtract `vbX*scale` from the centering offset to
+    // place the artboard's top-left where it belongs in world space.
+    const vbW = settings.viewBoxWidth;
+    const vbH = settings.viewBoxHeight;
+    const scale = Math.min((size.w - pad * 2) / vbW, (size.h - pad * 2) / vbH);
     const s = scale > 0 ? scale : 1;
     setView({
       scale: s,
-      x: (size.w - settings.width * s) / 2,
-      y: (size.h - settings.height * s) / 2,
+      x: (size.w - vbW * s) / 2 - settings.viewBoxX * s,
+      y: (size.h - vbH * s) / 2 - settings.viewBoxY * s,
     });
-  }, [fitNonce, size.w, size.h, settings.width, settings.height, setView]);
+  }, [
+    fitNonce,
+    size.w,
+    size.h,
+    settings.viewBoxX,
+    settings.viewBoxY,
+    settings.viewBoxWidth,
+    settings.viewBoxHeight,
+    setView,
+  ]);
 
   useCanvasInteractions(svgRef);
 
@@ -91,33 +105,31 @@ export function Canvas() {
         <g transform={transform}>
           {settings.bg === null && (
             <defs>
-              <CheckerPattern
-                id="vh-checker"
-                gridVisible={settings.gridVisible}
-                gridSize={settings.gridSize}
-              />
+              <CheckerPattern id="vh-checker" gridSize={settings.gridSize} scale={view.scale} />
             </defs>
           )}
           <rect
-            x={0}
-            y={0}
-            width={settings.width}
-            height={settings.height}
+            x={settings.viewBoxX}
+            y={settings.viewBoxY}
+            width={settings.viewBoxWidth}
+            height={settings.viewBoxHeight}
             fill={settings.bg === null ? 'url(#vh-checker)' : settings.bg}
           />
           {settings.gridVisible && settings.gridSize > 0 && (
             <GridLayer
               size={settings.gridSize}
-              boardW={settings.width}
-              boardH={settings.height}
+              boardX={settings.viewBoxX}
+              boardY={settings.viewBoxY}
+              boardW={settings.viewBoxWidth}
+              boardH={settings.viewBoxHeight}
               scale={view.scale}
             />
           )}
           <rect
-            x={0}
-            y={0}
-            width={settings.width}
-            height={settings.height}
+            x={settings.viewBoxX}
+            y={settings.viewBoxY}
+            width={settings.viewBoxWidth}
+            height={settings.viewBoxHeight}
             fill="none"
             stroke="#3a4150"
             strokeWidth={1}
@@ -127,7 +139,12 @@ export function Canvas() {
           {settings.clip && (
             <defs>
               <clipPath id="vh-artboard-clip">
-                <rect x={0} y={0} width={settings.width} height={settings.height} />
+                <rect
+                  x={settings.viewBoxX}
+                  y={settings.viewBoxY}
+                  width={settings.viewBoxWidth}
+                  height={settings.viewBoxHeight}
+                />
               </clipPath>
             </defs>
           )}
@@ -178,8 +195,8 @@ export function Canvas() {
               cursor={cursor}
               snapDisabled={snapDisabled}
               snapAngles={settings.snapAngles}
-              boardW={settings.width}
-              boardH={settings.height}
+              boardW={settings.viewBoxWidth}
+              boardH={settings.viewBoxHeight}
               bezier={settings.bezier}
               scale={view.scale}
             />
@@ -207,39 +224,48 @@ export function Canvas() {
   );
 }
 
-// Checkerboard tile size used when no project background is set. Snaps to the
-// project grid (visible only) when that lands within `[MIN, MAX]` so the
-// pattern boundaries land on grid lines; otherwise falls back to TARGET.
-const CHECKER_TARGET = 40;
-const CHECKER_MIN = 16;
-const CHECKER_MAX = 160;
+// Checker tile thresholds in **screen pixels**, so tiles stay roughly constant
+// across zoom levels. The actual tile size is converted to canvas units (the
+// pattern coordinate space) on the fly via `/ scale`.
+const CHECKER_TARGET_PX = 40;
+const CHECKER_MIN_PX = 24;
+const CHECKER_MAX_PX = 64;
 
-const computeCheckerSize = (gridVisible: boolean, gridSize: number): number => {
-  if (!gridVisible || !(gridSize > 0)) return CHECKER_TARGET;
-  // The check size must be an integer multiple of gridSize for boundaries to
-  // align — pick the multiple closest to the target within [MIN, MAX].
-  const n = Math.max(1, Math.round(CHECKER_TARGET / gridSize));
-  const tile = n * gridSize;
-  if (tile >= CHECKER_MIN && tile <= CHECKER_MAX) return tile;
-  // Grid too coarse for the multiple to fit (e.g. gridSize=200 > MAX). Try the
-  // smallest multiple that clears MIN — that always aligns even if larger than
-  // target, but still bail out if it busts MAX.
-  const m = Math.max(1, Math.ceil(CHECKER_MIN / gridSize));
-  const alt = m * gridSize;
-  if (alt <= CHECKER_MAX) return alt;
-  return CHECKER_TARGET;
+// Returns the tile size in canvas units. As long as the project has a grid
+// spacing (regardless of whether the grid is rendered), snaps the tile to
+// `gridSize · 2^k` so every grid line coincides with a tile boundary (or —
+// when zoomed in past the grid — every tile boundary lies on a 1/2^|k|
+// subdivision of the grid). The exponent is the one whose on-screen tile
+// size lands closest to the screen target while still inside [MIN, MAX].
+// This gives the checker a "subdivides as you zoom in" feel that stays
+// grid-aligned at any zoom level.
+const computeCheckerSize = (gridSize: number, scale: number): number => {
+  const safeScale = scale > 0 ? scale : 1;
+  const targetCanvas = CHECKER_TARGET_PX / safeScale;
+  if (!(gridSize > 0)) return targetCanvas;
+  const minCanvas = CHECKER_MIN_PX / safeScale;
+  const maxCanvas = CHECKER_MAX_PX / safeScale;
+  // Pick the exponent k closest to the screen target.
+  let exp = Math.round(Math.log2(targetCanvas / gridSize));
+  let tile = gridSize * 2 ** exp;
+  // The MAX/MIN ratio (≥ 2) guarantees at least one power-of-2 step fits in
+  // the band, so these loops settle quickly without oscillating.
+  while (tile > maxCanvas) {
+    exp -= 1;
+    tile = gridSize * 2 ** exp;
+  }
+  while (tile < minCanvas) {
+    exp += 1;
+    tile = gridSize * 2 ** exp;
+  }
+  // Adjusting up could overshoot MAX in pathological setups (very narrow
+  // band) — give up on grid snapping rather than emit something too large.
+  if (tile > maxCanvas) return targetCanvas;
+  return tile;
 };
 
-function CheckerPattern({
-  id,
-  gridVisible,
-  gridSize,
-}: {
-  id: string;
-  gridVisible: boolean;
-  gridSize: number;
-}) {
-  const s = computeCheckerSize(gridVisible, gridSize);
+function CheckerPattern({ id, gridSize, scale }: { id: string; gridSize: number; scale: number }) {
+  const s = computeCheckerSize(gridSize, scale);
   const t = s * 2;
   return (
     <pattern id={id} x={0} y={0} width={t} height={t} patternUnits="userSpaceOnUse">
@@ -252,11 +278,15 @@ function CheckerPattern({
 
 function GridLayer({
   size,
+  boardX,
+  boardY,
   boardW,
   boardH,
   scale,
 }: {
   size: number;
+  boardX: number;
+  boardY: number;
   boardW: number;
   boardH: number;
   scale: number;
@@ -266,10 +296,12 @@ function GridLayer({
   const lines = useMemo(() => {
     const xs: number[] = [];
     const ys: number[] = [];
-    for (let x = size; x < boardW; x += size) xs.push(x);
-    for (let y = size; y < boardH; y += size) ys.push(y);
+    // Lines start one cell in from the artboard origin and run up to (but not
+    // including) the right/bottom edge — borders are already drawn.
+    for (let x = boardX + size; x < boardX + boardW; x += size) xs.push(x);
+    for (let y = boardY + size; y < boardY + boardH; y += size) ys.push(y);
     return { xs, ys };
-  }, [size, boardW, boardH]);
+  }, [size, boardX, boardY, boardW, boardH]);
   if (screenSpacing < 4) return null;
   return (
     <g className="grid-layer" pointerEvents="none">
@@ -277,18 +309,18 @@ function GridLayer({
         <line
           key={`x${x}`}
           x1={fmt(x)}
-          y1={0}
+          y1={fmt(boardY)}
           x2={fmt(x)}
-          y2={fmt(boardH)}
+          y2={fmt(boardY + boardH)}
           vectorEffect="non-scaling-stroke"
         />
       ))}
       {lines.ys.map((y) => (
         <line
           key={`y${y}`}
-          x1={0}
+          x1={fmt(boardX)}
           y1={fmt(y)}
-          x2={fmt(boardW)}
+          x2={fmt(boardX + boardW)}
           y2={fmt(y)}
           vectorEffect="non-scaling-stroke"
         />
@@ -488,7 +520,7 @@ function VertexDragGuides({
   else if (shape.closed && n > 1) anchors.push(shape.points[n - 1]);
   if (index < n - 1) anchors.push(shape.points[index + 1]);
   else if (shape.closed && n > 1) anchors.push(shape.points[0]);
-  const rayLen = (settings.width + settings.height) * 2;
+  const rayLen = (settings.viewBoxWidth + settings.viewBoxHeight) * 2;
   return (
     <g>
       {anchors.map((a, ai) =>

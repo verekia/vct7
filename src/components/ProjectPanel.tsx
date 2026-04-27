@@ -50,6 +50,21 @@ export function ProjectPanel() {
   useEffect(() => setWidthText(String(settings.width)), [settings.width]);
   useEffect(() => setHeightText(String(settings.height)), [settings.height]);
 
+  const [vbXText, setVbXText] = useState(String(settings.viewBoxX));
+  const [vbYText, setVbYText] = useState(String(settings.viewBoxY));
+  const [vbWText, setVbWText] = useState(String(settings.viewBoxWidth));
+  const [vbHText, setVbHText] = useState(String(settings.viewBoxHeight));
+  useEffect(() => setVbXText(String(settings.viewBoxX)), [settings.viewBoxX]);
+  useEffect(() => setVbYText(String(settings.viewBoxY)), [settings.viewBoxY]);
+  useEffect(() => setVbWText(String(settings.viewBoxWidth)), [settings.viewBoxWidth]);
+  useEffect(() => setVbHText(String(settings.viewBoxHeight)), [settings.viewBoxHeight]);
+
+  const viewBoxMatchesCanvas =
+    settings.viewBoxX === 0 &&
+    settings.viewBoxY === 0 &&
+    settings.viewBoxWidth === settings.width &&
+    settings.viewBoxHeight === settings.height;
+
   const [gridSizeText, setGridSizeText] = useState(String(settings.gridSize));
   useEffect(() => setGridSizeText(String(settings.gridSize)), [settings.gridSize]);
 
@@ -121,7 +136,7 @@ export function ProjectPanel() {
       </label>
 
       <label>
-        <span>Canvas size</span>
+        <span title="SVG width / height attributes — output rendered size">Output size</span>
         <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="number"
@@ -154,6 +169,77 @@ export function ProjectPanel() {
             />
             <span>Clip</span>
           </label>
+        </div>
+      </label>
+
+      <label>
+        <span title="SVG viewBox — drawing coordinate space and the editor artboard">
+          ViewBox
+        </span>
+        <div className="flex gap-1.5 items-center flex-wrap">
+          <input
+            type="number"
+            value={vbXText}
+            title="x"
+            onChange={(e) => setVbXText(e.target.value)}
+            onBlur={() => {
+              const v = parseFloat(vbXText);
+              if (Number.isFinite(v)) setSettings({ viewBoxX: v });
+              else setVbXText(String(settings.viewBoxX));
+            }}
+          />
+          <input
+            type="number"
+            value={vbYText}
+            title="y"
+            onChange={(e) => setVbYText(e.target.value)}
+            onBlur={() => {
+              const v = parseFloat(vbYText);
+              if (Number.isFinite(v)) setSettings({ viewBoxY: v });
+              else setVbYText(String(settings.viewBoxY));
+            }}
+          />
+          <input
+            type="number"
+            min={1}
+            value={vbWText}
+            title="width"
+            onChange={(e) => setVbWText(e.target.value)}
+            onBlur={() => {
+              const v = parseFloat(vbWText);
+              if (Number.isFinite(v) && v > 0) setSettings({ viewBoxWidth: v });
+              else setVbWText(String(settings.viewBoxWidth));
+            }}
+          />
+          <span>×</span>
+          <input
+            type="number"
+            min={1}
+            value={vbHText}
+            title="height"
+            onChange={(e) => setVbHText(e.target.value)}
+            onBlur={() => {
+              const v = parseFloat(vbHText);
+              if (Number.isFinite(v) && v > 0) setSettings({ viewBoxHeight: v });
+              else setVbHText(String(settings.viewBoxHeight));
+            }}
+          />
+          <button
+            type="button"
+            className="text-[11px] px-[7px] py-[2px]"
+            disabled={viewBoxMatchesCanvas}
+            title="Reset viewBox to 0 0 (output width) (output height)"
+            onClick={() =>
+              setSettings({
+                viewBoxX: 0,
+                viewBoxY: 0,
+                viewBoxWidth: settings.width,
+                viewBoxHeight: settings.height,
+              })
+            }
+          >
+            Match
+          </button>
         </div>
       </label>
 

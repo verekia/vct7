@@ -99,8 +99,24 @@ export interface ProjectSettings {
    * the exported SVG omits the bg rect (transparent).
    */
   bg: string | null;
+  /**
+   * Output rendered size — emitted as the SVG `width`/`height` attributes. Decoupled
+   * from the viewBox so a small SVG can hold high-precision coordinates (e.g.
+   * `width=100, viewBoxWidth=1000` renders the 1000-unit drawing scaled to 100px).
+   */
   width: number;
   height: number;
+  /**
+   * SVG viewBox — defines the user coordinate system shapes live in and the
+   * artboard the editor draws. Defaults to `0 0 width height`, matching the
+   * legacy single-dimension behavior. Coordinates of every shape are in this
+   * space; changing the viewBox does NOT move shapes (just the visible window
+   * onto them).
+   */
+  viewBoxX: number;
+  viewBoxY: number;
+  viewBoxWidth: number;
+  viewBoxHeight: number;
   /** Grid spacing in canvas units. Must be > 0 to be usable. */
   gridSize: number;
   gridVisible: boolean;

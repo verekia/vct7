@@ -18,13 +18,17 @@ const parseArcAttr = (raw: string | null): ArcRange | undefined => {
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
-  bezier: 0,
-  bg: '#ffffff',
-  width: 1000,
-  height: 1000,
-  gridSize: 100,
+  bezier: 0.5,
+  bg: null,
+  width: 100,
+  height: 100,
+  viewBoxX: 0,
+  viewBoxY: 0,
+  viewBoxWidth: 100,
+  viewBoxHeight: 100,
+  gridSize: 5,
   gridVisible: false,
-  gridSnap: false,
+  gridSnap: true,
   clip: false,
 };
 
@@ -40,9 +44,13 @@ export const resetIds = (n = 1): void => {
 export function serializeProject(settings: ProjectSettings, shapes: Shape[]): string {
   const lines: string[] = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+  const vbX = settings.viewBoxX;
+  const vbY = settings.viewBoxY;
+  const vbW = settings.viewBoxWidth;
+  const vbH = settings.viewBoxHeight;
   lines.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${fmt(settings.width)} ${fmt(
-      settings.height,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${fmt(vbX)} ${fmt(vbY)} ${fmt(vbW)} ${fmt(
+      vbH,
     )}" width="${fmt(settings.width)}" height="${fmt(settings.height)}"` +
       ` data-vh-snap-angles="${escapeAttr(settings.snapAngles.join(','))}"` +
       ` data-vh-bezier="${fmt(settings.bezier)}"` +
@@ -56,16 +64,16 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
   );
   if (settings.bg !== null) {
     lines.push(
-      `  <rect x="0" y="0" width="${fmt(settings.width)}" height="${fmt(
-        settings.height,
+      `  <rect x="${fmt(vbX)}" y="${fmt(vbY)}" width="${fmt(vbW)}" height="${fmt(
+        vbH,
       )}" fill="${escapeAttr(settings.bg)}"/>`,
     );
   }
   if (settings.clip) {
     lines.push(
-      `  <defs><clipPath id="vh-artboard-clip"><rect x="0" y="0" width="${fmt(
-        settings.width,
-      )}" height="${fmt(settings.height)}"/></clipPath></defs>`,
+      `  <defs><clipPath id="vh-artboard-clip"><rect x="${fmt(vbX)}" y="${fmt(vbY)}" width="${fmt(
+        vbW,
+      )}" height="${fmt(vbH)}"/></clipPath></defs>`,
     );
     lines.push(`  <g clip-path="url(#vh-artboard-clip)">`);
   }
@@ -149,18 +157,36 @@ export function parseProject(text: string): ParsedProject {
 
   const settings: ProjectSettings = { ...DEFAULT_SETTINGS };
 
-  const vb = svg.getAttribute('viewBox');
-  if (vb) {
-    const parts = vb.split(/[\s,]+/).map(Number);
+  // Parse the viewBox and width/height attributes independently. When a file
+  // has only one, derive the other so legacy SVGs (typical case: viewBox only)
+  // round-trip with width === viewBoxWidth, height === viewBoxHeight.
+  const vbAttr = svg.getAttribute('viewBox');
+  let vbParts: [number, number, number, number] | null = null;
+  if (vbAttr) {
+    const parts = vbAttr.split(/[\s,]+/).map(Number);
     if (parts.length === 4 && parts.every(Number.isFinite)) {
-      settings.width = parts[2];
-      settings.height = parts[3];
+      vbParts = [parts[0], parts[1], parts[2], parts[3]];
     }
-  } else {
-    const w = parseFloat(svg.getAttribute('width') ?? '');
-    const h = parseFloat(svg.getAttribute('height') ?? '');
-    if (Number.isFinite(w)) settings.width = w;
-    if (Number.isFinite(h)) settings.height = h;
+  }
+  const widthAttr = parseFloat(svg.getAttribute('width') ?? '');
+  const heightAttr = parseFloat(svg.getAttribute('height') ?? '');
+  if (vbParts) {
+    settings.viewBoxX = vbParts[0];
+    settings.viewBoxY = vbParts[1];
+    settings.viewBoxWidth = vbParts[2];
+    settings.viewBoxHeight = vbParts[3];
+  }
+  if (Number.isFinite(widthAttr)) settings.width = widthAttr;
+  else if (vbParts) settings.width = vbParts[2];
+  if (Number.isFinite(heightAttr)) settings.height = heightAttr;
+  else if (vbParts) settings.height = vbParts[3];
+  // No viewBox in the source: default it to (0, 0, width, height) so the
+  // editor's drawing extent matches the legacy interpretation.
+  if (!vbParts) {
+    settings.viewBoxX = 0;
+    settings.viewBoxY = 0;
+    settings.viewBoxWidth = settings.width;
+    settings.viewBoxHeight = settings.height;
   }
 
   const angles = svg.getAttribute('data-vh-snap-angles');

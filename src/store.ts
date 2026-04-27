@@ -183,7 +183,7 @@ export const useStore = create<AppState>((set) => ({
   selectedShapeIds: [],
   selectionAnchorId: null,
   selectedVertices: [],
-  tool: 'line',
+  tool: 'polygon',
   drawing: null,
   view: { ...DEFAULT_VIEW },
   settings: { ...DEFAULT_SETTINGS },

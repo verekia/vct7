@@ -8,6 +8,10 @@ const sampleSettings: ProjectSettings = {
   bg: '#ffeedd',
   width: 400,
   height: 300,
+  viewBoxX: 0,
+  viewBoxY: 0,
+  viewBoxWidth: 400,
+  viewBoxHeight: 300,
   gridSize: 25,
   gridVisible: true,
   gridSnap: false,
@@ -262,8 +266,50 @@ describe('parseProject round-trip', () => {
     const parsed = parseProject(svg);
     expect(parsed.settings.width).toBe(200);
     expect(parsed.settings.height).toBe(100);
-    expect(parsed.settings.bezier).toBe(0);
+    expect(parsed.settings.viewBoxWidth).toBe(200);
+    expect(parsed.settings.viewBoxHeight).toBe(100);
     expect(parsed.shapes).toEqual([]);
+  });
+
+  // The viewBox and the SVG width/height attributes are independent dimensions:
+  // the viewBox is the inner coordinate system and the artboard the editor draws,
+  // while width/height are the output rendered size. They round-trip separately.
+  it('round-trips a viewBox distinct from the output width/height', () => {
+    const settings: ProjectSettings = {
+      ...sampleSettings,
+      width: 100,
+      height: 100,
+      viewBoxX: 10,
+      viewBoxY: 20,
+      viewBoxWidth: 1000,
+      viewBoxHeight: 800,
+    };
+    const text = serializeProject(settings, []);
+    expect(text).toContain('viewBox="10 20 1000 800"');
+    expect(text).toContain('width="100"');
+    expect(text).toContain('height="100"');
+    // The bg rect covers the visible viewBox region, not the output box.
+    expect(text).toContain('<rect x="10" y="20" width="1000" height="800"');
+    const parsed = parseProject(text);
+    expect(parsed.settings.viewBoxX).toBe(10);
+    expect(parsed.settings.viewBoxY).toBe(20);
+    expect(parsed.settings.viewBoxWidth).toBe(1000);
+    expect(parsed.settings.viewBoxHeight).toBe(800);
+    expect(parsed.settings.width).toBe(100);
+    expect(parsed.settings.height).toBe(100);
+  });
+
+  // SVGs created outside the editor often lack a viewBox; falling back to
+  // (0, 0, width, height) keeps drawing extent matching the legacy semantics.
+  it('parses width/height with no viewBox by deriving the viewBox from them', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"/>`;
+    const parsed = parseProject(svg);
+    expect(parsed.settings.width).toBe(640);
+    expect(parsed.settings.height).toBe(480);
+    expect(parsed.settings.viewBoxX).toBe(0);
+    expect(parsed.settings.viewBoxY).toBe(0);
+    expect(parsed.settings.viewBoxWidth).toBe(640);
+    expect(parsed.settings.viewBoxHeight).toBe(480);
   });
 
   // Per-shape blend mode round-trips via data-vh-blend, and is reflected in
