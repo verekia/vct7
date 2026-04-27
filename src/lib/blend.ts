@@ -152,5 +152,5 @@ export function findColorBelow(shapes: Shape[], settings: ProjectSettings, shape
     const rgb = parseHex(sh.fill);
     if (rgb) return rgb;
   }
-  return parseHex(settings.bg) ?? [1, 1, 1];
+  return (settings.bg ? parseHex(settings.bg) : null) ?? [1, 1, 1];
 }

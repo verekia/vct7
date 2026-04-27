@@ -89,7 +89,22 @@ export function Canvas() {
         xmlns="http://www.w3.org/2000/svg"
       >
         <g transform={transform}>
-          <rect x={0} y={0} width={settings.width} height={settings.height} fill={settings.bg} />
+          {settings.bg === null && (
+            <defs>
+              <CheckerPattern
+                id="vh-checker"
+                gridVisible={settings.gridVisible}
+                gridSize={settings.gridSize}
+              />
+            </defs>
+          )}
+          <rect
+            x={0}
+            y={0}
+            width={settings.width}
+            height={settings.height}
+            fill={settings.bg === null ? 'url(#vh-checker)' : settings.bg}
+          />
           {settings.gridVisible && settings.gridSize > 0 && (
             <GridLayer
               size={settings.gridSize}
@@ -182,6 +197,49 @@ export function Canvas() {
         <span>{tool}</span>
       </div>
     </div>
+  );
+}
+
+// Checkerboard tile size used when no project background is set. Snaps to the
+// project grid (visible only) when that lands within `[MIN, MAX]` so the
+// pattern boundaries land on grid lines; otherwise falls back to TARGET.
+const CHECKER_TARGET = 40;
+const CHECKER_MIN = 16;
+const CHECKER_MAX = 160;
+
+const computeCheckerSize = (gridVisible: boolean, gridSize: number): number => {
+  if (!gridVisible || !(gridSize > 0)) return CHECKER_TARGET;
+  // The check size must be an integer multiple of gridSize for boundaries to
+  // align — pick the multiple closest to the target within [MIN, MAX].
+  const n = Math.max(1, Math.round(CHECKER_TARGET / gridSize));
+  const tile = n * gridSize;
+  if (tile >= CHECKER_MIN && tile <= CHECKER_MAX) return tile;
+  // Grid too coarse for the multiple to fit (e.g. gridSize=200 > MAX). Try the
+  // smallest multiple that clears MIN — that always aligns even if larger than
+  // target, but still bail out if it busts MAX.
+  const m = Math.max(1, Math.ceil(CHECKER_MIN / gridSize));
+  const alt = m * gridSize;
+  if (alt <= CHECKER_MAX) return alt;
+  return CHECKER_TARGET;
+};
+
+function CheckerPattern({
+  id,
+  gridVisible,
+  gridSize,
+}: {
+  id: string;
+  gridVisible: boolean;
+  gridSize: number;
+}) {
+  const s = computeCheckerSize(gridVisible, gridSize);
+  const t = s * 2;
+  return (
+    <pattern id={id} x={0} y={0} width={t} height={t} patternUnits="userSpaceOnUse">
+      <rect x={0} y={0} width={t} height={t} fill="#bcbcbc" />
+      <rect x={0} y={0} width={s} height={s} fill="#aeaeae" />
+      <rect x={s} y={s} width={s} height={s} fill="#aeaeae" />
+    </pattern>
   );
 }
 

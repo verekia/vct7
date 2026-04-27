@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ANGLE_PRESETS } from '../lib/snap';
 
@@ -35,8 +35,15 @@ export function ProjectPanel() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
 
-  const [bgText, setBgText] = useState(settings.bg);
-  useEffect(() => setBgText(settings.bg), [settings.bg]);
+  const bgEnabled = settings.bg !== null;
+  const [bgText, setBgText] = useState(settings.bg ?? '');
+  useEffect(() => setBgText(settings.bg ?? ''), [settings.bg]);
+  // Remember the last-used color so toggling the checkbox off and back on
+  // restores it instead of resetting to white.
+  const lastBgRef = useRef<string>(settings.bg ?? '#ffffff');
+  useEffect(() => {
+    if (settings.bg) lastBgRef.current = settings.bg;
+  }, [settings.bg]);
 
   const [widthText, setWidthText] = useState(String(settings.width));
   const [heightText, setHeightText] = useState(String(settings.height));
@@ -88,18 +95,28 @@ export function ProjectPanel() {
         <span>Background</span>
         <div className="flex gap-1.5 items-center flex-wrap">
           <input
+            type="checkbox"
+            checked={bgEnabled}
+            title="Toggle background"
+            onChange={(e) =>
+              setSettings({ bg: e.target.checked ? lastBgRef.current : null })
+            }
+          />
+          <input
             type="color"
-            value={toLongHex(settings.bg)}
+            value={toLongHex(settings.bg ?? lastBgRef.current)}
+            disabled={!bgEnabled}
             onChange={(e) => setSettings({ bg: e.target.value })}
           />
           <input
             type="text"
-            className="flex-1 min-w-0"
+            className="w-[72px]"
             value={bgText}
+            disabled={!bgEnabled}
             onChange={(e) => setBgText(e.target.value)}
             onBlur={() => {
               if (HEX_RE.test(bgText)) setSettings({ bg: bgText });
-              else setBgText(settings.bg);
+              else setBgText(settings.bg ?? '');
             }}
           />
         </div>

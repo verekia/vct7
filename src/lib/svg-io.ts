@@ -46,17 +46,21 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     )}" width="${fmt(settings.width)}" height="${fmt(settings.height)}"` +
       ` data-vh-snap-angles="${escapeAttr(settings.snapAngles.join(','))}"` +
       ` data-vh-bezier="${fmt(settings.bezier)}"` +
-      ` data-vh-bg="${escapeAttr(settings.bg)}"` +
+      (settings.bg === null
+        ? ` data-vh-no-bg="true"`
+        : ` data-vh-bg="${escapeAttr(settings.bg)}"`) +
       ` data-vh-grid-size="${fmt(settings.gridSize)}"` +
       ` data-vh-grid-visible="${settings.gridVisible}"` +
       ` data-vh-grid-snap="${settings.gridSnap}"` +
       ` data-vh-clip="${settings.clip}">`,
   );
-  lines.push(
-    `  <rect x="0" y="0" width="${fmt(settings.width)}" height="${fmt(
-      settings.height,
-    )}" fill="${escapeAttr(settings.bg)}"/>`,
-  );
+  if (settings.bg !== null) {
+    lines.push(
+      `  <rect x="0" y="0" width="${fmt(settings.width)}" height="${fmt(
+        settings.height,
+      )}" fill="${escapeAttr(settings.bg)}"/>`,
+    );
+  }
   if (settings.clip) {
     lines.push(
       `  <defs><clipPath id="vh-artboard-clip"><rect x="0" y="0" width="${fmt(
@@ -174,8 +178,12 @@ export function parseProject(text: string): ParsedProject {
     if (Number.isFinite(v)) settings.bezier = v;
   }
 
-  const bg = svg.getAttribute('data-vh-bg');
-  if (bg) settings.bg = bg;
+  if (svg.getAttribute('data-vh-no-bg') === 'true') {
+    settings.bg = null;
+  } else {
+    const bg = svg.getAttribute('data-vh-bg');
+    if (bg) settings.bg = bg;
+  }
 
   const gridSize = svg.getAttribute('data-vh-grid-size');
   if (gridSize) {

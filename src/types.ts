@@ -93,8 +93,12 @@ export interface ProjectSettings {
   snapAngles: number[];
   /** Global corner rounding amount, 0..1. */
   bezier: number;
-  /** Background color (also rendered as a `<rect>` so the SVG previews correctly). */
-  bg: string;
+  /**
+   * Background color (also rendered as a `<rect>` so the SVG previews correctly).
+   * `null` means no background — the canvas shows a checkerboard for contrast and
+   * the exported SVG omits the bg rect (transparent).
+   */
+  bg: string | null;
   width: number;
   height: number;
   /** Grid spacing in canvas units. Must be > 0 to be usable. */
