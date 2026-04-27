@@ -173,9 +173,7 @@ export function ProjectPanel() {
       </label>
 
       <label>
-        <span title="SVG viewBox — drawing coordinate space and the editor artboard">
-          ViewBox
-        </span>
+        <span title="SVG viewBox — drawing coordinate space and the editor artboard">ViewBox</span>
         <div className="flex gap-1.5 items-center flex-wrap">
           <input
             type="number"

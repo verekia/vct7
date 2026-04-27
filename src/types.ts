@@ -25,10 +25,17 @@ export interface ArcRange {
  * perimeter as an actual point (rather than a scalar radius) lets generic
  * code — bbox, snap, vertex drag — keep operating on points uniformly, and
  * gives the user a draggable "resize handle" for free.
+ *
+ * Glyph shapes store baked text outlines. `points[0]` is the top-left anchor in
+ * canvas coordinates and `points[1]` is `topLeft + (width, height)`. The actual
+ * vector geometry lives in `glyphs.d` as a single SVG path string anchored at
+ * (0, 0); rendering applies a translate(topLeft) to position it. Both points
+ * always move together — vertex handles aren't shown — so the block translates
+ * as one unit while still benefiting from the existing snap/bbox machinery.
  */
 export interface Shape {
   id: string;
-  kind?: 'path' | 'circle';
+  kind?: 'path' | 'circle' | 'glyphs';
   points: Point[];
   closed: boolean;
   fill: string;
@@ -49,6 +56,37 @@ export interface Shape {
   blendMode?: BlendMode;
   /** Element opacity in [0, 1]. Absent / `1` means fully opaque (the default). */
   opacity?: number;
+  /** Baked text outline data. Only meaningful when `kind === 'glyphs'`. */
+  glyphs?: GlyphData;
+  /**
+   * Rotation in degrees, applied around the visual bbox center. Composes with
+   * `scale` and (for glyphs) the local-coord translate. Absent / `0` means no
+   * rotation. Stored as a transform on top of `points` rather than baked, so
+   * the user can adjust it freely; "Apply transform" bakes the current value
+   * into the geometry and resets back to `0`.
+   */
+  rotation?: number;
+  /**
+   * Uniform scale factor, applied around the visual bbox center. Absent / `1`
+   * means no scaling. Same baking semantics as `rotation`.
+   */
+  scale?: number;
+}
+
+/**
+ * Vectorized text payload. `d` is the combined SVG path data for every glyph,
+ * anchored so that the visible bbox starts at (0, 0) — the renderer just
+ * translates by the shape's top-left. `text` / `fontFamily` / `fontSize` are
+ * informational only; once vectorized, the text is "frozen" — the path data is
+ * the source of truth and does not get re-rasterized.
+ */
+export interface GlyphData {
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  d: string;
+  width: number;
+  height: number;
 }
 
 export type BlendMode =

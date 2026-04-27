@@ -1,7 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import { useStore, type AppState } from '../store';
 import { applySnap, distancePoints, rayIntersections } from '../lib/snap';
-import { dist } from '../lib/geometry';
+import { applyTransformToPoint, hasTransform, visualBBox } from '../lib/transform';
 import type { Point, Shape } from '../types';
 
 const CLOSE_POLYGON_PX = 12;
@@ -102,9 +102,12 @@ const collectVertexTargets = (state: AppState, exclude: DragVertexState | null):
   // alongside the cursor and would create false magnetic locks if included.
   const excludedIndices = exclude ? new Set(exclude.indices) : null;
   for (const shape of state.shapes) {
+    const transformed = hasTransform(shape);
     for (let i = 0; i < shape.points.length; i++) {
       if (exclude && exclude.shapeId === shape.id && excludedIndices!.has(i)) continue;
-      targets.push(shape.points[i]);
+      // Snap targets need to live where the user *sees* the vertex, so apply
+      // the shape's rotation/scale before exposing them.
+      targets.push(transformed ? applyTransformToPoint(shape, shape.points[i]) : shape.points[i]);
     }
   }
   if (state.drawing) {
@@ -122,23 +125,11 @@ interface AABB {
 }
 
 const shapeBBox = (shape: Shape): AABB | null => {
-  if (shape.kind === 'circle' && shape.points.length >= 2) {
-    const [cx, cy] = shape.points[0];
-    const r = dist(shape.points[0], shape.points[1]);
-    return { minX: cx - r, minY: cy - r, maxX: cx + r, maxY: cy + r };
-  }
   if (shape.points.length === 0) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const [x, y] of shape.points) {
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
-  }
-  return { minX, minY, maxX, maxY };
+  // visualBBox applies the shape's rotation/scale + handles circle radius and
+  // glyph local extents — keeps marquee selection honest for transformed shapes.
+  const b = visualBBox(shape);
+  return { minX: b.x, minY: b.y, maxX: b.x + b.w, maxY: b.y + b.h };
 };
 
 const intersects = (a: AABB, b: AABB): boolean =>
@@ -444,12 +435,18 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         // When a single shape is already selected, the marquee picks vertices
         // of *that* shape instead of shapes — the user has expressed intent to
         // operate on one layer, so dragging on the canvas refines the
-        // operation to the points of that layer.
-        if (state.selectedShapeIds.length === 1) {
+        // operation to the points of that layer. Glyph shapes are excluded
+        // (their corner points are bbox-only, not user-editable vertices) —
+        // marquee falls back to shape mode.
+        const onlyShape =
+          state.selectedShapeIds.length === 1
+            ? state.shapes.find((sh) => sh.id === state.selectedShapeIds[0])
+            : null;
+        if (onlyShape && onlyShape.kind !== 'glyphs') {
           marquee = {
             start: pendingSelect.startCanvas,
             mode: 'vertex',
-            shapeId: state.selectedShapeIds[0],
+            shapeId: onlyShape.id,
           };
         } else {
           marquee = { start: pendingSelect.startCanvas, mode: 'shape' };

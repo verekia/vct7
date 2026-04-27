@@ -12,9 +12,10 @@ const TOOLS: { id: Tool; label: string; key: string; icon: () => ReactElement }[
 export function Toolbar() {
   const tool = useStore((s) => s.tool);
   const setTool = useStore((s) => s.setTool);
+  const setFontDialogOpen = useStore((s) => s.setFontDialogOpen);
 
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1 items-center">
       {TOOLS.map((t) => {
         const Icon = t.icon;
         const isActive = tool === t.id;
@@ -34,6 +35,18 @@ export function Toolbar() {
           </button>
         );
       })}
+      {/* "Text" is an insert action, not a drawing mode — clicking opens the
+          font dialog and the active tool stays put. */}
+      <span className="w-px h-5 bg-line mx-1" aria-hidden />
+      <button
+        type="button"
+        className="flex items-center justify-center w-7 h-7 p-0 text-muted"
+        title="Add text (T)"
+        aria-label="Add text"
+        onClick={() => setFontDialogOpen(true)}
+      >
+        <TextIcon />
+      </button>
     </div>
   );
 }
@@ -88,6 +101,20 @@ function CircleIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14">
       <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function TextIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14">
+      <path
+        d="M3 3h10v2.2M8 3v10M5 13h6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

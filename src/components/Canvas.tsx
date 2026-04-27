@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { useStore } from '../store';
 import { effectiveBezier } from '../store';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry';
+import { composeTransformString, hasTransform } from '../lib/transform';
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
 import type { BoxSelect } from '../store';
 import type { Drawing, Point, ProjectSettings, Shape } from '../types';
@@ -333,6 +334,39 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
   const blendStyle: CSSProperties | undefined =
     shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
   const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined;
+  // The wrapping `<g>` carries the composed transform so rotation/scale (and,
+  // for glyphs, the local-to-canvas translate) all live in one DOM node.
+  const transformAttr = composeTransformString(shape) || undefined;
+  if (shape.kind === 'glyphs' && shape.glyphs && shape.points.length >= 2) {
+    const { d, width, height } = shape.glyphs;
+    return (
+      <g data-shape-id={shape.id} transform={transformAttr}>
+        <path
+          d={d}
+          fill={shape.fill}
+          stroke={shape.stroke === 'none' ? undefined : shape.stroke}
+          strokeWidth={shape.stroke === 'none' ? undefined : shape.strokeWidth}
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+          style={blendStyle}
+          opacity={opacity}
+        />
+        {/* Hit area = the whole bbox, since glyph paths have holes / gaps the
+            user wouldn't expect to fall through. */}
+        <rect
+          x={0}
+          y={0}
+          width={fmt(width)}
+          height={fmt(height)}
+          className="shape-hit"
+          data-shape-id={shape.id}
+          fill="#000"
+          pointerEvents={shape.locked ? 'none' : 'all'}
+          opacity={0}
+        />
+      </g>
+    );
+  }
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
     const r = dist(shape.points[0], shape.points[1]);
@@ -340,7 +374,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
       const d = arcToPath(cx, cy, r, shape.arc);
       const filled = shape.arc.style !== 'open';
       return (
-        <g data-shape-id={shape.id}>
+        <g data-shape-id={shape.id} transform={transformAttr}>
           <path
             d={d}
             fill={filled ? shape.fill : 'none'}
@@ -370,7 +404,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
       );
     }
     return (
-      <g data-shape-id={shape.id}>
+      <g data-shape-id={shape.id} transform={transformAttr}>
         <circle
           cx={fmt(cx)}
           cy={fmt(cy)}
@@ -401,7 +435,7 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
   }
   const d = pointsToPath(shape.points, shape.closed, bezier);
   return (
-    <g data-shape-id={shape.id}>
+    <g data-shape-id={shape.id} transform={transformAttr}>
       <path
         d={d}
         fill={shape.closed ? shape.fill : 'none'}
@@ -448,6 +482,31 @@ function SelectionLayer({
   scale: number;
 }) {
   const selectedSet = useMemo(() => new Set(selectedIndices), [selectedIndices]);
+  // Same composed transform as ShapeNode so the dashed outline + vertex handles
+  // sit on top of the rendered shape regardless of rotation/scale.
+  const transformAttr = composeTransformString(shape) || undefined;
+  // Vertex handles are pre-transform anchors. Once a transform is applied they
+  // would render at the *transformed* positions but a drag would set the
+  // underlying point in canvas coords without inverting — making the visual
+  // jump. Cleanest UX: hide them, force the user to bake the transform first.
+  const transformed = hasTransform(shape);
+  // Glyphs render the dashed bbox as their outline — and never expose vertex
+  // handles, since the block always moves as a single unit.
+  if (shape.kind === 'glyphs' && shape.glyphs && shape.points.length >= 2) {
+    const { width, height } = shape.glyphs;
+    return (
+      <g transform={transformAttr}>
+        <rect
+          x={0}
+          y={0}
+          width={fmt(width)}
+          height={fmt(height)}
+          className="selection-outline"
+          fill="none"
+        />
+      </g>
+    );
+  }
   let outline;
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
@@ -467,9 +526,10 @@ function SelectionLayer({
     );
   }
   return (
-    <g>
+    <g transform={transformAttr}>
       {outline}
       {showVertices &&
+        !transformed &&
         shape.points.map((p, i) => (
           <circle
             key={i}

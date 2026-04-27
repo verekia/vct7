@@ -5,6 +5,7 @@ import { ShapePanel } from './components/ShapePanel';
 import { LayerPanel } from './components/LayerPanel';
 import { Canvas } from './components/Canvas';
 import { Statusbar } from './components/Statusbar';
+import { FontDialog } from './components/FontDialog';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useStore } from './store';
 import { openDroppedFile } from './lib/file-ops';
@@ -77,6 +78,7 @@ export function App() {
         </aside>
       </main>
       <Statusbar />
+      <FontDialog />
     </>
   );
 }

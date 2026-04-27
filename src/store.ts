@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import type { Drawing, Point, ProjectSettings, Shape, Tool, ViewState } from './types';
+import type { Drawing, GlyphData, Point, ProjectSettings, Shape, Tool, ViewState } from './types';
 import { DEFAULT_SETTINGS, makeId } from './lib/svg-io';
 import { blendColor, findColorBelow, mix, parseHex, toHex } from './lib/blend';
+import { applyTransformToPoint, hasTransform, shapeRotation } from './lib/transform';
 
 export interface SelectedVertex {
   shapeId: string;
@@ -86,6 +87,8 @@ export interface AppState {
   dirty: boolean;
   /** Bumped when the canvas should re-fit the artboard to the viewport. */
   fitNonce: number;
+  /** Modal "Add text" dialog visibility. The dialog itself owns its inputs. */
+  fontDialogOpen: boolean;
   /** History stacks for undo/redo. Entries snapshot `{shapes, settings}` only. */
   past: HistoryEntry[];
   future: HistoryEntry[];
@@ -104,6 +107,13 @@ export interface AppState {
   appendDrawingPoint: (p: Point) => void;
   cancelDrawing: () => void;
   commitDrawing: (closed: boolean) => void;
+  /** Open / close the "Add text" dialog. */
+  setFontDialogOpen: (v: boolean) => void;
+  /**
+   * Insert a vectorized text shape, centered on the current artboard. Selects
+   * it so the user can immediately tweak fill / position from the side panel.
+   */
+  addGlyphs: (data: GlyphData) => void;
   /** Replace selection with [id] (or clear if null). Updates the range anchor. */
   selectShape: (id: string | null) => void;
   /** Replace selection with the given ids. Anchor becomes the last id, or null. */
@@ -158,6 +168,14 @@ export interface AppState {
    * first — applyOpacity always uses straight α-over.
    */
   applyOpacity: (ids: string[]) => void;
+  /**
+   * Bake `rotation` / `scale` into `points` (transformed around the shape's
+   * bbox center) and reset both back to identity. Glyph shapes are skipped:
+   * their geometry lives in `glyphs.d` which we'd need a path-string parser to
+   * mutate; for now glyphs keep their transform live. Partial-arc circles also
+   * shift `arc.start` / `arc.end` so the wedge keeps its visual orientation.
+   */
+  applyTransform: (ids: string[]) => void;
   setProject: (settings: ProjectSettings, shapes: Shape[]) => void;
   newProject: () => void;
   setFileMeta: (name: string, handle: unknown) => void;
@@ -199,6 +217,7 @@ export const useStore = create<AppState>((set) => ({
   fileHandle: null,
   dirty: false,
   fitNonce: 0,
+  fontDialogOpen: false,
   past: [],
   future: [],
 
@@ -217,6 +236,42 @@ export const useStore = create<AppState>((set) => ({
   setVertexDragging: (v) => set({ vertexDragging: v }),
   setSnapTarget: (p) => set({ snapTarget: p }),
   setBoxSelect: (b) => set({ boxSelect: b }),
+
+  setFontDialogOpen: (v) => set({ fontDialogOpen: v }),
+  addGlyphs: (data) =>
+    set((s) => {
+      const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2;
+      const cy = s.settings.viewBoxY + s.settings.viewBoxHeight / 2;
+      const tlx = cx - data.width / 2;
+      const tly = cy - data.height / 2;
+      const newShape: Shape = {
+        id: makeId(),
+        kind: 'glyphs',
+        // points[0] = top-left in canvas coords; points[1] = bottom-right.
+        // Both translate together when the shape is moved.
+        points: [
+          [tlx, tly],
+          [tlx + data.width, tly + data.height],
+        ],
+        closed: true,
+        fill: '#000000',
+        stroke: 'none',
+        strokeWidth: 0,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+        glyphs: data,
+      };
+      return {
+        ...pushSnapshot(s),
+        shapes: [...s.shapes, newShape],
+        selectedShapeIds: [newShape.id],
+        selectionAnchorId: newShape.id,
+        selectedVertices: [],
+        fontDialogOpen: false,
+        dirty: true,
+      };
+    }),
 
   startDrawing: (type, at) => set({ drawing: { type, points: [at] } }),
   appendDrawingPoint: (p) =>
@@ -592,6 +647,37 @@ export const useStore = create<AppState>((set) => ({
         const patch: Partial<Shape> = { opacity: undefined };
         if (fillRgb) patch.fill = toHex(mix(bottom, fillRgb, op));
         if (strokeRgb) patch.stroke = toHex(mix(bottom, strokeRgb, op));
+        if (next === s.shapes) next = s.shapes.slice();
+        next[i] = { ...sh, ...patch };
+        changed = true;
+      }
+      if (!changed) return s;
+      return { ...pushSnapshot(s), shapes: next, dirty: true };
+    }),
+  applyTransform: (ids) =>
+    set((s) => {
+      if (ids.length === 0) return s;
+      const idSet = new Set(ids);
+      let next = s.shapes;
+      let changed = false;
+      for (let i = 0; i < next.length; i++) {
+        const sh = next[i];
+        if (!idSet.has(sh.id)) continue;
+        if (!hasTransform(sh)) continue;
+        if (sh.kind === 'glyphs') continue;
+        const rot = shapeRotation(sh);
+        const newPoints = sh.points.map((p) => applyTransformToPoint(sh, p));
+        const patch: Partial<Shape> = {
+          points: newPoints,
+          rotation: undefined,
+          scale: undefined,
+        };
+        if (sh.kind === 'circle' && sh.arc && rot !== 0) {
+          // Arc angles are in canvas-frame degrees, so a baked rotation must
+          // shift them; otherwise the wedge would snap back to its pre-rotation
+          // orientation when rotation resets to 0.
+          patch.arc = { ...sh.arc, start: sh.arc.start + rot, end: sh.arc.end + rot };
+        }
         if (next === s.shapes) next = s.shapes.slice();
         next[i] = { ...sh, ...patch };
         changed = true;

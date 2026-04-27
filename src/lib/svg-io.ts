@@ -1,9 +1,36 @@
-import type { ArcRange, BlendMode, Point, ProjectSettings, Shape } from '../types';
+import type { ArcRange, BlendMode, GlyphData, Point, ProjectSettings, Shape } from '../types';
 import { BLEND_MODES } from '../types';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
+import { composeTransformString, shapeRotation, shapeScale } from './transform';
 
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
 const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES);
+
+/**
+ * Reconstruct a {@link GlyphData} payload from a serialized `<path>`. The path
+ * carries both the local-coord `d` (as the path's `d` attribute) and the
+ * vectorheart metadata that captures the original text + font label + bbox so
+ * the shape round-trips. Returns undefined when required attrs are missing.
+ */
+const parseGlyphsAttrs = (el: Element): GlyphData | undefined => {
+  const d = el.getAttribute('d');
+  if (!d) return undefined;
+  const text = el.getAttribute('data-vh-text') ?? '';
+  const fontFamily = el.getAttribute('data-vh-font-family') ?? '';
+  const fontSize = parseFloat(el.getAttribute('data-vh-font-size') ?? '');
+  const width = parseFloat(el.getAttribute('data-vh-glyph-w') ?? '');
+  const height = parseFloat(el.getAttribute('data-vh-glyph-h') ?? '');
+  if (
+    !Number.isFinite(fontSize) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return undefined;
+  }
+  return { d, text, fontFamily, fontSize, width, height };
+};
 
 const parseArcAttr = (raw: string | null): ArcRange | undefined => {
   if (!raw) return undefined;
@@ -78,7 +105,8 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     lines.push(`  <g clip-path="url(#vh-artboard-clip)">`);
   }
   for (const shape of shapes) {
-    const isCircle = shape.kind === 'circle' && shape.points.length >= 2;
+    const isGlyphs = shape.kind === 'glyphs' && !!shape.glyphs && shape.points.length >= 2;
+    const isCircle = !isGlyphs && shape.kind === 'circle' && shape.points.length >= 2;
     const partialArc = isCircle && isPartialArc(shape.arc) ? shape.arc : undefined;
     const filled = partialArc ? partialArc.style !== 'open' : shape.closed;
     const baseAttrs = [
@@ -86,7 +114,9 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       `stroke="${escapeAttr(shape.stroke)}"`,
       `stroke-width="${fmt(shape.strokeWidth)}"`,
     ];
-    if (!isCircle || partialArc) {
+    if (!isCircle && !isGlyphs) {
+      baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
+    } else if (partialArc) {
       baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
     }
     if (shape.hidden) baseAttrs.push(`visibility="hidden"`);
@@ -95,6 +125,17 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       `data-vh-closed="${shape.closed}"`,
     );
     if (isCircle) baseAttrs.push(`data-vh-kind="circle"`);
+    if (isGlyphs && shape.glyphs) {
+      const g = shape.glyphs;
+      baseAttrs.push(
+        `data-vh-kind="glyphs"`,
+        `data-vh-text="${escapeAttr(g.text)}"`,
+        `data-vh-font-family="${escapeAttr(g.fontFamily)}"`,
+        `data-vh-font-size="${fmt(g.fontSize)}"`,
+        `data-vh-glyph-w="${fmt(g.width)}"`,
+        `data-vh-glyph-h="${fmt(g.height)}"`,
+      );
+    }
     if (partialArc) {
       baseAttrs.push(
         `data-vh-arc="${fmt(partialArc.start)},${fmt(partialArc.end)},${partialArc.style}"`,
@@ -117,22 +158,40 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.opacity !== undefined && shape.opacity < 1) {
       baseAttrs.push(`opacity="${fmt(Math.max(0, shape.opacity))}"`);
     }
+    const rot = shapeRotation(shape);
+    const scl = shapeScale(shape);
+    if (rot !== 0) baseAttrs.push(`data-vh-rotation="${fmt(rot)}"`);
+    if (scl !== 1) baseAttrs.push(`data-vh-scale="${fmt(scl)}"`);
+    // External viewers respect the SVG transform attribute, so always emit it
+    // for transformed shapes (and for glyphs, where the local-coord d needs the
+    // base translate). The composed string folds translate + rotate + scale
+    // into one attribute value.
+    const composedTransform = composeTransformString(shape);
 
-    if (isCircle && !partialArc) {
+    if (isGlyphs && shape.glyphs) {
+      lines.push(
+        `  <path d="${shape.glyphs.d}" transform="${composedTransform}" ${baseAttrs.join(' ')}/>`,
+      );
+    } else if (isCircle && !partialArc) {
       const [cx, cy] = shape.points[0];
       const r = dist(shape.points[0], shape.points[1]);
+      const transformAttr = composedTransform ? ` transform="${composedTransform}"` : '';
       lines.push(
-        `  <circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}" ${baseAttrs.join(' ')}/>`,
+        `  <circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}"${transformAttr} ${baseAttrs.join(
+          ' ',
+        )}/>`,
       );
     } else if (isCircle && partialArc) {
       const [cx, cy] = shape.points[0];
       const r = dist(shape.points[0], shape.points[1]);
       const d = arcToPath(cx, cy, r, partialArc);
-      lines.push(`  <path d="${d}" ${baseAttrs.join(' ')}/>`);
+      const transformAttr = composedTransform ? ` transform="${composedTransform}"` : '';
+      lines.push(`  <path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`);
     } else {
       const bz = shape.bezierOverride ?? settings.bezier;
       const d = pointsToPath(shape.points, shape.closed, bz);
-      lines.push(`  <path d="${d}" ${baseAttrs.join(' ')}/>`);
+      const transformAttr = composedTransform ? ` transform="${composedTransform}"` : '';
+      lines.push(`  <path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`);
     }
   }
   if (settings.clip) lines.push('  </g>');
@@ -238,12 +297,16 @@ export function parseProject(text: string): ParsedProject {
       .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
     if (points.length === 0) continue;
 
-    const isCircle =
-      el.tagName.toLowerCase() === 'circle' || el.getAttribute('data-vh-kind') === 'circle';
-    const closed = isCircle ? true : el.getAttribute('data-vh-closed') === 'true';
+    const kindAttr = el.getAttribute('data-vh-kind');
+    const isGlyphs = kindAttr === 'glyphs';
+    const isCircle = !isGlyphs && (el.tagName.toLowerCase() === 'circle' || kindAttr === 'circle');
+    const closed = isCircle || isGlyphs ? true : el.getAttribute('data-vh-closed') === 'true';
     const overrideAttr = el.getAttribute('data-vh-bezier');
     const overrideNum = overrideAttr === null ? NaN : parseFloat(overrideAttr);
-    const bezierOverride = !isCircle && Number.isFinite(overrideNum) ? overrideNum : null;
+    const bezierOverride =
+      !isCircle && !isGlyphs && Number.isFinite(overrideNum) ? overrideNum : null;
+    const glyphs = isGlyphs ? parseGlyphsAttrs(el) : undefined;
+    if (isGlyphs && !glyphs) continue;
 
     // If a `<circle>` element was tagged but its perimeter anchor is missing
     // (only one point in `data-vh-points`), reconstruct it from `cx`/`r` so
@@ -274,9 +337,15 @@ export function parseProject(text: string): ParsedProject {
       Number.isFinite(opacityNum) && opacityNum < 1
         ? Math.max(0, Math.min(1, opacityNum))
         : undefined;
+    const rotationAttr = el.getAttribute('data-vh-rotation');
+    const rotationNum = rotationAttr === null ? NaN : parseFloat(rotationAttr);
+    const rotation = Number.isFinite(rotationNum) && rotationNum !== 0 ? rotationNum : undefined;
+    const scaleAttr = el.getAttribute('data-vh-scale');
+    const scaleNum = scaleAttr === null ? NaN : parseFloat(scaleAttr);
+    const scale = Number.isFinite(scaleNum) && scaleNum !== 1 ? scaleNum : undefined;
     shapes.push({
       id: makeId(),
-      ...(isCircle ? { kind: 'circle' as const } : {}),
+      ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
       points: resolvedPoints,
       closed,
       fill: el.getAttribute('fill') ?? (closed ? '#000000' : 'none'),
@@ -289,6 +358,9 @@ export function parseProject(text: string): ParsedProject {
       ...(arc ? { arc } : {}),
       ...(blendMode ? { blendMode } : {}),
       ...(opacity !== undefined ? { opacity } : {}),
+      ...(glyphs ? { glyphs } : {}),
+      ...(rotation !== undefined ? { rotation } : {}),
+      ...(scale !== undefined ? { scale } : {}),
     });
   }
 

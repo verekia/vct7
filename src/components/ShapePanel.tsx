@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { dist, isPartialArc } from '../lib/geometry';
+import { hasTransform, shapeRotation, shapeScale } from '../lib/transform';
 import type { ArcRange, BlendMode, Shape } from '../types';
 import { BLEND_MODES } from '../types';
 
@@ -8,6 +9,32 @@ const blendValue = (b: BlendMode | undefined): BlendMode => b ?? 'normal';
 const blendPatch = (v: string): Partial<Shape> => ({
   blendMode: v === 'normal' ? undefined : (v as BlendMode),
 });
+
+/**
+ * Round `angle` (in degrees) to the nearest entry of `snapAngles`, accounting
+ * for the [0, 360) wrap so a -10° input snaps to 350° rather than 0° when
+ * 350° is the nearer angle. Returns the unmodified angle when there are no
+ * snap angles defined.
+ */
+const nearestSnapAngle = (angle: number, snapAngles: number[]): number => {
+  if (snapAngles.length === 0) return angle;
+  const norm = ((angle % 360) + 360) % 360;
+  let best = snapAngles[0];
+  let bestDist = Infinity;
+  for (const sa of snapAngles) {
+    const saNorm = ((sa % 360) + 360) % 360;
+    const d = Math.min(Math.abs(norm - saNorm), 360 - Math.abs(norm - saNorm));
+    if (d < bestDist) {
+      bestDist = d;
+      best = saNorm;
+    }
+  }
+  // Map back into roughly the same half-turn the user is in. Without this the
+  // rotation slider would jump from -170° straight to +180° instead of the
+  // visually-equivalent -180°.
+  if (angle < 0 && best > 180) return best - 360;
+  return best;
+};
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
 
@@ -28,9 +55,10 @@ const sanitizeColor = (c: string): string => {
   return '#000000';
 };
 
-type ShapeKind = 'circle' | 'line' | 'polygon';
+type ShapeKind = 'circle' | 'line' | 'polygon' | 'text';
 
 const kindOf = (sh: Shape): ShapeKind => {
+  if (sh.kind === 'glyphs') return 'text';
   if (sh.kind === 'circle') return 'circle';
   return sh.closed ? 'polygon' : 'line';
 };
@@ -44,11 +72,14 @@ export function ShapePanel() {
   const shapes = useStore((s) => s.shapes);
   const selectedShapeIds = useStore((s) => s.selectedShapeIds);
   const globalBezier = useStore((s) => s.settings.bezier);
+  const snapAngles = useStore((s) => s.settings.snapAngles);
+  const snapDisabled = useStore((s) => s.snapDisabled);
   const updateShape = useStore((s) => s.updateShape);
   const deleteShape = useStore((s) => s.deleteShape);
   const deleteShapes = useStore((s) => s.deleteShapes);
   const applyBlending = useStore((s) => s.applyBlending);
   const applyOpacity = useStore((s) => s.applyOpacity);
+  const applyTransform = useStore((s) => s.applyTransform);
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds);
@@ -72,10 +103,13 @@ export function ShapePanel() {
       <ShapePanelInner
         shape={selectedShapes[0]}
         globalBezier={globalBezier}
+        snapAngles={snapAngles}
+        snapDisabled={snapDisabled}
         updateShape={updateShape}
         deleteShape={deleteShape}
         applyBlending={applyBlending}
         applyOpacity={applyOpacity}
+        applyTransform={applyTransform}
       />
     );
   }
@@ -98,10 +132,13 @@ export function ShapePanel() {
       shapes={selectedShapes}
       kind={kinds[0]}
       globalBezier={globalBezier}
+      snapAngles={snapAngles}
+      snapDisabled={snapDisabled}
       updateShape={updateShape}
       deleteShapes={deleteShapes}
       applyBlending={applyBlending}
       applyOpacity={applyOpacity}
+      applyTransform={applyTransform}
     />
   );
 }
@@ -114,17 +151,23 @@ const opacityValue = (s: Shape): number => s.opacity ?? 1;
 function ShapePanelInner({
   shape,
   globalBezier,
+  snapAngles,
+  snapDisabled,
   updateShape,
   deleteShape,
   applyBlending,
   applyOpacity,
+  applyTransform,
 }: {
   shape: Shape;
   globalBezier: number;
+  snapAngles: number[];
+  snapDisabled: boolean;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShape: (id: string) => void;
   applyBlending: (ids: string[]) => void;
   applyOpacity: (ids: string[]) => void;
+  applyTransform: (ids: string[]) => void;
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke);
   const [fillText, setFillText] = useState(shape.fill);
@@ -133,10 +176,12 @@ function ShapePanelInner({
 
   const bezierValue = shape.bezierOverride ?? globalBezier;
   const isCircle = shape.kind === 'circle';
+  const isGlyphs = shape.kind === 'glyphs' && !!shape.glyphs;
   const partial = isCircle && isPartialArc(shape.arc);
   const arcOpen = partial && shape.arc!.style === 'open';
-  const showFill = isCircle ? !arcOpen : shape.closed;
-  const typeLabel = isCircle ? 'circle' : shape.closed ? 'polygon' : 'line';
+  const showFill = isGlyphs ? true : isCircle ? !arcOpen : shape.closed;
+  const showBezierOverride = !isCircle && !isGlyphs;
+  const typeLabel = isGlyphs ? 'text' : isCircle ? 'circle' : shape.closed ? 'polygon' : 'line';
 
   return (
     <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
@@ -144,16 +189,40 @@ function ShapePanelInner({
         <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Type</span>
         <span className="text-text text-xs">{typeLabel}</span>
       </div>
-      <div className="flex gap-1.5 items-center flex-wrap">
-        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">
-          {isCircle ? 'Radius' : 'Points'}
-        </span>
-        <span className="text-text text-xs">
-          {isCircle && shape.points.length >= 2
-            ? dist(shape.points[0], shape.points[1]).toFixed(2)
-            : shape.points.length}
-        </span>
-      </div>
+      {isGlyphs && shape.glyphs ? (
+        <>
+          <div className="flex gap-1.5 items-center flex-wrap">
+            <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Text</span>
+            <span className="text-text text-xs truncate" title={shape.glyphs.text}>
+              {shape.glyphs.text || <em className="text-muted">empty</em>}
+            </span>
+          </div>
+          <div className="flex gap-1.5 items-center flex-wrap">
+            <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Font</span>
+            <span className="text-text text-xs truncate" title={shape.glyphs.fontFamily}>
+              {shape.glyphs.fontFamily}
+            </span>
+          </div>
+          <div className="flex gap-1.5 items-center flex-wrap">
+            <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Size</span>
+            <span className="text-text text-xs tabular-nums">
+              {shape.glyphs.fontSize.toFixed(0)} u · {shape.glyphs.width.toFixed(1)}×
+              {shape.glyphs.height.toFixed(1)}
+            </span>
+          </div>
+        </>
+      ) : (
+        <div className="flex gap-1.5 items-center flex-wrap">
+          <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">
+            {isCircle ? 'Radius' : 'Points'}
+          </span>
+          <span className="text-text text-xs">
+            {isCircle && shape.points.length >= 2
+              ? dist(shape.points[0], shape.points[1]).toFixed(2)
+              : shape.points.length}
+          </span>
+        </div>
+      )}
 
       <label>
         <span>Stroke</span>
@@ -278,9 +347,24 @@ function ShapePanelInner({
         <span className="text-text tabular-nums">{opacityValue(shape).toFixed(2)}</span>
       </label>
 
+      <TransformControls
+        rotation={shapeRotation(shape)}
+        scale={shapeScale(shape)}
+        rotationMixed={false}
+        scaleMixed={false}
+        snapAngles={snapAngles}
+        snapDisabled={snapDisabled}
+        canBake={hasTransform(shape) && shape.kind !== 'glyphs'}
+        onRotation={(r) => updateShape(shape.id, { rotation: r === 0 ? undefined : r })}
+        onScale={(sc) => updateShape(shape.id, { scale: sc === 1 ? undefined : sc })}
+        onReset={() => updateShape(shape.id, { rotation: undefined, scale: undefined })}
+        onApply={() => applyTransform([shape.id])}
+        isGlyphs={shape.kind === 'glyphs'}
+      />
+
       {isCircle && <ArcControls shape={shape} updateShape={updateShape} />}
 
-      {!isCircle && (
+      {showBezierOverride && (
         <label>
           <span className="flex gap-1.5 items-center flex-wrap">
             <span style={{ flex: 1 }}>Bezier override</span>
@@ -320,6 +404,139 @@ function ShapePanelInner({
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * Rotation + uniform-scale inputs. Wired so single- and multi-shape panels can
+ * share the same UI surface — callers choose how to fan the new value out.
+ *
+ * `rotationMixed` / `scaleMixed` flag heterogeneous selections; the slider
+ * still moves the underlying value (committing to whatever it lands on), but
+ * the readout shows "Mixed". Snap-to-snapAngle kicks in when the user drags
+ * the slider with snap enabled — Shift disables it (matching canvas snap).
+ * The numeric input always takes the typed value verbatim.
+ */
+function TransformControls({
+  rotation,
+  scale,
+  rotationMixed,
+  scaleMixed,
+  snapAngles,
+  snapDisabled,
+  canBake,
+  isGlyphs,
+  onRotation,
+  onScale,
+  onReset,
+  onApply,
+}: {
+  rotation: number;
+  scale: number;
+  rotationMixed: boolean;
+  scaleMixed: boolean;
+  snapAngles: number[];
+  snapDisabled: boolean;
+  canBake: boolean;
+  isGlyphs: boolean;
+  onRotation: (v: number) => void;
+  onScale: (v: number) => void;
+  onReset: () => void;
+  onApply: () => void;
+}) {
+  const showReset = !rotationMixed && !scaleMixed && (rotation !== 0 || scale !== 1);
+  return (
+    <>
+      <label>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Rotation</span>
+          {snapAngles.length > 0 && (
+            <span className="text-[10px] text-muted-2 normal-case tracking-normal">
+              {snapDisabled ? 'free' : 'snap'}
+            </span>
+          )}
+        </span>
+        <div className="flex gap-1.5 items-center flex-wrap">
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={1}
+            value={rotation}
+            onChange={(e) => {
+              const raw = parseFloat(e.target.value);
+              if (!Number.isFinite(raw)) return;
+              const v =
+                snapDisabled || snapAngles.length === 0 ? raw : nearestSnapAngle(raw, snapAngles);
+              onRotation(v);
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={rotationMixed ? '' : rotation.toFixed(0)}
+            placeholder={rotationMixed ? 'Mixed' : ''}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v)) onRotation(v);
+            }}
+          />
+        </div>
+      </label>
+
+      <label>
+        <span>Scale</span>
+        <div className="flex gap-1.5 items-center flex-wrap">
+          <input
+            type="range"
+            min={0.1}
+            max={5}
+            step={0.01}
+            value={scale}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v > 0) onScale(v);
+            }}
+          />
+          <input
+            type="number"
+            min={0.01}
+            step={0.1}
+            value={scaleMixed ? '' : scale.toFixed(2)}
+            placeholder={scaleMixed ? 'Mixed' : ''}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value);
+              if (Number.isFinite(v) && v > 0) onScale(v);
+            }}
+          />
+        </div>
+      </label>
+
+      {(showReset || canBake) && (
+        <div className="flex gap-1.5 items-center flex-wrap">
+          {showReset && (
+            <button type="button" className="text-[11px] px-[7px] py-[2px]" onClick={onReset}>
+              Reset transform
+            </button>
+          )}
+          {canBake && (
+            <button
+              type="button"
+              className={APPLY_BTN}
+              onClick={onApply}
+              title="Bake the rotation / scale into the shape's points and reset back to identity. Required before editing vertices on a transformed shape."
+            >
+              Apply transform
+            </button>
+          )}
+          {isGlyphs && (rotation !== 0 || scale !== 1) && (
+            <span className="text-[10px] text-muted-2 normal-case tracking-normal">
+              live transform — text shapes can&apos;t be baked
+            </span>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -408,21 +625,27 @@ function MultiShapePanel({
   shapes,
   kind,
   globalBezier,
+  snapAngles,
+  snapDisabled,
   updateShape,
   deleteShapes,
   applyBlending,
   applyOpacity,
+  applyTransform,
 }: {
   shapes: Shape[];
   kind: ShapeKind;
   globalBezier: number;
+  snapAngles: number[];
+  snapDisabled: boolean;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShapes: (ids: string[]) => void;
   applyBlending: (ids: string[]) => void;
   applyOpacity: (ids: string[]) => void;
+  applyTransform: (ids: string[]) => void;
 }) {
   const showFill = kind !== 'line';
-  const showBezier = kind !== 'circle';
+  const showBezier = kind !== 'circle' && kind !== 'text';
 
   const strokes = shapes.map((s) => s.stroke);
   const fills = shapes.map((s) => s.fill);
@@ -430,12 +653,16 @@ function MultiShapePanel({
   const overrides = shapes.map((s) => s.bezierOverride);
   const blends = shapes.map((s) => blendValue(s.blendMode));
   const opacities = shapes.map(opacityValue);
+  const rotations = shapes.map(shapeRotation);
+  const scales = shapes.map(shapeScale);
   const strokeUniform = allSame(strokes);
   const fillUniform = allSame(fills);
   const widthUniform = allSame(widths);
   const overrideUniform = allSame(overrides);
   const blendUniform = allSame(blends);
   const opacityUniform = allSame(opacities);
+  const rotationUniform = allSame(rotations);
+  const scaleUniform = allSame(scales);
 
   const [strokeText, setStrokeText] = useState(strokeUniform ? strokes[0] : '');
   const [fillText, setFillText] = useState(fillUniform ? fills[0] : '');
@@ -460,7 +687,12 @@ function MultiShapePanel({
 
   const bezierForRange = overrideUniform && overrides[0] !== null ? overrides[0] : globalBezier;
 
-  const typeLabel = kind === 'circle' ? `${shapes.length} circles` : `${shapes.length} ${kind}s`;
+  const typeLabel =
+    kind === 'circle'
+      ? `${shapes.length} circles`
+      : kind === 'text'
+        ? `${shapes.length} text blocks`
+        : `${shapes.length} ${kind}s`;
 
   return (
     <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
@@ -633,6 +865,21 @@ function MultiShapePanel({
           {opacityUniform ? opacities[0].toFixed(2) : 'Mixed'}
         </span>
       </label>
+
+      <TransformControls
+        rotation={rotationUniform ? rotations[0] : 0}
+        scale={scaleUniform ? scales[0] : 1}
+        rotationMixed={!rotationUniform}
+        scaleMixed={!scaleUniform}
+        snapAngles={snapAngles}
+        snapDisabled={snapDisabled}
+        canBake={shapes.some((sh) => hasTransform(sh) && sh.kind !== 'glyphs')}
+        isGlyphs={kind === 'text'}
+        onRotation={(r) => applyAll({ rotation: r === 0 ? undefined : r })}
+        onScale={(sc) => applyAll({ scale: sc === 1 ? undefined : sc })}
+        onReset={() => applyAll({ rotation: undefined, scale: undefined })}
+        onApply={() => applyTransform(shapes.map((sh) => sh.id))}
+      />
 
       <div className="flex gap-1.5 items-center flex-wrap">
         <button

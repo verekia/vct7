@@ -117,6 +117,28 @@ describe('parseProject round-trip', () => {
     expect(parsed.shapes[0].bezierOverride).toBe(0);
   });
 
+  // Round-trip rotation+scale via data-vh-rotation / data-vh-scale. Identity
+  // (0° / 1×) values must NOT appear in the output to keep diffs noise-free.
+  it('round-trips rotation and scale', () => {
+    const rotated: Shape = { ...sampleShapes[0], rotation: 45, scale: 2 };
+    const text = serializeProject(sampleSettings, [rotated]);
+    expect(text).toContain('data-vh-rotation="45"');
+    expect(text).toContain('data-vh-scale="2"');
+    expect(text).toContain('transform="');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].rotation).toBe(45);
+    expect(parsed.shapes[0].scale).toBe(2);
+  });
+
+  it('omits rotation/scale attrs at identity', () => {
+    const text = serializeProject(sampleSettings, [sampleShapes[0]]);
+    expect(text).not.toContain('data-vh-rotation');
+    expect(text).not.toContain('data-vh-scale');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].rotation).toBeUndefined();
+    expect(parsed.shapes[0].scale).toBeUndefined();
+  });
+
   // Regression: bezierOverride === null must NOT appear in the SVG output and
   // must come back as null (not 0).
   it('preserves null bezierOverride (no attribute written)', () => {
