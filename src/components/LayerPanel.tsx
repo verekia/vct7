@@ -188,6 +188,13 @@ export function LayerPanel() {
                   {shape.name || defaultLayerName(shape)}
                 </span>
               )}
+              {shape.blendMode && shape.blendMode !== 'normal' && (
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-[#3b82f6] shrink-0"
+                  title={`Uses ${shape.blendMode} blending — apply it from the shape panel to bake the color.`}
+                  aria-label="Has blend mode"
+                />
+              )}
             </li>
           );
         })}

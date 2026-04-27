@@ -47,6 +47,7 @@ export function ShapePanel() {
   const updateShape = useStore((s) => s.updateShape);
   const deleteShape = useStore((s) => s.deleteShape);
   const deleteShapes = useStore((s) => s.deleteShapes);
+  const applyBlending = useStore((s) => s.applyBlending);
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds);
@@ -72,6 +73,7 @@ export function ShapePanel() {
         globalBezier={globalBezier}
         updateShape={updateShape}
         deleteShape={deleteShape}
+        applyBlending={applyBlending}
       />
     );
   }
@@ -96,20 +98,26 @@ export function ShapePanel() {
       globalBezier={globalBezier}
       updateShape={updateShape}
       deleteShapes={deleteShapes}
+      applyBlending={applyBlending}
     />
   );
 }
+
+const APPLY_BLENDING_BTN =
+  'text-[11px] px-[7px] py-[2px] bg-[#2563eb] text-white border-[#3b82f6] hover:bg-[#1d4ed8] hover:border-[#60a5fa] hover:text-white';
 
 function ShapePanelInner({
   shape,
   globalBezier,
   updateShape,
   deleteShape,
+  applyBlending,
 }: {
   shape: Shape;
   globalBezier: number;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShape: (id: string) => void;
+  applyBlending: (ids: string[]) => void;
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke);
   const [fillText, setFillText] = useState(shape.fill);
@@ -210,7 +218,19 @@ function ShapePanelInner({
       )}
 
       <label>
-        <span>Blend mode</span>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Blend mode</span>
+          {shape.blendMode && shape.blendMode !== 'normal' && (
+            <button
+              type="button"
+              className={APPLY_BLENDING_BTN}
+              onClick={() => applyBlending([shape.id])}
+              title="Bake this blend mode into the fill / stroke so the SVG renders correctly without mix-blend-mode support."
+            >
+              Apply blending
+            </button>
+          )}
+        </span>
         <select
           value={blendValue(shape.blendMode)}
           onChange={(e) => updateShape(shape.id, blendPatch(e.target.value))}
@@ -355,12 +375,14 @@ function MultiShapePanel({
   globalBezier,
   updateShape,
   deleteShapes,
+  applyBlending,
 }: {
   shapes: Shape[];
   kind: ShapeKind;
   globalBezier: number;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShapes: (ids: string[]) => void;
+  applyBlending: (ids: string[]) => void;
 }) {
   const showFill = kind !== 'line';
   const showBezier = kind !== 'circle';
@@ -513,7 +535,19 @@ function MultiShapePanel({
       )}
 
       <label>
-        <span>Blend mode</span>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Blend mode</span>
+          {shapes.some((sh) => sh.blendMode && sh.blendMode !== 'normal') && (
+            <button
+              type="button"
+              className={APPLY_BLENDING_BTN}
+              onClick={() => applyBlending(shapes.map((sh) => sh.id))}
+              title="Bake each shape's blend mode into the fill / stroke so the SVG renders correctly without mix-blend-mode support."
+            >
+              Apply blending
+            </button>
+          )}
+        </span>
         <select
           value={blendUniform ? blends[0] : ''}
           onChange={(e) => applyAll(blendPatch(e.target.value))}

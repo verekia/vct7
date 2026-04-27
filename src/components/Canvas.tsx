@@ -234,9 +234,7 @@ function GridLayer({
 
 function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
   const blendStyle: CSSProperties | undefined =
-    shape.blendMode && shape.blendMode !== 'normal'
-      ? { mixBlendMode: shape.blendMode }
-      : undefined;
+    shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
   if (shape.kind === 'circle' && shape.points.length >= 2) {
     const [cx, cy] = shape.points[0];
     const r = dist(shape.points[0], shape.points[1]);
