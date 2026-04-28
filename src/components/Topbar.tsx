@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import { newProject, openFile, saveFile, saveFileAs } from '../lib/file-ops';
 import { Toolbar } from './Toolbar';
+import { CodeButton } from './CodeDialog';
 
 export function Topbar() {
   const fileName = useStore((s) => s.fileName);
@@ -42,6 +43,7 @@ export function Topbar() {
         <button onClick={saveFileAs} title="Save As (Ctrl/Cmd+Shift+S)">
           Save As
         </button>
+        <CodeButton />
       </div>
     </header>
   );

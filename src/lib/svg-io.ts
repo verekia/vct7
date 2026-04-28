@@ -45,7 +45,11 @@ const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
   const obj = parsed as Record<string, unknown>;
   const duration = typeof obj.duration === 'number' ? obj.duration : NaN;
   const delay = typeof obj.delay === 'number' ? obj.delay : 0;
-  const easing = typeof obj.easing === 'string' ? obj.easing : '';
+  const easingRaw = typeof obj.easing === 'string' ? obj.easing : '';
+  // `dr-classic` was the historic name for `snap` (same curve, renamed in
+  // commit ed94daf). Map it through so older files round-trip instead of
+  // silently dropping their animations.
+  const easing = easingRaw === 'dr-classic' ? 'snap' : easingRaw;
   if (!Number.isFinite(duration) || duration < 0) return undefined;
   if (!EASING_SET.has(easing)) return undefined;
   const fromRaw =
@@ -223,15 +227,16 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     const isCircle = !isGlyphs && shape.kind === 'circle' && shape.points.length >= 2;
     const partialArc = isCircle && isPartialArc(shape.arc) ? shape.arc : undefined;
     const filled = partialArc ? partialArc.style !== 'open' : shape.closed;
-    const baseAttrs = [
-      `fill="${escapeAttr(filled ? shape.fill : 'none')}"`,
-      `stroke="${escapeAttr(shape.stroke)}"`,
-      `stroke-width="${fmt(shape.strokeWidth)}"`,
-    ];
-    if (!isCircle && !isGlyphs) {
-      baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
-    } else if (partialArc) {
-      baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
+    const hasStroke = shape.stroke !== 'none';
+    const baseAttrs = [`fill="${escapeAttr(filled ? shape.fill : 'none')}"`];
+    if (hasStroke) {
+      baseAttrs.push(
+        `stroke="${escapeAttr(shape.stroke)}"`,
+        `stroke-width="${fmt(shape.strokeWidth)}"`,
+      );
+      if ((!isCircle && !isGlyphs) || partialArc) {
+        baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
+      }
     }
     if (shape.hidden) baseAttrs.push(`visibility="hidden"`);
     baseAttrs.push(

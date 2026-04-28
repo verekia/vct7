@@ -73,6 +73,25 @@ const kindOf = (sh: Shape): ShapeKind => {
 
 const allSame = <T,>(values: T[]): boolean => values.every((v) => v === values[0]);
 
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        d="M3 4h10M6.5 4V2.5h3V4M5 4l1 9.5h4L11 4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+const PAINT_ROW = 'flex gap-1.5 items-center';
+const PAINT_INPUT = 'flex-1 min-w-0';
+const CLEAR_BTN = 'px-1.5 py-1 inline-flex items-center justify-center';
+
 export function ShapePanel() {
   // Subscribe to the underlying primitives only — deriving the selected-shape
   // list inside the selector would return a fresh array each call and trip
@@ -238,7 +257,7 @@ function ShapePanelInner({
 
       <label>
         <span>Stroke</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
+        <div className={PAINT_ROW}>
           <input
             type="color"
             value={sanitizeColor(shape.stroke)}
@@ -246,6 +265,7 @@ function ShapePanelInner({
           />
           <input
             type="text"
+            className={PAINT_INPUT}
             value={strokeText}
             onChange={(e) => setStrokeText(e.target.value)}
             onBlur={() => {
@@ -256,27 +276,36 @@ function ShapePanelInner({
               }
             }}
           />
+          {shape.stroke !== 'none' && (
+            <>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                title="Stroke width"
+                value={shape.strokeWidth}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (Number.isFinite(v) && v >= 0) updateShape(shape.id, { strokeWidth: v });
+                }}
+              />
+              <button
+                type="button"
+                className={CLEAR_BTN}
+                title="Remove stroke"
+                onClick={() => updateShape(shape.id, { stroke: 'none' })}
+              >
+                <TrashIcon />
+              </button>
+            </>
+          )}
         </div>
-      </label>
-
-      <label>
-        <span>Stroke width</span>
-        <input
-          type="number"
-          min={0}
-          step={0.5}
-          value={shape.strokeWidth}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value);
-            if (Number.isFinite(v) && v >= 0) updateShape(shape.id, { strokeWidth: v });
-          }}
-        />
       </label>
 
       {showFill && (
         <label>
           <span>Fill</span>
-          <div className="flex gap-1.5 items-center flex-wrap">
+          <div className={PAINT_ROW}>
             <input
               type="color"
               value={sanitizeColor(shape.fill)}
@@ -284,6 +313,7 @@ function ShapePanelInner({
             />
             <input
               type="text"
+              className={PAINT_INPUT}
               value={fillText}
               onChange={(e) => setFillText(e.target.value)}
               onBlur={() => {
@@ -294,13 +324,16 @@ function ShapePanelInner({
                 }
               }}
             />
-            <button
-              type="button"
-              className="text-[11px] px-[7px] py-[2px]"
-              onClick={() => updateShape(shape.id, { fill: 'none' })}
-            >
-              none
-            </button>
+            {shape.fill !== 'none' && (
+              <button
+                type="button"
+                className={CLEAR_BTN}
+                title="Remove fill"
+                onClick={() => updateShape(shape.id, { fill: 'none' })}
+              >
+                <TrashIcon />
+              </button>
+            )}
           </div>
         </label>
       )}
@@ -1040,7 +1073,7 @@ function MultiShapePanel({
 
       <label>
         <span>Stroke</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
+        <div className={PAINT_ROW}>
           <input
             type="color"
             value={sanitizeColor(strokeUniform ? strokes[0] : '#000000')}
@@ -1048,6 +1081,7 @@ function MultiShapePanel({
           />
           <input
             type="text"
+            className={PAINT_INPUT}
             value={strokeText}
             placeholder={strokeUniform ? '' : 'Mixed'}
             onChange={(e) => setStrokeText(e.target.value)}
@@ -1059,28 +1093,37 @@ function MultiShapePanel({
               }
             }}
           />
+          {strokes.some((s) => s !== 'none') && (
+            <>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                title="Stroke width"
+                value={widthUniform ? widths[0] : ''}
+                placeholder={widthUniform ? '' : 'Mixed'}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  if (Number.isFinite(v) && v >= 0) applyAll({ strokeWidth: v });
+                }}
+              />
+              <button
+                type="button"
+                className={CLEAR_BTN}
+                title="Remove stroke"
+                onClick={() => applyAll({ stroke: 'none' })}
+              >
+                <TrashIcon />
+              </button>
+            </>
+          )}
         </div>
-      </label>
-
-      <label>
-        <span>Stroke width</span>
-        <input
-          type="number"
-          min={0}
-          step={0.5}
-          value={widthUniform ? widths[0] : ''}
-          placeholder={widthUniform ? '' : 'Mixed'}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value);
-            if (Number.isFinite(v) && v >= 0) applyAll({ strokeWidth: v });
-          }}
-        />
       </label>
 
       {showFill && (
         <label>
           <span>Fill</span>
-          <div className="flex gap-1.5 items-center flex-wrap">
+          <div className={PAINT_ROW}>
             <input
               type="color"
               value={sanitizeColor(fillUniform ? fills[0] : '#000000')}
@@ -1088,6 +1131,7 @@ function MultiShapePanel({
             />
             <input
               type="text"
+              className={PAINT_INPUT}
               value={fillText}
               placeholder={fillUniform ? '' : 'Mixed'}
               onChange={(e) => setFillText(e.target.value)}
@@ -1099,13 +1143,16 @@ function MultiShapePanel({
                 }
               }}
             />
-            <button
-              type="button"
-              className="text-[11px] px-[7px] py-[2px]"
-              onClick={() => applyAll({ fill: 'none' })}
-            >
-              none
-            </button>
+            {fills.some((f) => f !== 'none') && (
+              <button
+                type="button"
+                className={CLEAR_BTN}
+                title="Remove fill"
+                onClick={() => applyAll({ fill: 'none' })}
+              >
+                <TrashIcon />
+              </button>
+            )}
           </div>
         </label>
       )}

@@ -344,10 +344,7 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
  * from-matrix degenerate. Using identity values for the rest pose keeps the
  * lists structurally aligned without changing the at-rest visual.
  */
-const cssTransformPair = (
-  shape: Shape,
-  o: AnimationOffsets,
-): { from: string; to: string } => {
+const cssTransformPair = (shape: Shape, o: AnimationOffsets): { from: string; to: string } => {
   const fromParts: string[] = [];
   const toParts: string[] = [];
   if (o.translateX !== 0 || o.translateY !== 0) {
