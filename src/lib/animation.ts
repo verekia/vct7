@@ -277,14 +277,16 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
   for (const sh of shapes) {
     if (!sh.animation) continue;
     const startOffsets = lerpOffsets(sh.animation.from, 0, sh.fill, sh.stroke);
-    const startTransform = cssTransformOf(sh, startOffsets);
+    const { from: startTransform, to: restTransform } = cssTransformPair(sh, startOffsets);
     const opacityRule =
       startOffsets.opacityMul === 1 ? '' : `    opacity: ${fmt(startOffsets.opacityMul)};\n`;
-    const transformRule = startTransform === 'none' ? '' : `    transform: ${startTransform};\n`;
+    const fromTransformRule =
+      startTransform === 'none' ? '' : `    transform: ${startTransform};\n`;
+    const toTransformPart = restTransform === 'none' ? 'none' : restTransform;
     const id = `vh-anim-${sh.id}`;
     const timing = `${fmt(sh.animation.duration)}ms ${easingToCss(sh.animation.easing)} ${fmt(sh.animation.delay)}ms both`;
     blocks.push(
-      `@keyframes ${id} {\n  from {\n${opacityRule}${transformRule}  }\n  to { opacity: 1; transform: none; }\n}`,
+      `@keyframes ${id} {\n  from {\n${opacityRule}${fromTransformRule}  }\n  to { opacity: 1; transform: ${toTransformPart}; }\n}`,
       `.${id} {\n  animation: ${id} ${timing};\n}`,
     );
 
@@ -333,18 +335,44 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
   return blocks.length === 0 ? '' : blocks.join('\n');
 };
 
-/** CSS `transform` value with pivot baked in (see {@link buildKeyframesStyle}). */
-const cssTransformOf = (shape: Shape, o: AnimationOffsets): string => {
-  const parts: string[] = [];
+/**
+ * CSS `transform` values for the keyframe pair, with pivot baked in (see
+ * {@link buildKeyframesStyle}). Returns matching from/to function lists so the
+ * browser interpolates each function independently — interpolating a structured
+ * list against `transform: none` (or any mismatched list) falls back to matrix
+ * decomposition, which produces undefined intermediates when scale=0 makes the
+ * from-matrix degenerate. Using identity values for the rest pose keeps the
+ * lists structurally aligned without changing the at-rest visual.
+ */
+const cssTransformPair = (
+  shape: Shape,
+  o: AnimationOffsets,
+): { from: string; to: string } => {
+  const fromParts: string[] = [];
+  const toParts: string[] = [];
   if (o.translateX !== 0 || o.translateY !== 0) {
-    parts.push(`translate(${fmt(o.translateX)}px, ${fmt(o.translateY)}px)`);
+    fromParts.push(`translate(${fmt(o.translateX)}px, ${fmt(o.translateY)}px)`);
+    toParts.push(`translate(0px, 0px)`);
   }
   if (o.rotation !== 0 || o.scale !== 1) {
     const [cx, cy] = shapeBBoxCenter(shape);
-    parts.push(`translate(${fmt(cx)}px, ${fmt(cy)}px)`);
-    if (o.rotation !== 0) parts.push(`rotate(${fmt(o.rotation)}deg)`);
-    if (o.scale !== 1) parts.push(`scale(${fmt(o.scale)})`);
-    parts.push(`translate(${fmt(-cx)}px, ${fmt(-cy)}px)`);
+    const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`;
+    const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`;
+    fromParts.push(pivotIn);
+    toParts.push(pivotIn);
+    if (o.rotation !== 0) {
+      fromParts.push(`rotate(${fmt(o.rotation)}deg)`);
+      toParts.push(`rotate(0deg)`);
+    }
+    if (o.scale !== 1) {
+      fromParts.push(`scale(${fmt(o.scale)})`);
+      toParts.push(`scale(1)`);
+    }
+    fromParts.push(pivotOut);
+    toParts.push(pivotOut);
   }
-  return parts.length ? parts.join(' ') : 'none';
+  return {
+    from: fromParts.length ? fromParts.join(' ') : 'none',
+    to: toParts.length ? toParts.join(' ') : 'none',
+  };
 };

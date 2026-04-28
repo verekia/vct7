@@ -453,7 +453,6 @@ function ShapeNode({
           fill={visibleFill}
           stroke={visibleStroke === 'none' ? undefined : visibleStroke}
           strokeWidth={visibleStroke === 'none' ? undefined : shape.strokeWidth}
-          vectorEffect="non-scaling-stroke"
           pointerEvents="none"
           style={blendStyle}
           opacity={opacity}
@@ -489,7 +488,6 @@ function ShapeNode({
             strokeWidth={shape.strokeWidth}
             strokeLinejoin="round"
             strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
             pointerEvents="none"
             style={blendStyle}
             opacity={opacity}
@@ -505,7 +503,6 @@ function ShapeNode({
             strokeLinecap="round"
             pointerEvents={shape.locked ? 'none' : filled ? 'all' : 'stroke'}
             opacity={0}
-            vectorEffect="non-scaling-stroke"
           />
         </g>
       );
@@ -519,7 +516,6 @@ function ShapeNode({
           fill={visibleFill}
           stroke={visibleStroke}
           strokeWidth={shape.strokeWidth}
-          vectorEffect="non-scaling-stroke"
           pointerEvents="none"
           style={blendStyle}
           opacity={opacity}
@@ -535,7 +531,6 @@ function ShapeNode({
           strokeWidth={Math.max(10, shape.strokeWidth + 8)}
           pointerEvents={shape.locked ? 'none' : 'all'}
           opacity={0}
-          vectorEffect="non-scaling-stroke"
         />
       </g>
     );
@@ -550,7 +545,6 @@ function ShapeNode({
         strokeWidth={shape.strokeWidth}
         strokeLinejoin="round"
         strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
         pointerEvents="none"
         style={blendStyle}
         opacity={opacity}
@@ -571,7 +565,6 @@ function ShapeNode({
         strokeLinecap="round"
         pointerEvents={shape.locked ? 'none' : shape.closed ? 'all' : 'stroke'}
         opacity={0}
-        vectorEffect="non-scaling-stroke"
       />
     </g>
   );
