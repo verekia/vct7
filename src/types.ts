@@ -104,12 +104,33 @@ export const EASINGS: readonly Easing[] = [
  * stored. `from` holds offsets applied at t=0 and linearly approaching identity
  * at t=1 (the rest state). All `from` fields are optional — a missing field is
  * a zero offset for that channel.
+ *
+ * `spin` adds a constant-speed rotation that runs forever after the entrance.
+ * Composed with the entrance via a separate CSS animation on a nested wrapper,
+ * so the entrance's own transform doesn't get clobbered while the spin runs.
  */
 export interface AnimationSpec {
   duration: number;
   delay: number;
   easing: Easing;
   from: AnimationFromState;
+  spin?: SpinSpec;
+}
+
+/**
+ * Constant-speed rotation that engages after the entrance and never stops.
+ * Use case: cog-wheel decorations that translate into place while already
+ * spinning, then keep spinning once the menu is open.
+ */
+export interface SpinSpec {
+  /** Degrees per second. Positive = clockwise. Zero disables. */
+  speed: number;
+  /**
+   * Offset from the entrance's end (`delay + duration`) at which the spin
+   * engages, in milliseconds. Negative values start the spin *during* the
+   * entrance, so the cog can already be rotating while it's flying in.
+   */
+  startOffset: number;
 }
 
 export interface AnimationFromState {

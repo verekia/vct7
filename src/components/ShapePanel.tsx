@@ -9,6 +9,7 @@ import type {
   BlendMode,
   Easing,
   Shape,
+  SpinSpec,
 } from '../types';
 import { BLEND_MODES, EASINGS } from '../types';
 
@@ -756,9 +757,71 @@ function AnimationControls({
             value={anim.from.stroke}
             onChange={(v) => updateFrom({ stroke: v })}
           />
+
+          <SpinControls spin={anim.spin} onChange={(next) => set({ ...anim, spin: next })} />
         </>
       )}
     </section>
+  );
+}
+
+const DEFAULT_SPIN: SpinSpec = { speed: 90, startOffset: 0 };
+
+/**
+ * Constant-speed forever-spin sub-section. Lives under the entrance controls
+ * because the spin engages relative to the entrance's end. Negative
+ * `startOffset` is encouraged for the cog-wheel pattern (already spinning
+ * while flying in), so the input has no min — only a "ms" label and a hint.
+ */
+function SpinControls({
+  spin,
+  onChange,
+}: {
+  spin: SpinSpec | undefined;
+  onChange: (next: SpinSpec | undefined) => void;
+}) {
+  const enabled = !!spin;
+  return (
+    <>
+      <div className="flex gap-1.5 items-center flex-wrap mt-2">
+        <span className="text-muted text-[10px] tracking-[0.5px] uppercase flex-1">
+          Spin (after entrance)
+        </span>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_SPIN } : undefined)}
+        />
+      </div>
+      {spin && (
+        <>
+          <label>
+            <span>Speed (°/sec, negative = ccw)</span>
+            <input
+              type="number"
+              step={5}
+              value={spin.speed}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) onChange({ ...spin, speed: v });
+              }}
+            />
+          </label>
+          <label>
+            <span>Start offset (ms, negative = during entrance)</span>
+            <input
+              type="number"
+              step={50}
+              value={spin.startOffset}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v)) onChange({ ...spin, startOffset: v });
+              }}
+            />
+          </label>
+        </>
+      )}
+    </>
   );
 }
 

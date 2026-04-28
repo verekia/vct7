@@ -153,12 +153,36 @@ export const lerpOffsets = (
  * High-level convenience: apply this shape's easing + windowing to a scene
  * time and return the offsets to render with. Returns IDENTITY_OFFSETS for
  * unanimated shapes (callers can therefore call this unconditionally).
+ *
+ * `spin` (when set) layers a constant-speed rotation on top of the entrance's
+ * own rotation channel — the editor sums them into a single combined rotation
+ * value that the JS render path applies to one wrapper. The exported SVG
+ * splits them across two CSS animations on nested wrappers because CSS can't
+ * compose two animations driving the same property on one element.
  */
 export const sampleAnimation = (shape: Shape, sceneT: number): AnimationOffsets => {
   if (!shape.animation) return IDENTITY_OFFSETS;
   const raw = shapeProgress(shape.animation, sceneT);
   const eased = easeFn(shape.animation.easing)(raw);
-  return lerpOffsets(shape.animation.from, eased, shape.fill, shape.stroke);
+  const offsets = lerpOffsets(shape.animation.from, eased, shape.fill, shape.stroke);
+  return applySpin(offsets, shape.animation, sceneT);
+};
+
+/** Spin start time (ms) relative to scene zero. Negative if startOffset extends past 0. */
+export const spinStartT = (anim: AnimationSpec): number =>
+  anim.delay + anim.duration + (anim.spin?.startOffset ?? 0);
+
+/** Add the accumulated spin rotation at scene time `sceneT` to an offset bundle. */
+const applySpin = (
+  offsets: AnimationOffsets,
+  anim: AnimationSpec,
+  sceneT: number,
+): AnimationOffsets => {
+  if (!anim.spin || anim.spin.speed === 0) return offsets;
+  const start = spinStartT(anim);
+  if (sceneT < start) return offsets;
+  const elapsed = (sceneT - start) / 1000;
+  return { ...offsets, rotation: offsets.rotation + elapsed * anim.spin.speed };
 };
 
 /**
@@ -187,15 +211,29 @@ export const offsetsToTransform = (shape: Shape, o: AnimationOffsets): string =>
   return parts.join(' ');
 };
 
-/** Total scene length in ms — `max(delay + duration)` over animated shapes. */
+/**
+ * How much extra preview time the timeline shows past the entrance end when
+ * any shape has a spin. The spin runs forever in the exported SVG, but the
+ * editor needs a finite scrub range — three seconds is enough to feel the
+ * speed and direction without making the slider's "rest" segment dominate.
+ */
+export const SPIN_PREVIEW_MS = 3000;
+
+/**
+ * Total scene length in ms — `max(delay + duration)` over animated shapes,
+ * plus a fixed tail when any shape spins so the scrubber has somewhere to go
+ * after the entrance lands.
+ */
 export const sceneTotal = (shapes: Shape[]): number => {
   let total = 0;
+  let hasSpin = false;
   for (const sh of shapes) {
     if (!sh.animation) continue;
     const end = sh.animation.delay + sh.animation.duration;
     if (end > total) total = end;
+    if (sh.animation.spin && sh.animation.spin.speed !== 0) hasSpin = true;
   }
-  return total;
+  return hasSpin ? total + SPIN_PREVIEW_MS : total;
 };
 
 /**
@@ -207,6 +245,10 @@ export const animationHasPaint = (shape: Shape): boolean => {
   const start = lerpOffsets(shape.animation.from, 0, shape.fill, shape.stroke);
   return start.fill !== null || start.stroke !== null;
 };
+
+/** True when the shape's animation has a non-zero spin (needs the extra wrapper). */
+export const animationHasSpin = (shape: Shape): boolean =>
+  !!shape.animation?.spin && shape.animation.spin.speed !== 0;
 
 /**
  * Build a `<style>` block embedding @keyframes + class rules for every
@@ -265,6 +307,26 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
       blocks.push(
         `@keyframes ${paintId} {\n  from { ${fromLines.join(' ')} }\n  to { ${toLines.join(' ')} }\n}`,
         `.${paintId} {\n  animation: ${paintId} ${timing};\n}`,
+      );
+    }
+
+    // Spin keyframe — runs forever on a *nested* wrapper so the entrance's
+    // transform animation isn't shadowed. Pivot is the shape's bbox center,
+    // baked into the keyframe values for cross-browser consistency.
+    if (sh.animation.spin && sh.animation.spin.speed !== 0) {
+      const spin = sh.animation.spin;
+      const period = Math.abs(360 / spin.speed) * 1000; // ms per revolution
+      const direction = spin.speed >= 0 ? 360 : -360;
+      const [cx, cy] = shapeBBoxCenter(sh);
+      const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`;
+      const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`;
+      const start = `${pivotIn} rotate(0deg) ${pivotOut}`;
+      const end = `${pivotIn} rotate(${direction}deg) ${pivotOut}`;
+      const spinId = `${id}-spin`;
+      const spinDelay = fmt(spinStartT(sh.animation));
+      blocks.push(
+        `@keyframes ${spinId} {\n  from { transform: ${start}; }\n  to { transform: ${end}; }\n}`,
+        `.${spinId} {\n  animation: ${spinId} ${fmt(period)}ms linear ${spinDelay}ms infinite;\n}`,
       );
     }
   }

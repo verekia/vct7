@@ -8,11 +8,12 @@ import type {
   Point,
   ProjectSettings,
   Shape,
+  SpinSpec,
 } from '../types';
 import { BLEND_MODES, EASINGS } from '../types';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
 import { composeTransformString, shapeRotation, shapeScale } from './transform';
-import { animationHasPaint, buildKeyframesStyle } from './animation';
+import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation';
 
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
 const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES);
@@ -67,11 +68,19 @@ const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
   if (from.translateY !== undefined) compactFrom.translateY = from.translateY;
   if (from.fill !== undefined) compactFrom.fill = from.fill;
   if (from.stroke !== undefined) compactFrom.stroke = from.stroke;
+  let spin: SpinSpec | undefined;
+  if (obj.spin && typeof obj.spin === 'object') {
+    const spinRaw = obj.spin as Record<string, unknown>;
+    const speed = numOpt(spinRaw.speed);
+    const startOffset = numOpt(spinRaw.startOffset) ?? 0;
+    if (speed !== undefined && speed !== 0) spin = { speed, startOffset };
+  }
   return {
     duration,
     delay: Number.isFinite(delay) && delay >= 0 ? delay : 0,
     easing: easing as Easing,
     from: compactFrom,
+    ...(spin ? { spin } : {}),
   };
 };
 
@@ -94,6 +103,7 @@ const animationToAttr = (anim: AnimationSpec): string => {
     delay: anim.delay,
     easing: anim.easing,
     from,
+    ...(anim.spin && anim.spin.speed !== 0 ? { spin: anim.spin } : {}),
   });
 };
 
@@ -308,9 +318,18 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
 
     // Wrap animated shapes in a <g> the CSS keyframes can target. Only when
     // animationEnabled — otherwise emit the raw element (no extra DOM node).
+    // When spin is set, an extra nested wrapper carries the spin animation so
+    // the entrance's transform animation is not shadowed.
     if (settings.animationEnabled && shape.animation) {
-      lines.push(`  <g class="vh-anim-${shape.id}">`);
-      lines.push(`    ${element}`);
+      const id = shape.id;
+      lines.push(`  <g class="vh-anim-${id}">`);
+      if (animationHasSpin(shape)) {
+        lines.push(`    <g class="vh-anim-${id}-spin">`);
+        lines.push(`      ${element}`);
+        lines.push(`    </g>`);
+      } else {
+        lines.push(`    ${element}`);
+      }
       lines.push(`  </g>`);
     } else {
       lines.push(`  ${element}`);
