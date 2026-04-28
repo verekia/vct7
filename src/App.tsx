@@ -4,6 +4,7 @@ import { ProjectPanel } from './components/ProjectPanel';
 import { ShapePanel } from './components/ShapePanel';
 import { LayerPanel } from './components/LayerPanel';
 import { Canvas } from './components/Canvas';
+import { Timeline } from './components/Timeline';
 import { Statusbar } from './components/Statusbar';
 import { FontDialog } from './components/FontDialog';
 import { useKeyboard } from './hooks/useKeyboard';
@@ -77,6 +78,7 @@ export function App() {
           <ShapePanel />
         </aside>
       </main>
+      <Timeline />
       <Statusbar />
       <FontDialog />
     </>

@@ -71,6 +71,86 @@ export interface Shape {
    * means no scaling. Same baking semantics as `rotation`.
    */
   scale?: number;
+  /**
+   * Per-shape entrance animation. Absent means the shape does not animate. The
+   * authored shape state (points + rotation + scale + opacity) is the *rest /
+   * final* frame; `from` describes additive offsets at t=0. The animation
+   * therefore plays the shape *into* its rest pose. Saved into the SVG only
+   * when `ProjectSettings.animationEnabled` is true — otherwise stripped on
+   * export.
+   */
+  animation?: AnimationSpec;
+}
+
+/**
+ * Easing keyword. The first five map 1:1 to a CSS `animation-timing-function`
+ * value; `snap` is a custom cubic-bezier tuned for a fast-out / firm-stop
+ * curve that lands shapes decisively into their rest pose.
+ */
+export type Easing = 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'snap';
+
+export const EASINGS: readonly Easing[] = [
+  'linear',
+  'ease',
+  'ease-in',
+  'ease-out',
+  'ease-in-out',
+  'snap',
+];
+
+/**
+ * Entrance animation spec. `duration` and `delay` are milliseconds; the scene's
+ * total length is derived as `max(delay + duration)` over animated shapes, not
+ * stored. `from` holds offsets applied at t=0 and linearly approaching identity
+ * at t=1 (the rest state). All `from` fields are optional — a missing field is
+ * a zero offset for that channel.
+ *
+ * `spin` adds a constant-speed rotation that runs forever after the entrance.
+ * Composed with the entrance via a separate CSS animation on a nested wrapper,
+ * so the entrance's own transform doesn't get clobbered while the spin runs.
+ */
+export interface AnimationSpec {
+  duration: number;
+  delay: number;
+  easing: Easing;
+  from: AnimationFromState;
+  spin?: SpinSpec;
+}
+
+/**
+ * Constant-speed rotation that engages after the entrance and never stops.
+ * Use case: cog-wheel decorations that translate into place while already
+ * spinning, then keep spinning once the menu is open.
+ */
+export interface SpinSpec {
+  /** Degrees per second. Positive = clockwise. Zero disables. */
+  speed: number;
+  /**
+   * Offset from the entrance's end (`delay + duration`) at which the spin
+   * engages, in milliseconds. Negative values start the spin *during* the
+   * entrance, so the cog can already be rotating while it's flying in.
+   */
+  startOffset: number;
+}
+
+export interface AnimationFromState {
+  /** Absolute opacity at t=0 (rest opacity is the shape's own `opacity`, default 1). */
+  opacity?: number;
+  /** Additive rotation offset in degrees, applied around the shape's bbox center. */
+  rotation?: number;
+  /** Multiplicative scale factor, applied around the shape's bbox center (1 = no offset). */
+  scale?: number;
+  /** Translate offset in canvas units, applied as a raw screen-space shift. */
+  translateX?: number;
+  translateY?: number;
+  /**
+   * Hex fill color at t=0; lerps toward the shape's rest fill across the
+   * animation. Ignored when the shape's rest fill is `'none'` — there's
+   * nothing to interpolate toward.
+   */
+  fill?: string;
+  /** Hex stroke color at t=0. Same `none`-rest caveat as `fill`. */
+  stroke?: string;
 }
 
 /**
@@ -161,6 +241,13 @@ export interface ProjectSettings {
   gridSnap: boolean;
   /** Clip rendered shapes to the artboard rectangle. */
   clip: boolean;
+  /**
+   * Master switch for per-shape entrance animations. When false the timeline UI
+   * is dimmed and saved SVGs strip every animation field — the file roundtrips
+   * as a static composition. Per-shape `Shape.animation` data is preserved in
+   * memory regardless, so toggling back on restores the authored animation.
+   */
+  animationEnabled: boolean;
 }
 
 export interface ViewState {

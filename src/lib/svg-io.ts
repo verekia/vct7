@@ -1,10 +1,111 @@
-import type { ArcRange, BlendMode, GlyphData, Point, ProjectSettings, Shape } from '../types';
-import { BLEND_MODES } from '../types';
+import type {
+  AnimationFromState,
+  AnimationSpec,
+  ArcRange,
+  BlendMode,
+  Easing,
+  GlyphData,
+  Point,
+  ProjectSettings,
+  Shape,
+  SpinSpec,
+} from '../types';
+import { BLEND_MODES, EASINGS } from '../types';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
 import { composeTransformString, shapeRotation, shapeScale } from './transform';
+import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation';
 
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
 const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES);
+const EASING_SET: ReadonlySet<string> = new Set(EASINGS);
+
+/** Coerce an unknown value to a finite number, defaulting to undefined. */
+const numOpt = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+
+/**
+ * Decode a `data-vh-anim` JSON blob back into an {@link AnimationSpec},
+ * tolerating malformed input by returning undefined (in which case the shape
+ * loads as a non-animated rest pose). Numeric fields are guarded with
+ * `Number.isFinite` so a stray `NaN` slips into a missing-channel undefined.
+ */
+const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+const colorOpt = (v: unknown): string | undefined =>
+  typeof v === 'string' && HEX_COLOR.test(v) ? v : undefined;
+
+const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== 'object') return undefined;
+  const obj = parsed as Record<string, unknown>;
+  const duration = typeof obj.duration === 'number' ? obj.duration : NaN;
+  const delay = typeof obj.delay === 'number' ? obj.delay : 0;
+  const easing = typeof obj.easing === 'string' ? obj.easing : '';
+  if (!Number.isFinite(duration) || duration < 0) return undefined;
+  if (!EASING_SET.has(easing)) return undefined;
+  const fromRaw =
+    obj.from && typeof obj.from === 'object' ? (obj.from as Record<string, unknown>) : {};
+  const from: AnimationFromState = {
+    opacity: numOpt(fromRaw.opacity),
+    rotation: numOpt(fromRaw.rotation),
+    scale: numOpt(fromRaw.scale),
+    translateX: numOpt(fromRaw.translateX),
+    translateY: numOpt(fromRaw.translateY),
+    fill: colorOpt(fromRaw.fill),
+    stroke: colorOpt(fromRaw.stroke),
+  };
+  // Strip undefined keys so the in-memory shape stays compact.
+  const compactFrom: AnimationFromState = {};
+  if (from.opacity !== undefined) compactFrom.opacity = from.opacity;
+  if (from.rotation !== undefined) compactFrom.rotation = from.rotation;
+  if (from.scale !== undefined) compactFrom.scale = from.scale;
+  if (from.translateX !== undefined) compactFrom.translateX = from.translateX;
+  if (from.translateY !== undefined) compactFrom.translateY = from.translateY;
+  if (from.fill !== undefined) compactFrom.fill = from.fill;
+  if (from.stroke !== undefined) compactFrom.stroke = from.stroke;
+  let spin: SpinSpec | undefined;
+  if (obj.spin && typeof obj.spin === 'object') {
+    const spinRaw = obj.spin as Record<string, unknown>;
+    const speed = numOpt(spinRaw.speed);
+    const startOffset = numOpt(spinRaw.startOffset) ?? 0;
+    if (speed !== undefined && speed !== 0) spin = { speed, startOffset };
+  }
+  return {
+    duration,
+    delay: Number.isFinite(delay) && delay >= 0 ? delay : 0,
+    easing: easing as Easing,
+    from: compactFrom,
+    ...(spin ? { spin } : {}),
+  };
+};
+
+/**
+ * JSON-encode an {@link AnimationSpec} for storage on the shape element.
+ * Channels left undefined are omitted so the saved file stays tidy. Reading
+ * is via {@link parseAnimationAttr} which tolerates the omissions.
+ */
+const animationToAttr = (anim: AnimationSpec): string => {
+  const from: Record<string, number | string> = {};
+  if (anim.from.opacity !== undefined) from.opacity = anim.from.opacity;
+  if (anim.from.rotation !== undefined) from.rotation = anim.from.rotation;
+  if (anim.from.scale !== undefined) from.scale = anim.from.scale;
+  if (anim.from.translateX !== undefined) from.translateX = anim.from.translateX;
+  if (anim.from.translateY !== undefined) from.translateY = anim.from.translateY;
+  if (anim.from.fill !== undefined) from.fill = anim.from.fill;
+  if (anim.from.stroke !== undefined) from.stroke = anim.from.stroke;
+  return JSON.stringify({
+    duration: anim.duration,
+    delay: anim.delay,
+    easing: anim.easing,
+    from,
+    ...(anim.spin && anim.spin.speed !== 0 ? { spin: anim.spin } : {}),
+  });
+};
 
 /**
  * Reconstruct a {@link GlyphData} payload from a serialized `<path>`. The path
@@ -57,6 +158,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   gridVisible: false,
   gridSnap: true,
   clip: false,
+  animationEnabled: false,
 };
 
 const escapeAttr = (v: string): string =>
@@ -87,8 +189,20 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       ` data-vh-grid-size="${fmt(settings.gridSize)}"` +
       ` data-vh-grid-visible="${settings.gridVisible}"` +
       ` data-vh-grid-snap="${settings.gridSnap}"` +
-      ` data-vh-clip="${settings.clip}">`,
+      ` data-vh-clip="${settings.clip}"` +
+      (settings.animationEnabled ? ` data-vh-animation-enabled="true"` : '') +
+      `>`,
   );
+
+  // Animation CSS is emitted only when enabled — turning the project switch
+  // off removes every animation byte from the saved file, matching the
+  // "nothing animation related" requirement.
+  if (settings.animationEnabled) {
+    const style = buildKeyframesStyle(shapes);
+    if (style) {
+      lines.push(`  <style>${style}</style>`);
+    }
+  }
   if (settings.bg !== null) {
     lines.push(
       `  <rect x="${fmt(vbX)}" y="${fmt(vbY)}" width="${fmt(vbW)}" height="${fmt(
@@ -158,6 +272,19 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.opacity !== undefined && shape.opacity < 1) {
       baseAttrs.push(`opacity="${fmt(Math.max(0, shape.opacity))}"`);
     }
+    // Animation metadata is only emitted when the project switch is on, so the
+    // file is byte-identical to a non-animated project when the user toggles
+    // animation off.
+    const emitsAnimation = settings.animationEnabled && !!shape.animation;
+    if (emitsAnimation && shape.animation) {
+      baseAttrs.push(`data-vh-anim="${escapeAttr(animationToAttr(shape.animation))}"`);
+      // The transform/opacity animation lives on the wrapper <g>; the
+      // paint animation has to live on the inner element because CSS `fill`
+      // on the wrapper is shadowed by the inner element's `fill="..."` attr.
+      if (animationHasPaint(shape)) {
+        baseAttrs.push(`class="vh-anim-${shape.id}-paint"`);
+      }
+    }
     const rot = shapeRotation(shape);
     const scl = shapeScale(shape);
     if (rot !== 0) baseAttrs.push(`data-vh-rotation="${fmt(rot)}"`);
@@ -168,30 +295,44 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     // into one attribute value.
     const composedTransform = composeTransformString(shape);
 
+    let element: string;
     if (isGlyphs && shape.glyphs) {
-      lines.push(
-        `  <path d="${shape.glyphs.d}" transform="${composedTransform}" ${baseAttrs.join(' ')}/>`,
-      );
+      element = `<path d="${shape.glyphs.d}" transform="${composedTransform}" ${baseAttrs.join(' ')}/>`;
     } else if (isCircle && !partialArc) {
       const [cx, cy] = shape.points[0];
       const r = dist(shape.points[0], shape.points[1]);
       const transformAttr = composedTransform ? ` transform="${composedTransform}"` : '';
-      lines.push(
-        `  <circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}"${transformAttr} ${baseAttrs.join(
-          ' ',
-        )}/>`,
-      );
+      element = `<circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}"${transformAttr} ${baseAttrs.join(' ')}/>`;
     } else if (isCircle && partialArc) {
       const [cx, cy] = shape.points[0];
       const r = dist(shape.points[0], shape.points[1]);
       const d = arcToPath(cx, cy, r, partialArc);
       const transformAttr = composedTransform ? ` transform="${composedTransform}"` : '';
-      lines.push(`  <path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`);
+      element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`;
     } else {
       const bz = shape.bezierOverride ?? settings.bezier;
       const d = pointsToPath(shape.points, shape.closed, bz);
       const transformAttr = composedTransform ? ` transform="${composedTransform}"` : '';
-      lines.push(`  <path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`);
+      element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`;
+    }
+
+    // Wrap animated shapes in a <g> the CSS keyframes can target. Only when
+    // animationEnabled — otherwise emit the raw element (no extra DOM node).
+    // When spin is set, an extra nested wrapper carries the spin animation so
+    // the entrance's transform animation is not shadowed.
+    if (settings.animationEnabled && shape.animation) {
+      const id = shape.id;
+      lines.push(`  <g class="vh-anim-${id}">`);
+      if (animationHasSpin(shape)) {
+        lines.push(`    <g class="vh-anim-${id}-spin">`);
+        lines.push(`      ${element}`);
+        lines.push(`    </g>`);
+      } else {
+        lines.push(`    ${element}`);
+      }
+      lines.push(`  </g>`);
+    } else {
+      lines.push(`  ${element}`);
     }
   }
   if (settings.clip) lines.push('  </g>');
@@ -281,6 +422,9 @@ export function parseProject(text: string): ParsedProject {
   if (gridSnap) settings.gridSnap = gridSnap === 'true';
   const clip = svg.getAttribute('data-vh-clip');
   if (clip) settings.clip = clip === 'true';
+  if (svg.getAttribute('data-vh-animation-enabled') === 'true') {
+    settings.animationEnabled = true;
+  }
 
   const shapes: Shape[] = [];
   // Iterate path AND circle elements in document order so z-order survives.
@@ -343,6 +487,7 @@ export function parseProject(text: string): ParsedProject {
     const scaleAttr = el.getAttribute('data-vh-scale');
     const scaleNum = scaleAttr === null ? NaN : parseFloat(scaleAttr);
     const scale = Number.isFinite(scaleNum) && scaleNum !== 1 ? scaleNum : undefined;
+    const animation = parseAnimationAttr(el.getAttribute('data-vh-anim'));
     shapes.push({
       id: makeId(),
       ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
@@ -361,6 +506,7 @@ export function parseProject(text: string): ParsedProject {
       ...(glyphs ? { glyphs } : {}),
       ...(rotation !== undefined ? { rotation } : {}),
       ...(scale !== undefined ? { scale } : {}),
+      ...(animation ? { animation } : {}),
     });
   }
 
