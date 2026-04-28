@@ -251,6 +251,9 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       if (dash) {
         baseAttrs.push(`stroke-dasharray="${escapeAttr(dash)}"`);
       }
+      if (shape.paintOrder === 'stroke') {
+        baseAttrs.push(`paint-order="stroke"`);
+      }
     }
     if (shape.hidden) baseAttrs.push(`visibility="hidden"`);
     baseAttrs.push(
@@ -525,6 +528,13 @@ export function parseProject(text: string): ParsedProject {
       dashAttr && dashAttr.trim() !== '' && dashAttr.trim() !== 'none'
         ? dashAttr.trim()
         : undefined;
+    // Only the leading keyword matters for the visual difference we expose —
+    // anything starting with `stroke` flips the order so the stroke renders
+    // under the fill. `normal`, `fill …`, or a missing attr stay default.
+    const paintOrderAttr = el.getAttribute('paint-order')?.trim().toLowerCase() ?? '';
+    const paintOrder: 'stroke' | undefined = paintOrderAttr.startsWith('stroke')
+      ? 'stroke'
+      : undefined;
     shapes.push({
       id: makeId(),
       ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
@@ -539,6 +549,7 @@ export function parseProject(text: string): ParsedProject {
       ...(linejoin ? { strokeLinejoin: linejoin } : {}),
       ...(linecap ? { strokeLinecap: linecap } : {}),
       ...(strokeDasharray ? { strokeDasharray } : {}),
+      ...(paintOrder ? { paintOrder } : {}),
       ...(nameAttr ? { name: nameAttr } : {}),
       ...(arc ? { arc } : {}),
       ...(blendMode ? { blendMode } : {}),

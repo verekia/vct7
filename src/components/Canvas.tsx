@@ -444,6 +444,7 @@ function ShapeNode({
     shape.strokeDasharray && shape.strokeDasharray.trim() !== ''
       ? shape.strokeDasharray
       : undefined;
+  const paintOrder = shape.paintOrder === 'stroke' ? 'stroke' : undefined;
   const blendStyle: CSSProperties | undefined =
     shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
   const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined;
@@ -462,6 +463,7 @@ function ShapeNode({
           strokeLinejoin={visibleStroke === 'none' ? undefined : linejoin}
           strokeLinecap={visibleStroke === 'none' ? undefined : linecap}
           strokeDasharray={visibleStroke === 'none' ? undefined : dasharray}
+          paintOrder={visibleStroke === 'none' ? undefined : paintOrder}
           pointerEvents="none"
           style={blendStyle}
           opacity={opacity}
@@ -498,6 +500,7 @@ function ShapeNode({
             strokeLinejoin={linejoin}
             strokeLinecap={linecap}
             strokeDasharray={dasharray}
+            paintOrder={paintOrder}
             pointerEvents="none"
             style={blendStyle}
             opacity={opacity}
@@ -527,6 +530,7 @@ function ShapeNode({
           stroke={visibleStroke}
           strokeWidth={shape.strokeWidth}
           strokeDasharray={dasharray}
+          paintOrder={paintOrder}
           pointerEvents="none"
           style={blendStyle}
           opacity={opacity}
@@ -557,6 +561,7 @@ function ShapeNode({
         strokeLinejoin={linejoin}
         strokeLinecap={linecap}
         strokeDasharray={dasharray}
+        paintOrder={paintOrder}
         pointerEvents="none"
         style={blendStyle}
         opacity={opacity}

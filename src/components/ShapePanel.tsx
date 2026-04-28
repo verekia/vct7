@@ -194,24 +194,30 @@ function StrokeStyleControls({
   linejoin,
   linecap,
   dasharray,
+  strokeUnderFill,
   showJoinCap,
   linejoinMixed,
   linecapMixed,
   dasharrayMixed,
+  paintOrderMixed,
   onLinejoin,
   onLinecap,
   onDasharray,
+  onStrokeUnderFill,
 }: {
   linejoin: StrokeLinejoin;
   linecap: StrokeLinecap;
   dasharray: string;
+  strokeUnderFill: boolean;
   showJoinCap: boolean;
   linejoinMixed?: boolean;
   linecapMixed?: boolean;
   dasharrayMixed?: boolean;
+  paintOrderMixed?: boolean;
   onLinejoin: (v: StrokeLinejoin) => void;
   onLinecap: (v: StrokeLinecap) => void;
   onDasharray: (v: string) => void;
+  onStrokeUnderFill: (v: boolean) => void;
 }) {
   const [dashText, setDashText] = useState(dasharray);
   const dashKey = dasharrayMixed ? '__mixed__' : dasharray;
@@ -274,6 +280,20 @@ function StrokeStyleControls({
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           }}
         />
+      </label>
+      <label>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Stroke under fill</span>
+          <input
+            type="checkbox"
+            checked={!paintOrderMixed && strokeUnderFill}
+            ref={(el) => {
+              if (el) el.indeterminate = !!paintOrderMixed;
+            }}
+            onChange={(e) => onStrokeUnderFill(e.target.checked)}
+            title="Paint stroke under the fill (SVG paint-order=stroke). Useful for outlined text and chunky icon strokes."
+          />
+        </span>
       </label>
     </>
   );
@@ -411,12 +431,14 @@ function ShapePanelInner({
           linejoin={shape.strokeLinejoin ?? 'round'}
           linecap={shape.strokeLinecap ?? 'round'}
           dasharray={shape.strokeDasharray ?? ''}
+          strokeUnderFill={shape.paintOrder === 'stroke'}
           showJoinCap={!(isCircle && !partial)}
           onLinejoin={(v) =>
             updateShape(shape.id, { strokeLinejoin: v === 'round' ? undefined : v })
           }
           onLinecap={(v) => updateShape(shape.id, { strokeLinecap: v === 'round' ? undefined : v })}
           onDasharray={(v) => updateShape(shape.id, { strokeDasharray: v === '' ? undefined : v })}
+          onStrokeUnderFill={(v) => updateShape(shape.id, { paintOrder: v ? 'stroke' : undefined })}
         />
       )}
 
@@ -1146,6 +1168,7 @@ function MultiShapePanel({
   const linejoins = shapes.map((s) => s.strokeLinejoin ?? 'round');
   const linecaps = shapes.map((s) => s.strokeLinecap ?? 'round');
   const dasharrays = shapes.map((s) => s.strokeDasharray ?? '');
+  const paintOrders = shapes.map((s) => s.paintOrder === 'stroke');
   const strokeUniform = allSame(strokes);
   const fillUniform = allSame(fills);
   const widthUniform = allSame(widths);
@@ -1157,6 +1180,7 @@ function MultiShapePanel({
   const linejoinUniform = allSame(linejoins);
   const linecapUniform = allSame(linecaps);
   const dasharrayUniform = allSame(dasharrays);
+  const paintOrderUniform = allSame(paintOrders);
 
   const [strokeText, setStrokeText] = useState(strokeUniform ? strokes[0] : '');
   const [fillText, setFillText] = useState(fillUniform ? fills[0] : '');
@@ -1249,13 +1273,16 @@ function MultiShapePanel({
           linejoin={linejoinUniform ? linejoins[0] : 'round'}
           linecap={linecapUniform ? linecaps[0] : 'round'}
           dasharray={dasharrayUniform ? dasharrays[0] : ''}
+          strokeUnderFill={paintOrderUniform ? paintOrders[0] : false}
           showJoinCap={kind !== 'circle'}
           linejoinMixed={!linejoinUniform}
           linecapMixed={!linecapUniform}
           dasharrayMixed={!dasharrayUniform}
+          paintOrderMixed={!paintOrderUniform}
           onLinejoin={(v) => applyAll({ strokeLinejoin: v === 'round' ? undefined : v })}
           onLinecap={(v) => applyAll({ strokeLinecap: v === 'round' ? undefined : v })}
           onDasharray={(v) => applyAll({ strokeDasharray: v === '' ? undefined : v })}
+          onStrokeUnderFill={(v) => applyAll({ paintOrder: v ? 'stroke' : undefined })}
         />
       )}
 

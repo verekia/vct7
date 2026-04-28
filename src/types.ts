@@ -57,6 +57,13 @@ export interface Shape {
    * to the SVG attribute, so any valid dasharray syntax works.
    */
   strokeDasharray?: string;
+  /**
+   * SVG `paint-order`. Absent / `'fill'` means the default (fill, then stroke
+   * painted on top). `'stroke'` flips the order so the stroke is painted first
+   * and the fill covers its inner half — the typical "stroke outside the
+   * shape" look used for outlined text and chunky icon strokes.
+   */
+  paintOrder?: 'fill' | 'stroke';
   /** When null, the project's global bezier value applies. */
   bezierOverride: number | null;
   hidden: boolean;

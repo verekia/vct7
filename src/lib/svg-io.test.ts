@@ -161,6 +161,23 @@ describe('parseProject round-trip', () => {
     expect(parsed.shapes[0].strokeDasharray).toBeUndefined();
   });
 
+  // paint-order=stroke flips stroke under fill; default order omits the attr
+  // entirely so unrelated files don't pick it up on re-save.
+  it('round-trips paint-order="stroke"', () => {
+    const shape: Shape = { ...sampleShapes[1], paintOrder: 'stroke' };
+    const text = serializeProject(sampleSettings, [shape]);
+    expect(text).toContain('paint-order="stroke"');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].paintOrder).toBe('stroke');
+  });
+
+  it('omits paint-order when default (fill first)', () => {
+    const text = serializeProject(sampleSettings, [sampleShapes[1]]);
+    expect(text).not.toContain('paint-order');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].paintOrder).toBeUndefined();
+  });
+
   it('omits rotation/scale attrs at identity', () => {
     const text = serializeProject(sampleSettings, [sampleShapes[0]]);
     expect(text).not.toContain('data-vh-rotation');
