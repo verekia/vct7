@@ -71,6 +71,56 @@ export interface Shape {
    * means no scaling. Same baking semantics as `rotation`.
    */
   scale?: number;
+  /**
+   * Per-shape entrance animation. Absent means the shape does not animate. The
+   * authored shape state (points + rotation + scale + opacity) is the *rest /
+   * final* frame; `from` describes additive offsets at t=0. The animation
+   * therefore plays the shape *into* its rest pose. Saved into the SVG only
+   * when `ProjectSettings.animationEnabled` is true — otherwise stripped on
+   * export.
+   */
+  animation?: AnimationSpec;
+}
+
+/**
+ * Easing keyword. Maps 1:1 to a CSS `animation-timing-function` value, plus a
+ * `dr-classic` preset tuned for the wipeout / DR-style snap-into-place feel.
+ */
+export type Easing = 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'dr-classic';
+
+export const EASINGS: readonly Easing[] = [
+  'linear',
+  'ease',
+  'ease-in',
+  'ease-out',
+  'ease-in-out',
+  'dr-classic',
+];
+
+/**
+ * Entrance animation spec. `duration` and `delay` are milliseconds; the scene's
+ * total length is derived as `max(delay + duration)` over animated shapes, not
+ * stored. `from` holds offsets applied at t=0 and linearly approaching identity
+ * at t=1 (the rest state). All `from` fields are optional — a missing field is
+ * a zero offset for that channel.
+ */
+export interface AnimationSpec {
+  duration: number;
+  delay: number;
+  easing: Easing;
+  from: AnimationFromState;
+}
+
+export interface AnimationFromState {
+  /** Absolute opacity at t=0 (rest opacity is the shape's own `opacity`, default 1). */
+  opacity?: number;
+  /** Additive rotation offset in degrees, applied around the shape's bbox center. */
+  rotation?: number;
+  /** Multiplicative scale factor, applied around the shape's bbox center (1 = no offset). */
+  scale?: number;
+  /** Translate offset in canvas units, applied as a raw screen-space shift. */
+  translateX?: number;
+  translateY?: number;
 }
 
 /**
@@ -161,6 +211,13 @@ export interface ProjectSettings {
   gridSnap: boolean;
   /** Clip rendered shapes to the artboard rectangle. */
   clip: boolean;
+  /**
+   * Master switch for per-shape entrance animations. When false the timeline UI
+   * is dimmed and saved SVGs strip every animation field — the file roundtrips
+   * as a static composition. Per-shape `Shape.animation` data is preserved in
+   * memory regardless, so toggling back on restores the authored animation.
+   */
+  animationEnabled: boolean;
 }
 
 export interface ViewState {

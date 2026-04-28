@@ -16,6 +16,7 @@ const sampleSettings: ProjectSettings = {
   gridVisible: true,
   gridSnap: false,
   clip: false,
+  animationEnabled: false,
 };
 
 const sampleShapes: Shape[] = [

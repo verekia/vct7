@@ -39,7 +39,7 @@
 
   #root {
     display: grid;
-    grid-template-rows: 42px 1fr 24px;
+    grid-template-rows: 42px 1fr auto 24px;
   }
 
   button {
@@ -192,6 +192,14 @@
     background: var(--color-accent);
     display: inline-block;
     box-shadow: 0 0 6px rgba(255, 59, 48, 0.6);
+  }
+
+  /* Timeline strip — slightly darker than the topbar/statusbar for grounding. */
+  .timeline-surface {
+    background: linear-gradient(180deg, #14171e 0%, #0e1015 100%);
+  }
+  .timeline-surface input[type='range']:disabled {
+    opacity: 0.6;
   }
 
   /* Statusbar gradient + dot before each entry. */

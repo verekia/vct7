@@ -2,8 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { dist, isPartialArc } from '../lib/geometry';
 import { hasTransform, shapeRotation, shapeScale } from '../lib/transform';
-import type { ArcRange, BlendMode, Shape } from '../types';
-import { BLEND_MODES } from '../types';
+import type {
+  AnimationFromState,
+  AnimationSpec,
+  ArcRange,
+  BlendMode,
+  Easing,
+  Shape,
+} from '../types';
+import { BLEND_MODES, EASINGS } from '../types';
 
 const blendValue = (b: BlendMode | undefined): BlendMode => b ?? 'normal';
 const blendPatch = (v: string): Partial<Shape> => ({
@@ -73,6 +80,7 @@ export function ShapePanel() {
   const selectedShapeIds = useStore((s) => s.selectedShapeIds);
   const globalBezier = useStore((s) => s.settings.bezier);
   const snapAngles = useStore((s) => s.settings.snapAngles);
+  const animationEnabled = useStore((s) => s.settings.animationEnabled);
   const snapDisabled = useStore((s) => s.snapDisabled);
   const updateShape = useStore((s) => s.updateShape);
   const deleteShape = useStore((s) => s.deleteShape);
@@ -104,6 +112,7 @@ export function ShapePanel() {
         shape={selectedShapes[0]}
         globalBezier={globalBezier}
         snapAngles={snapAngles}
+        animationEnabled={animationEnabled}
         snapDisabled={snapDisabled}
         updateShape={updateShape}
         deleteShape={deleteShape}
@@ -152,6 +161,7 @@ function ShapePanelInner({
   shape,
   globalBezier,
   snapAngles,
+  animationEnabled,
   snapDisabled,
   updateShape,
   deleteShape,
@@ -162,6 +172,7 @@ function ShapePanelInner({
   shape: Shape;
   globalBezier: number;
   snapAngles: number[];
+  animationEnabled: boolean;
   snapDisabled: boolean;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShape: (id: string) => void;
@@ -394,6 +405,12 @@ function ShapePanelInner({
         </label>
       )}
 
+      <AnimationControls
+        shape={shape}
+        animationEnabled={animationEnabled}
+        updateShape={updateShape}
+      />
+
       <div className="flex gap-1.5 items-center flex-wrap">
         <button
           type="button"
@@ -537,6 +554,199 @@ function TransformControls({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Default spec applied when the user enables animation on a shape — a sensible
+ * "fade up + scale in" entrance that lands cleanly at the shape's rest pose.
+ * Tuned so a user can toggle the checkbox once and immediately scrub something
+ * meaningful in the timeline before opening any of the offset inputs.
+ */
+const DEFAULT_ANIMATION: AnimationSpec = {
+  duration: 600,
+  delay: 0,
+  easing: 'ease-out',
+  from: { opacity: 0, scale: 0.85, translateY: 12 },
+};
+
+const fromField = (spec: AnimationSpec, patch: Partial<AnimationFromState>): AnimationSpec => ({
+  ...spec,
+  from: { ...spec.from, ...patch },
+});
+
+/**
+ * Numeric input that treats empty / NaN as "no offset on this channel" and
+ * stores undefined rather than 0 — keeps the spec free of redundant fields and
+ * lets users blank out an offset without fighting the input. The placeholder
+ * shows the implicit identity value (e.g. "0" for translate) so an empty input
+ * isn't ambiguous.
+ */
+function NumField({
+  value,
+  placeholder,
+  step = 1,
+  onChange,
+}: {
+  value: number | undefined;
+  placeholder: number;
+  step?: number;
+  onChange: (v: number | undefined) => void;
+}) {
+  return (
+    <input
+      type="number"
+      step={step}
+      value={value ?? ''}
+      placeholder={placeholder.toString()}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw === '') return onChange(undefined);
+        const v = parseFloat(raw);
+        if (Number.isFinite(v)) onChange(v);
+      }}
+    />
+  );
+}
+
+function AnimationControls({
+  shape,
+  animationEnabled,
+  updateShape,
+}: {
+  shape: Shape;
+  animationEnabled: boolean;
+  updateShape: (id: string, patch: Partial<Shape>) => void;
+}) {
+  const anim = shape.animation;
+  const set = (next: AnimationSpec | undefined) => updateShape(shape.id, { animation: next });
+  const updateFrom = (patch: Partial<AnimationFromState>) => {
+    if (!anim) return;
+    set(fromField(anim, patch));
+  };
+
+  return (
+    <section
+      className="border-t border-line pt-2.5 mt-2.5"
+      style={{ opacity: animationEnabled ? 1 : 0.55 }}
+    >
+      <div className="flex gap-1.5 items-center flex-wrap mb-1.5">
+        <span className="text-muted text-[11px] tracking-[0.5px] uppercase flex-1">Animation</span>
+        <input
+          type="checkbox"
+          checked={!!anim}
+          onChange={(e) =>
+            set(
+              e.target.checked
+                ? { ...DEFAULT_ANIMATION, from: { ...DEFAULT_ANIMATION.from } }
+                : undefined,
+            )
+          }
+        />
+      </div>
+
+      {!animationEnabled && anim && (
+        <p className="text-[10px] text-muted-2 tracking-normal normal-case mb-2 leading-snug">
+          Project animations are off — toggle in Project panel to preview.
+        </p>
+      )}
+
+      {anim && (
+        <>
+          <label>
+            <span>Duration (ms)</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={anim.duration}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v >= 0) set({ ...anim, duration: v });
+              }}
+            />
+          </label>
+          <label>
+            <span>Delay (ms)</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={anim.delay}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v >= 0) set({ ...anim, delay: v });
+              }}
+            />
+          </label>
+          <label>
+            <span>Easing</span>
+            <select
+              value={anim.easing}
+              onChange={(e) => set({ ...anim, easing: e.target.value as Easing })}
+            >
+              {EASINGS.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="text-muted text-[10px] tracking-[0.5px] uppercase mt-2 mb-1">
+            From state
+          </div>
+          <label>
+            <span>Opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={anim.from.opacity ?? 1}
+              onChange={(e) =>
+                updateFrom({
+                  opacity: parseFloat(e.target.value) >= 1 ? undefined : parseFloat(e.target.value),
+                })
+              }
+            />
+            <span className="text-text tabular-nums">{(anim.from.opacity ?? 1).toFixed(2)}</span>
+          </label>
+          <label>
+            <span>Rotation offset (°)</span>
+            <NumField
+              value={anim.from.rotation}
+              placeholder={0}
+              onChange={(v) => updateFrom({ rotation: v })}
+            />
+          </label>
+          <label>
+            <span>Scale factor</span>
+            <NumField
+              value={anim.from.scale}
+              placeholder={1}
+              step={0.05}
+              onChange={(v) => updateFrom({ scale: v })}
+            />
+          </label>
+          <label>
+            <span>Translate X / Y</span>
+            <div className="flex gap-1.5 items-center">
+              <NumField
+                value={anim.from.translateX}
+                placeholder={0}
+                onChange={(v) => updateFrom({ translateX: v })}
+              />
+              <NumField
+                value={anim.from.translateY}
+                placeholder={0}
+                onChange={(v) => updateFrom({ translateY: v })}
+              />
+            </div>
+          </label>
+        </>
+      )}
+    </section>
   );
 }
 

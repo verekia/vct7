@@ -89,6 +89,23 @@ export interface AppState {
   fitNonce: number;
   /** Modal "Add text" dialog visibility. The dialog itself owns its inputs. */
   fontDialogOpen: boolean;
+  /**
+   * Animation timeline scrubber position in milliseconds. `null` means no
+   * scrub is active and the canvas renders the rest state. When set, every
+   * animated shape interpolates from its `animation.from` toward rest based on
+   * its own delay+duration window. Transient view state — never persisted.
+   */
+  previewT: number | null;
+  /** True while the timeline is auto-advancing previewT via rAF. */
+  previewPlaying: boolean;
+  /**
+   * Bumped each time the user (re)triggers play. Canvas keys the animation
+   * wrapper on this so React re-mounts and the animation restarts cleanly,
+   * even when previewT happened to already be 0.
+   */
+  previewNonce: number;
+  /** Render an additional ghosted copy of every animated shape at its from-state. */
+  onionSkin: boolean;
   /** History stacks for undo/redo. Entries snapshot `{shapes, settings}` only. */
   past: HistoryEntry[];
   future: HistoryEntry[];
@@ -109,6 +126,11 @@ export interface AppState {
   commitDrawing: (closed: boolean) => void;
   /** Open / close the "Add text" dialog. */
   setFontDialogOpen: (v: boolean) => void;
+  setPreviewT: (t: number | null) => void;
+  setPreviewPlaying: (v: boolean) => void;
+  /** Bump the play nonce so the canvas re-keys (and restarts) the animation. */
+  triggerPlayNonce: () => void;
+  setOnionSkin: (v: boolean) => void;
   /**
    * Insert a vectorized text shape, centered on the current artboard. Selects
    * it so the user can immediately tweak fill / position from the side panel.
@@ -218,6 +240,10 @@ export const useStore = create<AppState>((set) => ({
   dirty: false,
   fitNonce: 0,
   fontDialogOpen: false,
+  previewT: null,
+  previewPlaying: false,
+  previewNonce: 0,
+  onionSkin: false,
   past: [],
   future: [],
 
@@ -238,6 +264,10 @@ export const useStore = create<AppState>((set) => ({
   setBoxSelect: (b) => set({ boxSelect: b }),
 
   setFontDialogOpen: (v) => set({ fontDialogOpen: v }),
+  setPreviewT: (t) => set({ previewT: t }),
+  setPreviewPlaying: (v) => set({ previewPlaying: v }),
+  triggerPlayNonce: () => set((s) => ({ previewNonce: s.previewNonce + 1 })),
+  setOnionSkin: (v) => set({ onionSkin: v }),
   addGlyphs: (data) =>
     set((s) => {
       const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2;
@@ -695,6 +725,8 @@ export const useStore = create<AppState>((set) => ({
       drawing: null,
       dirty: false,
       fitNonce: s.fitNonce + 1,
+      previewT: null,
+      previewPlaying: false,
       // Loading a fresh document discards any existing undo trail — undoing
       // back into the previous file's state would surprise the user.
       past: [],
