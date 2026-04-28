@@ -2,6 +2,12 @@ export type Point = readonly [number, number];
 
 export type Tool = 'select' | 'line' | 'polygon' | 'circle';
 
+export type StrokeLinejoin = 'miter' | 'round' | 'bevel';
+export type StrokeLinecap = 'butt' | 'round' | 'square';
+
+export const STROKE_LINEJOINS: readonly StrokeLinejoin[] = ['miter', 'round', 'bevel'];
+export const STROKE_LINECAPS: readonly StrokeLinecap[] = ['butt', 'round', 'square'];
+
 /**
  * Optional partial-circle range for `kind === 'circle'` shapes. When absent,
  * the shape is a full circle. Angles are degrees, measured clockwise from
@@ -41,6 +47,16 @@ export interface Shape {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  /** SVG `stroke-linejoin`. Absent means `'round'` (the legacy default). */
+  strokeLinejoin?: StrokeLinejoin;
+  /** SVG `stroke-linecap`. Absent means `'round'` (the legacy default). */
+  strokeLinecap?: StrokeLinecap;
+  /**
+   * SVG `stroke-dasharray` value (e.g. `"4 2"`). Absent or empty means a solid
+   * stroke. Stored verbatim as the user typed it; the renderer just forwards it
+   * to the SVG attribute, so any valid dasharray syntax works.
+   */
+  strokeDasharray?: string;
   /** When null, the project's global bezier value applies. */
   bezierOverride: number | null;
   hidden: boolean;

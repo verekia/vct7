@@ -438,6 +438,12 @@ function ShapeNode({
   // pointer detection survives a colorless from-state (e.g. fill = same as bg).
   const visibleFill = fillOverride ?? shape.fill;
   const visibleStroke = strokeOverride ?? shape.stroke;
+  const linejoin = shape.strokeLinejoin ?? 'round';
+  const linecap = shape.strokeLinecap ?? 'round';
+  const dasharray =
+    shape.strokeDasharray && shape.strokeDasharray.trim() !== ''
+      ? shape.strokeDasharray
+      : undefined;
   const blendStyle: CSSProperties | undefined =
     shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
   const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined;
@@ -453,6 +459,9 @@ function ShapeNode({
           fill={visibleFill}
           stroke={visibleStroke === 'none' ? undefined : visibleStroke}
           strokeWidth={visibleStroke === 'none' ? undefined : shape.strokeWidth}
+          strokeLinejoin={visibleStroke === 'none' ? undefined : linejoin}
+          strokeLinecap={visibleStroke === 'none' ? undefined : linecap}
+          strokeDasharray={visibleStroke === 'none' ? undefined : dasharray}
           pointerEvents="none"
           style={blendStyle}
           opacity={opacity}
@@ -486,8 +495,9 @@ function ShapeNode({
             fill={filled ? visibleFill : 'none'}
             stroke={visibleStroke}
             strokeWidth={shape.strokeWidth}
-            strokeLinejoin="round"
-            strokeLinecap="round"
+            strokeLinejoin={linejoin}
+            strokeLinecap={linecap}
+            strokeDasharray={dasharray}
             pointerEvents="none"
             style={blendStyle}
             opacity={opacity}
@@ -516,6 +526,7 @@ function ShapeNode({
           fill={visibleFill}
           stroke={visibleStroke}
           strokeWidth={shape.strokeWidth}
+          strokeDasharray={dasharray}
           pointerEvents="none"
           style={blendStyle}
           opacity={opacity}
@@ -543,8 +554,9 @@ function ShapeNode({
         fill={shape.closed ? visibleFill : 'none'}
         stroke={visibleStroke}
         strokeWidth={shape.strokeWidth}
-        strokeLinejoin="round"
-        strokeLinecap="round"
+        strokeLinejoin={linejoin}
+        strokeLinecap={linecap}
+        strokeDasharray={dasharray}
         pointerEvents="none"
         style={blendStyle}
         opacity={opacity}

@@ -9,8 +9,10 @@ import type {
   ProjectSettings,
   Shape,
   SpinSpec,
+  StrokeLinecap,
+  StrokeLinejoin,
 } from '../types';
-import { BLEND_MODES, EASINGS } from '../types';
+import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
 import { composeTransformString, shapeRotation, shapeScale } from './transform';
 import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation';
@@ -18,6 +20,8 @@ import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './anim
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
 const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES);
 const EASING_SET: ReadonlySet<string> = new Set(EASINGS);
+const LINEJOIN_SET: ReadonlySet<string> = new Set(STROKE_LINEJOINS);
+const LINECAP_SET: ReadonlySet<string> = new Set(STROKE_LINECAPS);
 
 /** Coerce an unknown value to a finite number, defaulting to undefined. */
 const numOpt = (v: unknown): number | undefined =>
@@ -234,8 +238,18 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
         `stroke="${escapeAttr(shape.stroke)}"`,
         `stroke-width="${fmt(shape.strokeWidth)}"`,
       );
-      if ((!isCircle && !isGlyphs) || partialArc) {
-        baseAttrs.push(`stroke-linejoin="round"`, `stroke-linecap="round"`);
+      // linejoin / linecap apply to <path> elements (paths, glyphs, partial
+      // arcs). Full <circle> has no joins or caps to style — skip the attrs
+      // to keep the file tidy.
+      const isPathElement = !isCircle || !!partialArc;
+      if (isPathElement) {
+        const linejoin = shape.strokeLinejoin ?? 'round';
+        const linecap = shape.strokeLinecap ?? 'round';
+        baseAttrs.push(`stroke-linejoin="${linejoin}"`, `stroke-linecap="${linecap}"`);
+      }
+      const dash = shape.strokeDasharray?.trim();
+      if (dash) {
+        baseAttrs.push(`stroke-dasharray="${escapeAttr(dash)}"`);
       }
     }
     if (shape.hidden) baseAttrs.push(`visibility="hidden"`);
@@ -493,6 +507,24 @@ export function parseProject(text: string): ParsedProject {
     const scaleNum = scaleAttr === null ? NaN : parseFloat(scaleAttr);
     const scale = Number.isFinite(scaleNum) && scaleNum !== 1 ? scaleNum : undefined;
     const animation = parseAnimationAttr(el.getAttribute('data-vh-anim'));
+    // The legacy default is 'round' for both — treat round as undefined so
+    // re-saving a legacy file doesn't introduce a difference, and only persist
+    // explicit non-default choices in memory.
+    const linejoinAttr = el.getAttribute('stroke-linejoin');
+    const linejoin: StrokeLinejoin | undefined =
+      linejoinAttr && LINEJOIN_SET.has(linejoinAttr) && linejoinAttr !== 'round'
+        ? (linejoinAttr as StrokeLinejoin)
+        : undefined;
+    const linecapAttr = el.getAttribute('stroke-linecap');
+    const linecap: StrokeLinecap | undefined =
+      linecapAttr && LINECAP_SET.has(linecapAttr) && linecapAttr !== 'round'
+        ? (linecapAttr as StrokeLinecap)
+        : undefined;
+    const dashAttr = el.getAttribute('stroke-dasharray');
+    const strokeDasharray =
+      dashAttr && dashAttr.trim() !== '' && dashAttr.trim() !== 'none'
+        ? dashAttr.trim()
+        : undefined;
     shapes.push({
       id: makeId(),
       ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
@@ -504,6 +536,9 @@ export function parseProject(text: string): ParsedProject {
       bezierOverride,
       hidden: el.getAttribute('data-vh-hidden') === 'true',
       locked: el.getAttribute('data-vh-locked') === 'true',
+      ...(linejoin ? { strokeLinejoin: linejoin } : {}),
+      ...(linecap ? { strokeLinecap: linecap } : {}),
+      ...(strokeDasharray ? { strokeDasharray } : {}),
       ...(nameAttr ? { name: nameAttr } : {}),
       ...(arc ? { arc } : {}),
       ...(blendMode ? { blendMode } : {}),
