@@ -559,16 +559,16 @@ function TransformControls({
 }
 
 /**
- * Default spec applied when the user enables animation on a shape — a plain
- * fade-in. Geometry channels (scale, translate, rotation) start at identity so
- * toggling the checkbox does not silently reposition the shape; the user adds
- * geometric flair by editing the from-state inputs explicitly.
+ * Default spec applied when the user enables animation on a shape — every
+ * channel starts at identity, so toggling the checkbox is purely declarative
+ * (the shape is "animated" but with no visible offsets). The user opts into
+ * each channel — opacity, rotation, scale, translate, color, spin — explicitly.
  */
 const DEFAULT_ANIMATION: AnimationSpec = {
   duration: 600,
   delay: 0,
   easing: 'ease-out',
-  from: { opacity: 0 },
+  from: {},
 };
 
 const fromField = (spec: AnimationSpec, patch: Partial<AnimationFromState>): AnimationSpec => ({
