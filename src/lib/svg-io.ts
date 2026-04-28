@@ -12,7 +12,7 @@ import type {
 import { BLEND_MODES, EASINGS } from '../types';
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry';
 import { composeTransformString, shapeRotation, shapeScale } from './transform';
-import { buildKeyframesStyle } from './animation';
+import { animationHasPaint, buildKeyframesStyle } from './animation';
 
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open']);
 const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES);
@@ -28,6 +28,10 @@ const numOpt = (v: unknown): number | undefined =>
  * loads as a non-animated rest pose). Numeric fields are guarded with
  * `Number.isFinite` so a stray `NaN` slips into a missing-channel undefined.
  */
+const HEX_COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+const colorOpt = (v: unknown): string | undefined =>
+  typeof v === 'string' && HEX_COLOR.test(v) ? v : undefined;
+
 const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
   if (!raw) return undefined;
   let parsed: unknown;
@@ -51,6 +55,8 @@ const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
     scale: numOpt(fromRaw.scale),
     translateX: numOpt(fromRaw.translateX),
     translateY: numOpt(fromRaw.translateY),
+    fill: colorOpt(fromRaw.fill),
+    stroke: colorOpt(fromRaw.stroke),
   };
   // Strip undefined keys so the in-memory shape stays compact.
   const compactFrom: AnimationFromState = {};
@@ -59,6 +65,8 @@ const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
   if (from.scale !== undefined) compactFrom.scale = from.scale;
   if (from.translateX !== undefined) compactFrom.translateX = from.translateX;
   if (from.translateY !== undefined) compactFrom.translateY = from.translateY;
+  if (from.fill !== undefined) compactFrom.fill = from.fill;
+  if (from.stroke !== undefined) compactFrom.stroke = from.stroke;
   return {
     duration,
     delay: Number.isFinite(delay) && delay >= 0 ? delay : 0,
@@ -73,12 +81,14 @@ const parseAnimationAttr = (raw: string | null): AnimationSpec | undefined => {
  * is via {@link parseAnimationAttr} which tolerates the omissions.
  */
 const animationToAttr = (anim: AnimationSpec): string => {
-  const from: Record<string, number> = {};
+  const from: Record<string, number | string> = {};
   if (anim.from.opacity !== undefined) from.opacity = anim.from.opacity;
   if (anim.from.rotation !== undefined) from.rotation = anim.from.rotation;
   if (anim.from.scale !== undefined) from.scale = anim.from.scale;
   if (anim.from.translateX !== undefined) from.translateX = anim.from.translateX;
   if (anim.from.translateY !== undefined) from.translateY = anim.from.translateY;
+  if (anim.from.fill !== undefined) from.fill = anim.from.fill;
+  if (anim.from.stroke !== undefined) from.stroke = anim.from.stroke;
   return JSON.stringify({
     duration: anim.duration,
     delay: anim.delay,
@@ -255,8 +265,15 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     // Animation metadata is only emitted when the project switch is on, so the
     // file is byte-identical to a non-animated project when the user toggles
     // animation off.
-    if (settings.animationEnabled && shape.animation) {
+    const emitsAnimation = settings.animationEnabled && !!shape.animation;
+    if (emitsAnimation && shape.animation) {
       baseAttrs.push(`data-vh-anim="${escapeAttr(animationToAttr(shape.animation))}"`);
+      // The transform/opacity animation lives on the wrapper <g>; the
+      // paint animation has to live on the inner element because CSS `fill`
+      // on the wrapper is shadowed by the inner element's `fill="..."` attr.
+      if (animationHasPaint(shape)) {
+        baseAttrs.push(`class="vh-anim-${shape.id}-paint"`);
+      }
     }
     const rot = shapeRotation(shape);
     const scl = shapeScale(shape);

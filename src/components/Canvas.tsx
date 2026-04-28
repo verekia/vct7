@@ -375,13 +375,22 @@ function AnimatedShape({
   const offsets = sceneT === null ? IDENTITY_OFFSETS : sampleAnimation(shape, sceneT);
   const transform = offsetsToTransform(shape, offsets);
   const opacity = offsets.opacityMul < 1 ? offsets.opacityMul : undefined;
-  const ghostOffsets = onionSkin && shape.animation ? lerpOffsets(shape.animation.from, 0) : null;
+  const ghostOffsets =
+    onionSkin && shape.animation
+      ? lerpOffsets(shape.animation.from, 0, shape.fill, shape.stroke)
+      : null;
   const ghostTransform = ghostOffsets ? offsetsToTransform(shape, ghostOffsets) : '';
 
   // Identity offsets + no ghost → render the bare ShapeNode so untouched
   // shapes have the exact same DOM shape as the pre-animation editor. This
   // matters for selection hit testing tests that inspect `<g data-shape-id>`.
-  if (transform === '' && opacity === undefined && !ghostOffsets) {
+  if (
+    transform === '' &&
+    opacity === undefined &&
+    !ghostOffsets &&
+    offsets.fill === null &&
+    offsets.stroke === null
+  ) {
     return <ShapeNode shape={shape} bezier={bezier} />;
   }
 
@@ -393,17 +402,42 @@ function AnimatedShape({
           opacity={(ghostOffsets.opacityMul ?? 1) * 0.25}
           pointerEvents="none"
         >
-          <ShapeNode shape={shape} bezier={bezier} />
+          <ShapeNode
+            shape={shape}
+            bezier={bezier}
+            fillOverride={ghostOffsets.fill}
+            strokeOverride={ghostOffsets.stroke}
+          />
         </g>
       )}
       <g transform={transform || undefined} opacity={opacity}>
-        <ShapeNode shape={shape} bezier={bezier} />
+        <ShapeNode
+          shape={shape}
+          bezier={bezier}
+          fillOverride={offsets.fill}
+          strokeOverride={offsets.stroke}
+        />
       </g>
     </>
   );
 }
 
-function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
+function ShapeNode({
+  shape,
+  bezier,
+  fillOverride,
+  strokeOverride,
+}: {
+  shape: Shape;
+  bezier: number;
+  fillOverride?: string | null;
+  strokeOverride?: string | null;
+}) {
+  // Live-animation overrides take precedence over the authored fill/stroke. We
+  // only swap the *visible* paint — the hit-area paths keep their black fill so
+  // pointer detection survives a colorless from-state (e.g. fill = same as bg).
+  const visibleFill = fillOverride ?? shape.fill;
+  const visibleStroke = strokeOverride ?? shape.stroke;
   const blendStyle: CSSProperties | undefined =
     shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
   const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined;
@@ -416,9 +450,9 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
       <g data-shape-id={shape.id} transform={transformAttr}>
         <path
           d={d}
-          fill={shape.fill}
-          stroke={shape.stroke === 'none' ? undefined : shape.stroke}
-          strokeWidth={shape.stroke === 'none' ? undefined : shape.strokeWidth}
+          fill={visibleFill}
+          stroke={visibleStroke === 'none' ? undefined : visibleStroke}
+          strokeWidth={visibleStroke === 'none' ? undefined : shape.strokeWidth}
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
           style={blendStyle}
@@ -450,8 +484,8 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
         <g data-shape-id={shape.id} transform={transformAttr}>
           <path
             d={d}
-            fill={filled ? shape.fill : 'none'}
-            stroke={shape.stroke}
+            fill={filled ? visibleFill : 'none'}
+            stroke={visibleStroke}
             strokeWidth={shape.strokeWidth}
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -482,8 +516,8 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
           cx={fmt(cx)}
           cy={fmt(cy)}
           r={fmt(r)}
-          fill={shape.fill}
-          stroke={shape.stroke}
+          fill={visibleFill}
+          stroke={visibleStroke}
           strokeWidth={shape.strokeWidth}
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
@@ -511,8 +545,8 @@ function ShapeNode({ shape, bezier }: { shape: Shape; bezier: number }) {
     <g data-shape-id={shape.id} transform={transformAttr}>
       <path
         d={d}
-        fill={shape.closed ? shape.fill : 'none'}
-        stroke={shape.stroke}
+        fill={shape.closed ? visibleFill : 'none'}
+        stroke={visibleStroke}
         strokeWidth={shape.strokeWidth}
         strokeLinejoin="round"
         strokeLinecap="round"

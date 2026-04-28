@@ -1,5 +1,7 @@
 import type { AnimationFromState, AnimationSpec, Easing, Shape } from '../types';
 import { fmt } from './geometry';
+import { parseHex, toHex } from './blend';
+import type { RGB } from './blend';
 import { shapeBBoxCenter } from './transform';
 
 /** Cubic bezier value sampled at parameter t for control points (a, b) on [0,1]. */
@@ -33,7 +35,7 @@ const cubicBezier = (x1: number, y1: number, x2: number, y2: number, x: number):
   return bezSample(y1, y2, t);
 };
 
-const DR_CLASSIC: readonly [number, number, number, number] = [0.2, 0.8, 0.2, 1];
+const SNAP_CURVE: readonly [number, number, number, number] = [0.2, 0.8, 0.2, 1];
 
 const easeFn = (e: Easing): ((t: number) => number) => {
   switch (e) {
@@ -47,14 +49,14 @@ const easeFn = (e: Easing): ((t: number) => number) => {
       return (t) => cubicBezier(0, 0, 0.58, 1, t);
     case 'ease-in-out':
       return (t) => cubicBezier(0.42, 0, 0.58, 1, t);
-    case 'dr-classic':
-      return (t) => cubicBezier(...DR_CLASSIC, t);
+    case 'snap':
+      return (t) => cubicBezier(...SNAP_CURVE, t);
   }
 };
 
 /** CSS `animation-timing-function` value matching the named easing keyword. */
 export const easingToCss = (e: Easing): string => {
-  if (e === 'dr-classic') return `cubic-bezier(${DR_CLASSIC.join(',')})`;
+  if (e === 'snap') return `cubic-bezier(${SNAP_CURVE.join(',')})`;
   return e;
 };
 
@@ -76,8 +78,9 @@ export const shapeProgress = (spec: AnimationSpec, sceneT: number): number => {
  * Resolved offsets a wrapper `<g>` should apply at progress `p` (already eased
  * by the caller — see {@link sampleAnimation}). Each field is the *current*
  * value, not a delta — opacity multiplier in [0, 1], rotation in degrees,
- * scale as a multiplier, translate in canvas units. At p=1 every field is the
- * identity (1, 0, 1, 0, 0).
+ * scale as a multiplier, translate in canvas units. `fill` / `stroke` are
+ * resolved hex strings to paint the shape with at this frame, or `null` to
+ * fall back to the shape's authored value. At p=1 every field is the identity.
  */
 export interface AnimationOffsets {
   opacityMul: number;
@@ -85,6 +88,8 @@ export interface AnimationOffsets {
   scale: number;
   translateX: number;
   translateY: number;
+  fill: string | null;
+  stroke: string | null;
 }
 
 export const IDENTITY_OFFSETS: AnimationOffsets = {
@@ -93,6 +98,23 @@ export const IDENTITY_OFFSETS: AnimationOffsets = {
   scale: 1,
   translateX: 0,
   translateY: 0,
+  fill: null,
+  stroke: null,
+};
+
+/** Linearly mix two RGBs in normalized space, then re-encode as hex. */
+const lerpRgb = (a: RGB, b: RGB, p: number): RGB => {
+  const inv = 1 - p;
+  return [a[0] * inv + b[0] * p, a[1] * inv + b[1] * p, a[2] * inv + b[2] * p];
+};
+
+const lerpColor = (fromHex: string, restHex: string | undefined, p: number): string | null => {
+  const fromRgb = parseHex(fromHex);
+  const restRgb = restHex ? parseHex(restHex) : null;
+  // No usable rest color (e.g. `fill="none"`) — animating into "nothing"
+  // would produce a visual jump; safer to skip the channel entirely.
+  if (!fromRgb || !restRgb) return null;
+  return toHex(lerpRgb(fromRgb, restRgb, p));
 };
 
 /**
@@ -101,9 +123,15 @@ export const IDENTITY_OFFSETS: AnimationOffsets = {
  *
  * For opacity we treat `from.opacity` as an absolute value at p=0 (matching CSS
  * `from { opacity: 0 }` semantics — fade-in is the dominant use case). Other
- * channels are offsets/multipliers.
+ * geometric channels are offsets/multipliers; color channels lerp from
+ * `from.fill / from.stroke` toward the shape's authored rest value.
  */
-export const lerpOffsets = (from: AnimationFromState, p: number): AnimationOffsets => {
+export const lerpOffsets = (
+  from: AnimationFromState,
+  p: number,
+  restFill?: string,
+  restStroke?: string,
+): AnimationOffsets => {
   const inv = 1 - p;
   const opacityFrom = from.opacity ?? 1;
   const rotFrom = from.rotation ?? 0;
@@ -116,6 +144,8 @@ export const lerpOffsets = (from: AnimationFromState, p: number): AnimationOffse
     scale: scaleFrom * inv + 1 * p,
     translateX: txFrom * inv,
     translateY: tyFrom * inv,
+    fill: from.fill ? lerpColor(from.fill, restFill, p) : null,
+    stroke: from.stroke ? lerpColor(from.stroke, restStroke, p) : null,
   };
 };
 
@@ -128,7 +158,7 @@ export const sampleAnimation = (shape: Shape, sceneT: number): AnimationOffsets 
   if (!shape.animation) return IDENTITY_OFFSETS;
   const raw = shapeProgress(shape.animation, sceneT);
   const eased = easeFn(shape.animation.easing)(raw);
-  return lerpOffsets(shape.animation.from, eased);
+  return lerpOffsets(shape.animation.from, eased, shape.fill, shape.stroke);
 };
 
 /**
@@ -169,6 +199,16 @@ export const sceneTotal = (shapes: Shape[]): number => {
 };
 
 /**
+ * True when this shape's animation needs the separate paint-rule (fill / stroke).
+ * Geometric-only animations skip the second class to keep the saved SVG tidy.
+ */
+export const animationHasPaint = (shape: Shape): boolean => {
+  if (!shape.animation) return false;
+  const start = lerpOffsets(shape.animation.from, 0, shape.fill, shape.stroke);
+  return start.fill !== null || start.stroke !== null;
+};
+
+/**
  * Build a `<style>` block embedding @keyframes + class rules for every
  * animated shape. Used at export time so the saved SVG runs the animation in
  * any browser context (e.g. dropped into the consumer's DOM). Returns `''`
@@ -180,6 +220,11 @@ export const sceneTotal = (shapes: Shape[]): number => {
  * during `delay` (so a staggered shape doesn't pop into view at t=0) and the
  * rest pose after the animation ends.
  *
+ * Paint (fill / stroke) is animated via a *second* class `vh-anim-{id}-paint`
+ * on the inner element, since CSS `fill` set on the wrapper is shadowed by the
+ * inner `<path fill="...">` attribute. Splitting the animation across two rules
+ * keeps the inner element's authored attrs untouched.
+ *
  * The pivot is baked into the CSS transform via translate/rotate/scale/-translate
  * rather than `transform-origin: center` — that combo plus `transform-box: fill-box`
  * has historically had inconsistent behavior across browsers on SVG `<g>`. Baked
@@ -189,16 +234,39 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
   const blocks: string[] = [];
   for (const sh of shapes) {
     if (!sh.animation) continue;
-    const startOffsets = lerpOffsets(sh.animation.from, 0);
+    const startOffsets = lerpOffsets(sh.animation.from, 0, sh.fill, sh.stroke);
     const startTransform = cssTransformOf(sh, startOffsets);
     const opacityRule =
       startOffsets.opacityMul === 1 ? '' : `    opacity: ${fmt(startOffsets.opacityMul)};\n`;
     const transformRule = startTransform === 'none' ? '' : `    transform: ${startTransform};\n`;
     const id = `vh-anim-${sh.id}`;
+    const timing = `${fmt(sh.animation.duration)}ms ${easingToCss(sh.animation.easing)} ${fmt(sh.animation.delay)}ms both`;
     blocks.push(
       `@keyframes ${id} {\n  from {\n${opacityRule}${transformRule}  }\n  to { opacity: 1; transform: none; }\n}`,
-      `.${id} {\n  animation: ${id} ${fmt(sh.animation.duration)}ms ${easingToCss(sh.animation.easing)} ${fmt(sh.animation.delay)}ms both;\n}`,
+      `.${id} {\n  animation: ${id} ${timing};\n}`,
     );
+
+    // Paint keyframe — only when at least one color channel resolved (i.e.
+    // both from-color and rest-color are real hex values).
+    const fillStart = startOffsets.fill;
+    const strokeStart = startOffsets.stroke;
+    if (fillStart || strokeStart) {
+      const fromLines: string[] = [];
+      const toLines: string[] = [];
+      if (fillStart) {
+        fromLines.push(`fill: ${fillStart};`);
+        toLines.push(`fill: ${sh.fill};`);
+      }
+      if (strokeStart) {
+        fromLines.push(`stroke: ${strokeStart};`);
+        toLines.push(`stroke: ${sh.stroke};`);
+      }
+      const paintId = `${id}-paint`;
+      blocks.push(
+        `@keyframes ${paintId} {\n  from { ${fromLines.join(' ')} }\n  to { ${toLines.join(' ')} }\n}`,
+        `.${paintId} {\n  animation: ${paintId} ${timing};\n}`,
+      );
+    }
   }
   return blocks.length === 0 ? '' : blocks.join('\n');
 };

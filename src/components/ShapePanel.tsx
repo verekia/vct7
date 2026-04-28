@@ -558,16 +558,16 @@ function TransformControls({
 }
 
 /**
- * Default spec applied when the user enables animation on a shape — a sensible
- * "fade up + scale in" entrance that lands cleanly at the shape's rest pose.
- * Tuned so a user can toggle the checkbox once and immediately scrub something
- * meaningful in the timeline before opening any of the offset inputs.
+ * Default spec applied when the user enables animation on a shape — a plain
+ * fade-in. Geometry channels (scale, translate, rotation) start at identity so
+ * toggling the checkbox does not silently reposition the shape; the user adds
+ * geometric flair by editing the from-state inputs explicitly.
  */
 const DEFAULT_ANIMATION: AnimationSpec = {
   duration: 600,
   delay: 0,
   easing: 'ease-out',
-  from: { opacity: 0, scale: 0.85, translateY: 12 },
+  from: { opacity: 0 },
 };
 
 const fromField = (spec: AnimationSpec, patch: Partial<AnimationFromState>): AnimationSpec => ({
@@ -744,9 +744,73 @@ function AnimationControls({
               />
             </div>
           </label>
+          <ColorFromField
+            label="From fill"
+            restColor={shape.fill}
+            value={anim.from.fill}
+            onChange={(v) => updateFrom({ fill: v })}
+          />
+          <ColorFromField
+            label="From stroke"
+            restColor={shape.stroke}
+            value={anim.from.stroke}
+            onChange={(v) => updateFrom({ stroke: v })}
+          />
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Color picker for a from-state paint channel. The animation interpolates
+ * between this color and the shape's authored rest color, so when the rest is
+ * `'none'` we surface a hint instead of pretending a transition is possible.
+ * Pressing "clear" drops the channel back to undefined (no color animation).
+ */
+function ColorFromField({
+  label,
+  restColor,
+  value,
+  onChange,
+}: {
+  label: string;
+  restColor: string;
+  value: string | undefined;
+  onChange: (v: string | undefined) => void;
+}) {
+  const restMissing = restColor === 'none' || !HEX_RE.test(restColor);
+  return (
+    <label>
+      <span className="flex gap-1.5 items-center flex-wrap">
+        <span style={{ flex: 1 }}>{label}</span>
+        {value && (
+          <button
+            type="button"
+            className="text-[11px] px-[7px] py-[2px]"
+            onClick={() => onChange(undefined)}
+          >
+            clear
+          </button>
+        )}
+      </span>
+      {restMissing ? (
+        <span className="text-[10px] text-muted-2 normal-case tracking-normal">
+          rest is &quot;none&quot; — no color to animate toward
+        </span>
+      ) : (
+        <div className="flex gap-1.5 items-center">
+          <input
+            type="color"
+            value={value && HEX_RE.test(value) ? value : restColor}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          <span className="text-[10px] text-muted-2 normal-case tracking-normal">
+            {value ? `→ ${restColor}` : 'click to enable'}
+          </span>
+        </div>
+      )}
+    </label>
   );
 }
 

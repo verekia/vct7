@@ -83,10 +83,11 @@ export interface Shape {
 }
 
 /**
- * Easing keyword. Maps 1:1 to a CSS `animation-timing-function` value, plus a
- * `dr-classic` preset tuned for the wipeout / DR-style snap-into-place feel.
+ * Easing keyword. The first five map 1:1 to a CSS `animation-timing-function`
+ * value; `snap` is a custom cubic-bezier tuned for a fast-out / firm-stop
+ * curve that lands shapes decisively into their rest pose.
  */
-export type Easing = 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'dr-classic';
+export type Easing = 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'snap';
 
 export const EASINGS: readonly Easing[] = [
   'linear',
@@ -94,7 +95,7 @@ export const EASINGS: readonly Easing[] = [
   'ease-in',
   'ease-out',
   'ease-in-out',
-  'dr-classic',
+  'snap',
 ];
 
 /**
@@ -121,6 +122,14 @@ export interface AnimationFromState {
   /** Translate offset in canvas units, applied as a raw screen-space shift. */
   translateX?: number;
   translateY?: number;
+  /**
+   * Hex fill color at t=0; lerps toward the shape's rest fill across the
+   * animation. Ignored when the shape's rest fill is `'none'` — there's
+   * nothing to interpolate toward.
+   */
+  fill?: string;
+  /** Hex stroke color at t=0. Same `none`-rest caveat as `fill`. */
+  stroke?: string;
 }
 
 /**
