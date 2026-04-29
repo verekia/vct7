@@ -5,6 +5,7 @@ import type {
   BlendMode,
   Easing,
   GlyphData,
+  PaletteColor,
   Point,
   ProjectSettings,
   Shape,
@@ -155,6 +156,7 @@ const parseArcAttr = (raw: string | null): ArcRange | undefined => {
 export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
   bezier: 0.5,
+  palette: [],
   bg: null,
   width: 100,
   height: 100,
@@ -167,6 +169,37 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   gridSnap: true,
   clip: false,
   animationEnabled: false,
+};
+
+/**
+ * Encode the palette as a single attribute value: `name:#rrggbb;name2:#rrggbb`.
+ * Names are restricted by the UI to characters that don't conflict with the
+ * delimiters, so a simple split-based decoder is sufficient.
+ */
+const serializePalette = (palette: PaletteColor[]): string =>
+  palette
+    .filter((p) => p.name)
+    .map((p) => `${p.name}:${p.color}`)
+    .join(';');
+
+const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/;
+
+const parsePalette = (raw: string | null): PaletteColor[] => {
+  if (!raw) return [];
+  const out: PaletteColor[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw.split(';')) {
+    const idx = entry.indexOf(':');
+    if (idx <= 0) continue;
+    const name = entry.slice(0, idx).trim();
+    const color = entry.slice(idx + 1).trim();
+    if (!name || seen.has(name)) continue;
+    if (!PALETTE_NAME_RE.test(name)) continue;
+    if (!HEX_COLOR.test(color)) continue;
+    seen.add(name);
+    out.push({ name, color });
+  }
+  return out;
 };
 
 const escapeAttr = (v: string): string =>
@@ -194,6 +227,10 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       (settings.bg === null
         ? ` data-vh-no-bg="true"`
         : ` data-vh-bg="${escapeAttr(settings.bg)}"`) +
+      (settings.bgRef ? ` data-vh-bg-ref="${escapeAttr(settings.bgRef)}"` : '') +
+      (settings.palette.length > 0
+        ? ` data-vh-palette="${escapeAttr(serializePalette(settings.palette))}"`
+        : '') +
       ` data-vh-grid-size="${fmt(settings.gridSize)}"` +
       ` data-vh-grid-visible="${settings.gridVisible}"` +
       ` data-vh-grid-snap="${settings.gridSnap}"` +
@@ -283,6 +320,8 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.hidden) baseAttrs.push(`data-vh-hidden="true"`);
     if (shape.locked) baseAttrs.push(`data-vh-locked="true"`);
     if (shape.name) baseAttrs.push(`data-vh-name="${escapeAttr(shape.name)}"`);
+    if (shape.fillRef) baseAttrs.push(`data-vh-fill-ref="${escapeAttr(shape.fillRef)}"`);
+    if (shape.strokeRef) baseAttrs.push(`data-vh-stroke-ref="${escapeAttr(shape.strokeRef)}"`);
     if (shape.blendMode && shape.blendMode !== 'normal') {
       // Both: data-vh-blend for round-trip, inline style so external browser
       // viewers honor the blending without our editor metadata.
@@ -433,6 +472,10 @@ export function parseProject(text: string): ParsedProject {
     if (bg) settings.bg = bg;
   }
 
+  settings.palette = parsePalette(svg.getAttribute('data-vh-palette'));
+  const bgRef = svg.getAttribute('data-vh-bg-ref');
+  if (bgRef) settings.bgRef = bgRef;
+
   const gridSize = svg.getAttribute('data-vh-grid-size');
   if (gridSize) {
     const v = parseFloat(gridSize);
@@ -535,6 +578,8 @@ export function parseProject(text: string): ParsedProject {
     const paintOrder: 'stroke' | undefined = paintOrderAttr.startsWith('stroke')
       ? 'stroke'
       : undefined;
+    const fillRef = el.getAttribute('data-vh-fill-ref') ?? undefined;
+    const strokeRef = el.getAttribute('data-vh-stroke-ref') ?? undefined;
     shapes.push({
       id: makeId(),
       ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
@@ -551,6 +596,8 @@ export function parseProject(text: string): ParsedProject {
       ...(strokeDasharray ? { strokeDasharray } : {}),
       ...(paintOrder ? { paintOrder } : {}),
       ...(nameAttr ? { name: nameAttr } : {}),
+      ...(fillRef ? { fillRef } : {}),
+      ...(strokeRef ? { strokeRef } : {}),
       ...(arc ? { arc } : {}),
       ...(blendMode ? { blendMode } : {}),
       ...(opacity !== undefined ? { opacity } : {}),

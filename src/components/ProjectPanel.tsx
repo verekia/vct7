@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ANGLE_PRESETS } from '../lib/snap';
+import type { PaletteColor } from '../types';
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
+// Mirrors PALETTE_NAME_RE in svg-io.ts — keep these aligned so a name accepted
+// by the editor also round-trips through the saved file.
+const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/;
 
 const PRESET_LABELS: Record<string, string> = {
   ortho: '90°',
@@ -34,6 +38,10 @@ const toLongHex = (c: string): string => {
 export function ProjectPanel() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
+  const addPaletteColor = useStore((s) => s.addPaletteColor);
+  const updatePaletteColor = useStore((s) => s.updatePaletteColor);
+  const removePaletteColor = useStore((s) => s.removePaletteColor);
+  const setBgPaletteRef = useStore((s) => s.setBgPaletteRef);
 
   const bgEnabled = settings.bg !== null;
   const [bgText, setBgText] = useState(settings.bg ?? '');
@@ -132,8 +140,22 @@ export function ProjectPanel() {
               else setBgText(settings.bg ?? '');
             }}
           />
+          {settings.palette.length > 0 && bgEnabled && (
+            <PaletteRefSelect
+              palette={settings.palette}
+              value={settings.bgRef}
+              onChange={setBgPaletteRef}
+            />
+          )}
         </div>
       </label>
+
+      <PaletteSection
+        palette={settings.palette}
+        addColor={addPaletteColor}
+        updateColor={updatePaletteColor}
+        removeColor={removePaletteColor}
+      />
 
       <label>
         <span title="SVG width / height attributes — output rendered size">Output size</span>
@@ -279,5 +301,161 @@ export function ProjectPanel() {
         </div>
       </div>
     </section>
+  );
+}
+
+const DEFAULT_NEW_PALETTE_COLOR = '#888888';
+
+/**
+ * Suggest the next default palette name when the user hits "Add" — `color1`,
+ * `color2`, ... — skipping any names already taken so the new entry doesn't
+ * collide with an existing one.
+ */
+const nextPaletteName = (palette: PaletteColor[]): string => {
+  const taken = new Set(palette.map((p) => p.name));
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `color${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `color${palette.length + 1}`;
+};
+
+function PaletteSection({
+  palette,
+  addColor,
+  updateColor,
+  removeColor,
+}: {
+  palette: PaletteColor[];
+  addColor: (name: string, color: string) => void;
+  updateColor: (oldName: string, next: PaletteColor) => void;
+  removeColor: (name: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1 mb-2.5 text-[11px] text-muted tracking-[0.4px]">
+      <span className="flex justify-between items-center gap-1.5">
+        <span>Palette</span>
+        <button
+          type="button"
+          className="text-[11px] px-[7px] py-[2px]"
+          onClick={() => addColor(nextPaletteName(palette), DEFAULT_NEW_PALETTE_COLOR)}
+        >
+          + Add
+        </button>
+      </span>
+      {palette.length === 0 ? (
+        <span className="text-[10px] text-muted-2 normal-case tracking-normal leading-snug">
+          No palette colors yet. Add one to reference it from shape fills and strokes.
+        </span>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {palette.map((entry) => (
+            <PaletteRow
+              key={entry.name}
+              entry={entry}
+              onChange={(next) => updateColor(entry.name, next)}
+              onRemove={() => removeColor(entry.name)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PaletteRow({
+  entry,
+  onChange,
+  onRemove,
+}: {
+  entry: PaletteColor;
+  onChange: (next: PaletteColor) => void;
+  onRemove: () => void;
+}) {
+  const [nameDraft, setNameDraft] = useState(entry.name);
+  const [colorDraft, setColorDraft] = useState(entry.color);
+  // Resync local drafts when the underlying entry changes (rename via another
+  // input, color change committed, etc.). The drafts are short-lived edit
+  // buffers — the canonical value is what the store holds.
+  useEffect(() => setNameDraft(entry.name), [entry.name]);
+  useEffect(() => setColorDraft(entry.color), [entry.color]);
+  return (
+    <div className="flex gap-1.5 items-center">
+      <input
+        type="color"
+        value={toLongHex(entry.color)}
+        onChange={(e) => {
+          setColorDraft(e.target.value);
+          onChange({ name: entry.name, color: e.target.value });
+        }}
+      />
+      <input
+        type="text"
+        className="flex-1 min-w-0"
+        value={nameDraft}
+        onChange={(e) => setNameDraft(e.target.value)}
+        onBlur={() => {
+          const trimmed = nameDraft.trim();
+          if (trimmed && trimmed !== entry.name && PALETTE_NAME_RE.test(trimmed)) {
+            onChange({ name: trimmed, color: entry.color });
+          } else if (trimmed !== entry.name) {
+            // Reject invalid renames silently — easier than a toast for now.
+            setNameDraft(entry.name);
+          }
+        }}
+      />
+      <input
+        type="text"
+        className="w-[72px]"
+        value={colorDraft}
+        onChange={(e) => setColorDraft(e.target.value)}
+        onBlur={() => {
+          if (HEX_RE.test(colorDraft) && colorDraft !== entry.color) {
+            onChange({ name: entry.name, color: colorDraft });
+          } else if (colorDraft !== entry.color) {
+            setColorDraft(entry.color);
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="text-[11px] px-[7px] py-[2px]"
+        title="Remove color (shapes referencing it keep the resolved hex)"
+        onClick={onRemove}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Compact dropdown for picking a palette entry. The empty value clears the
+ * link (color stays at whatever the field had); selecting an entry sets the
+ * ref and snaps the field to the entry's color.
+ */
+export function PaletteRefSelect({
+  palette,
+  value,
+  onChange,
+}: {
+  palette: PaletteColor[];
+  value: string | undefined;
+  onChange: (name: string | undefined) => void;
+}) {
+  return (
+    <select
+      className="text-[11px]"
+      title="Link to palette color"
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+    >
+      <option value="">— off-palette —</option>
+      {palette.map((p) => (
+        <option key={p.name} value={p.name}>
+          {p.name}
+        </option>
+      ))}
+    </select>
   );
 }

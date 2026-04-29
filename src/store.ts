@@ -1,5 +1,14 @@
 import { create } from 'zustand';
-import type { Drawing, GlyphData, Point, ProjectSettings, Shape, Tool, ViewState } from './types';
+import type {
+  Drawing,
+  GlyphData,
+  PaletteColor,
+  Point,
+  ProjectSettings,
+  Shape,
+  Tool,
+  ViewState,
+} from './types';
 import { DEFAULT_SETTINGS, makeId } from './lib/svg-io';
 import { blendColor, findColorBelow, mix, parseHex, toHex } from './lib/blend';
 import { applyTransformToPoint, hasTransform, shapeRotation } from './lib/transform';
@@ -198,6 +207,31 @@ export interface AppState {
    * shift `arc.start` / `arc.end` so the wedge keeps its visual orientation.
    */
   applyTransform: (ids: string[]) => void;
+  /**
+   * Add a new palette entry. The name must be unique and non-empty; if either
+   * condition fails the call is a no-op so callers don't have to guard.
+   */
+  addPaletteColor: (name: string, color: string) => void;
+  /**
+   * Update a palette entry — rename and/or recolor. When the color changes,
+   * every shape with `fillRef` / `strokeRef` matching this entry has its
+   * resolved `fill` / `stroke` synced (and `bg` if `bgRef` matches), so the
+   * SVG output keeps the palette and the rendered colors in sync. When the
+   * name changes, all matching refs get rewritten too.
+   */
+  updatePaletteColor: (oldName: string, next: PaletteColor) => void;
+  /**
+   * Drop a palette entry. Shapes referencing this name keep their resolved
+   * color (so nothing visually changes) but lose the ref pointer.
+   */
+  removePaletteColor: (name: string) => void;
+  /**
+   * Link a shape's fill or stroke to a palette entry. Sets the ref *and*
+   * snaps the resolved color to the palette entry's value.
+   */
+  setShapePaletteRef: (id: string, channel: 'fill' | 'stroke', name: string | undefined) => void;
+  /** Same as above for the project background. */
+  setBgPaletteRef: (name: string | undefined) => void;
   setProject: (settings: ProjectSettings, shapes: Shape[]) => void;
   newProject: () => void;
   setFileMeta: (name: string, handle: unknown) => void;
@@ -249,11 +283,18 @@ export const useStore = create<AppState>((set) => ({
 
   setTool: (t) => set({ tool: t, drawing: null, selectedVertices: [] }),
   setSettings: (patch) =>
-    set((s) => ({
-      ...pushSnapshot(s, `settings:${Object.keys(patch).toSorted().join(',')}`),
-      settings: { ...s.settings, ...patch },
-      dirty: true,
-    })),
+    set((s) => {
+      // Same off-palette guard as updateShape: a manual `bg` change drops the
+      // bgRef so the saved SVG can't claim a palette link that doesn't match.
+      const autoPatch: Partial<ProjectSettings> = {};
+      if ('bg' in patch && !('bgRef' in patch)) autoPatch.bgRef = undefined;
+      const finalPatch = { ...patch, ...autoPatch };
+      return {
+        ...pushSnapshot(s, `settings:${Object.keys(finalPatch).toSorted().join(',')}`),
+        settings: { ...s.settings, ...finalPatch },
+        dirty: true,
+      };
+    }),
   setView: (patch) => set((s) => ({ view: { ...s.view, ...patch } })),
   setCursor: (cursor, raw) => set({ cursor, rawCursor: raw }),
   setSnapDisabled: (v) => set({ snapDisabled: v }),
@@ -435,11 +476,22 @@ export const useStore = create<AppState>((set) => ({
       return { selectedVertices: next };
     }),
   updateShape: (id, patch) =>
-    set((s) => ({
-      ...pushSnapshot(s, `updateShape:${id}:${Object.keys(patch).toSorted().join(',')}`),
-      shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)),
-      dirty: true,
-    })),
+    set((s) => {
+      // Editing fill/stroke directly off-palette should drop a stale ref —
+      // otherwise the saved SVG would claim a palette link that no longer
+      // matches the rendered color. Only auto-clear when the caller didn't
+      // explicitly include the ref in the patch (e.g. setShapePaletteRef
+      // sends both at once and we honor that).
+      const autoPatch: Partial<Shape> = {};
+      if ('fill' in patch && !('fillRef' in patch)) autoPatch.fillRef = undefined;
+      if ('stroke' in patch && !('strokeRef' in patch)) autoPatch.strokeRef = undefined;
+      const finalPatch = { ...patch, ...autoPatch };
+      return {
+        ...pushSnapshot(s, `updateShape:${id}:${Object.keys(finalPatch).toSorted().join(',')}`),
+        shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, ...finalPatch } : sh)),
+        dirty: true,
+      };
+    }),
   moveShape: (id, points) =>
     set((s) => ({
       shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, points } : sh)),
@@ -714,6 +766,113 @@ export const useStore = create<AppState>((set) => ({
       }
       if (!changed) return s;
       return { ...pushSnapshot(s), shapes: next, dirty: true };
+    }),
+  addPaletteColor: (name, color) =>
+    set((s) => {
+      const trimmed = name.trim();
+      if (!trimmed) return s;
+      if (s.settings.palette.some((p) => p.name === trimmed)) return s;
+      return {
+        ...pushSnapshot(s),
+        settings: {
+          ...s.settings,
+          palette: [...s.settings.palette, { name: trimmed, color }],
+        },
+        dirty: true,
+      };
+    }),
+  updatePaletteColor: (oldName, next) =>
+    set((s) => {
+      const idx = s.settings.palette.findIndex((p) => p.name === oldName);
+      if (idx === -1) return s;
+      const newName = next.name.trim();
+      if (!newName) return s;
+      // Reject a rename that would collide with another existing entry.
+      if (newName !== oldName && s.settings.palette.some((p) => p.name === newName)) return s;
+      const palette = s.settings.palette.slice();
+      palette[idx] = { name: newName, color: next.color };
+      const renamed = newName !== oldName;
+      // Coalesce repeat color-only edits (slider drags) into one history entry.
+      const coalesce = renamed ? undefined : `palette:${oldName}`;
+      const settings: ProjectSettings = { ...s.settings, palette };
+      if (s.settings.bgRef === oldName) {
+        settings.bg = next.color;
+        if (renamed) settings.bgRef = newName;
+      }
+      const shapes = s.shapes.map((sh) => {
+        let patch: Partial<Shape> | null = null;
+        if (sh.fillRef === oldName) {
+          patch = { fill: next.color };
+          if (renamed) patch.fillRef = newName;
+        }
+        if (sh.strokeRef === oldName) {
+          patch = { ...patch, stroke: next.color };
+          if (renamed) patch = { ...patch, strokeRef: newName };
+        }
+        return patch ? { ...sh, ...patch } : sh;
+      });
+      return {
+        ...pushSnapshot(s, coalesce),
+        settings,
+        shapes,
+        dirty: true,
+      };
+    }),
+  removePaletteColor: (name) =>
+    set((s) => {
+      if (!s.settings.palette.some((p) => p.name === name)) return s;
+      const settings: ProjectSettings = {
+        ...s.settings,
+        palette: s.settings.palette.filter((p) => p.name !== name),
+      };
+      if (s.settings.bgRef === name) settings.bgRef = undefined;
+      const shapes = s.shapes.map((sh) => {
+        if (sh.fillRef !== name && sh.strokeRef !== name) return sh;
+        const patch: Partial<Shape> = {};
+        if (sh.fillRef === name) patch.fillRef = undefined;
+        if (sh.strokeRef === name) patch.strokeRef = undefined;
+        return { ...sh, ...patch };
+      });
+      return { ...pushSnapshot(s), settings, shapes, dirty: true };
+    }),
+  setShapePaletteRef: (id, channel, name) =>
+    set((s) => {
+      const shape = s.shapes.find((sh) => sh.id === id);
+      if (!shape) return s;
+      const refKey = channel === 'fill' ? 'fillRef' : 'strokeRef';
+      const colorKey = channel;
+      let patch: Partial<Shape>;
+      if (name === undefined) {
+        // Unlink: drop the ref but keep the resolved color (no visual change).
+        patch = { [refKey]: undefined } as Partial<Shape>;
+      } else {
+        const entry = s.settings.palette.find((p) => p.name === name);
+        if (!entry) return s;
+        patch = { [refKey]: name, [colorKey]: entry.color } as Partial<Shape>;
+      }
+      return {
+        ...pushSnapshot(s, `paletteRef:${id}:${channel}`),
+        shapes: s.shapes.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)),
+        dirty: true,
+      };
+    }),
+  setBgPaletteRef: (name) =>
+    set((s) => {
+      if (name === undefined) {
+        if (s.settings.bgRef === undefined) return s;
+        return {
+          ...pushSnapshot(s),
+          settings: { ...s.settings, bgRef: undefined },
+          dirty: true,
+        };
+      }
+      const entry = s.settings.palette.find((p) => p.name === name);
+      if (!entry) return s;
+      return {
+        ...pushSnapshot(s, `bgRef`),
+        settings: { ...s.settings, bg: entry.color, bgRef: name },
+        dirty: true,
+      };
     }),
   setProject: (settings, shapes) =>
     set((s) => ({

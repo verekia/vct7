@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { dist, isPartialArc } from '../lib/geometry';
 import { hasTransform, shapeRotation, shapeScale } from '../lib/transform';
+import { PaletteRefSelect } from './ProjectPanel';
 import type {
   AnimationFromState,
   AnimationSpec,
   ArcRange,
   BlendMode,
   Easing,
+  PaletteColor,
   Shape,
   SpinSpec,
   StrokeLinecap,
@@ -103,10 +105,12 @@ export function ShapePanel() {
   const globalBezier = useStore((s) => s.settings.bezier);
   const snapAngles = useStore((s) => s.settings.snapAngles);
   const animationEnabled = useStore((s) => s.settings.animationEnabled);
+  const palette = useStore((s) => s.settings.palette);
   const snapDisabled = useStore((s) => s.snapDisabled);
   const updateShape = useStore((s) => s.updateShape);
   const deleteShape = useStore((s) => s.deleteShape);
   const deleteShapes = useStore((s) => s.deleteShapes);
+  const setShapePaletteRef = useStore((s) => s.setShapePaletteRef);
   const applyBlending = useStore((s) => s.applyBlending);
   const applyOpacity = useStore((s) => s.applyOpacity);
   const applyTransform = useStore((s) => s.applyTransform);
@@ -135,9 +139,11 @@ export function ShapePanel() {
         globalBezier={globalBezier}
         snapAngles={snapAngles}
         animationEnabled={animationEnabled}
+        palette={palette}
         snapDisabled={snapDisabled}
         updateShape={updateShape}
         deleteShape={deleteShape}
+        setPaletteRef={setShapePaletteRef}
         applyBlending={applyBlending}
         applyOpacity={applyOpacity}
         applyTransform={applyTransform}
@@ -164,9 +170,11 @@ export function ShapePanel() {
       kind={kinds[0]}
       globalBezier={globalBezier}
       snapAngles={snapAngles}
+      palette={palette}
       snapDisabled={snapDisabled}
       updateShape={updateShape}
       deleteShapes={deleteShapes}
+      setPaletteRef={setShapePaletteRef}
       applyBlending={applyBlending}
       applyOpacity={applyOpacity}
       applyTransform={applyTransform}
@@ -306,9 +314,11 @@ function ShapePanelInner({
   globalBezier,
   snapAngles,
   animationEnabled,
+  palette,
   snapDisabled,
   updateShape,
   deleteShape,
+  setPaletteRef,
   applyBlending,
   applyOpacity,
   applyTransform,
@@ -317,9 +327,11 @@ function ShapePanelInner({
   globalBezier: number;
   snapAngles: number[];
   animationEnabled: boolean;
+  palette: PaletteColor[];
   snapDisabled: boolean;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShape: (id: string) => void;
+  setPaletteRef: (id: string, channel: 'fill' | 'stroke', name: string | undefined) => void;
   applyBlending: (ids: string[]) => void;
   applyOpacity: (ids: string[]) => void;
   applyTransform: (ids: string[]) => void;
@@ -424,6 +436,13 @@ function ShapePanelInner({
             </>
           )}
         </div>
+        {palette.length > 0 && shape.stroke !== 'none' && (
+          <PaletteRefSelect
+            palette={palette}
+            value={shape.strokeRef}
+            onChange={(name) => setPaletteRef(shape.id, 'stroke', name)}
+          />
+        )}
       </label>
 
       {shape.stroke !== 'none' && (
@@ -475,6 +494,13 @@ function ShapePanelInner({
               </button>
             )}
           </div>
+          {palette.length > 0 && shape.fill !== 'none' && (
+            <PaletteRefSelect
+              palette={palette}
+              value={shape.fillRef}
+              onChange={(name) => setPaletteRef(shape.id, 'fill', name)}
+            />
+          )}
         </label>
       )}
 
@@ -1136,9 +1162,11 @@ function MultiShapePanel({
   kind,
   globalBezier,
   snapAngles,
+  palette,
   snapDisabled,
   updateShape,
   deleteShapes,
+  setPaletteRef,
   applyBlending,
   applyOpacity,
   applyTransform,
@@ -1147,9 +1175,11 @@ function MultiShapePanel({
   kind: ShapeKind;
   globalBezier: number;
   snapAngles: number[];
+  palette: PaletteColor[];
   snapDisabled: boolean;
   updateShape: (id: string, patch: Partial<Shape>) => void;
   deleteShapes: (ids: string[]) => void;
+  setPaletteRef: (id: string, channel: 'fill' | 'stroke', name: string | undefined) => void;
   applyBlending: (ids: string[]) => void;
   applyOpacity: (ids: string[]) => void;
   applyTransform: (ids: string[]) => void;
@@ -1169,6 +1199,8 @@ function MultiShapePanel({
   const linecaps = shapes.map((s) => s.strokeLinecap ?? 'round');
   const dasharrays = shapes.map((s) => s.strokeDasharray ?? '');
   const paintOrders = shapes.map((s) => s.paintOrder === 'stroke');
+  const fillRefs = shapes.map((s) => s.fillRef);
+  const strokeRefs = shapes.map((s) => s.strokeRef);
   const strokeUniform = allSame(strokes);
   const fillUniform = allSame(fills);
   const widthUniform = allSame(widths);
@@ -1181,6 +1213,8 @@ function MultiShapePanel({
   const linecapUniform = allSame(linecaps);
   const dasharrayUniform = allSame(dasharrays);
   const paintOrderUniform = allSame(paintOrders);
+  const fillRefUniform = allSame(fillRefs);
+  const strokeRefUniform = allSame(strokeRefs);
 
   const [strokeText, setStrokeText] = useState(strokeUniform ? strokes[0] : '');
   const [fillText, setFillText] = useState(fillUniform ? fills[0] : '');
@@ -1266,6 +1300,15 @@ function MultiShapePanel({
             </>
           )}
         </div>
+        {palette.length > 0 && strokes.some((s) => s !== 'none') && (
+          <MultiPaletteRefSelect
+            palette={palette}
+            value={strokeRefUniform ? strokeRefs[0] : 'mixed'}
+            onChange={(name) => {
+              for (const sh of shapes) setPaletteRef(sh.id, 'stroke', name);
+            }}
+          />
+        )}
       </label>
 
       {strokes.some((s) => s !== 'none') && (
@@ -1320,6 +1363,15 @@ function MultiShapePanel({
               </button>
             )}
           </div>
+          {palette.length > 0 && fills.some((f) => f !== 'none') && (
+            <MultiPaletteRefSelect
+              palette={palette}
+              value={fillRefUniform ? fillRefs[0] : 'mixed'}
+              onChange={(name) => {
+                for (const sh of shapes) setPaletteRef(sh.id, 'fill', name);
+              }}
+            />
+          )}
         </label>
       )}
 
@@ -1441,5 +1493,46 @@ function MultiShapePanel({
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * Palette picker variant for multi-shape selections. Pass the special string
+ * `'mixed'` for `value` when the selected shapes hold different refs — the
+ * select shows a "Mixed" placeholder until the user makes a choice.
+ */
+function MultiPaletteRefSelect({
+  palette,
+  value,
+  onChange,
+}: {
+  palette: PaletteColor[];
+  value: string | undefined | 'mixed';
+  onChange: (name: string | undefined) => void;
+}) {
+  const isMixed = value === 'mixed';
+  return (
+    <select
+      className="text-[11px]"
+      title="Link to palette color"
+      value={isMixed ? '__mixed__' : (value ?? '')}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v === '__mixed__') return;
+        onChange(v === '' ? undefined : v);
+      }}
+    >
+      {isMixed && (
+        <option value="__mixed__" disabled>
+          Mixed
+        </option>
+      )}
+      <option value="">— off-palette —</option>
+      {palette.map((p) => (
+        <option key={p.name} value={p.name}>
+          {p.name}
+        </option>
+      ))}
+    </select>
   );
 }
