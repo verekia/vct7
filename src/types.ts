@@ -41,6 +41,14 @@ export interface Shape {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  /**
+   * Optional palette references. When set, `fill` / `stroke` is kept synced with
+   * the palette entry's color — the editor uses the resolved hex (so the saved
+   * SVG has a real color value) and the ref name is metadata for round-tripping
+   * the link between shape and palette entry.
+   */
+  fillRef?: string;
+  strokeRef?: string;
   /** When null, the project's global bezier value applies. */
   bezierOverride: number | null;
   hidden: boolean;
@@ -206,17 +214,39 @@ export const BLEND_MODES: readonly BlendMode[] = [
   'luminosity',
 ];
 
+/**
+ * Named project-level color, surfaced in the project sidebar. Shapes can
+ * reference a palette entry via `fillRef` / `strokeRef`, and the project
+ * background can reference one via `bgRef`. The reference is metadata only —
+ * the SVG always emits the resolved hex on the actual paint attribute so the
+ * file renders correctly outside the editor.
+ */
+export interface PaletteColor {
+  /** Free-form unique label. Empty names are not allowed by the editor. */
+  name: string;
+  /** Hex color (`#rrggbb` or `#rgb`). */
+  color: string;
+}
+
 export interface ProjectSettings {
   /** Allowed snap angles in degrees. Empty array disables snapping. */
   snapAngles: number[];
   /** Global corner rounding amount, 0..1. */
   bezier: number;
   /**
+   * Project-level color palette. The editor enforces unique non-empty names;
+   * the order is the order the user added entries (used as the display order
+   * in the sidebar).
+   */
+  palette: PaletteColor[];
+  /**
    * Background color (also rendered as a `<rect>` so the SVG previews correctly).
    * `null` means no background — the canvas shows a checkerboard for contrast and
    * the exported SVG omits the bg rect (transparent).
    */
   bg: string | null;
+  /** Optional palette reference for `bg`. Same metadata-only contract as shape refs. */
+  bgRef?: string;
   /**
    * Output rendered size — emitted as the SVG `width`/`height` attributes. Decoupled
    * from the viewBox so a small SVG can hold high-precision coordinates (e.g.

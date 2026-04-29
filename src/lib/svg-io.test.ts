@@ -5,6 +5,7 @@ import type { ProjectSettings, Shape } from '../types';
 const sampleSettings: ProjectSettings = {
   snapAngles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],
   bezier: 0.2,
+  palette: [],
   bg: '#ffeedd',
   width: 400,
   height: 300,
@@ -384,6 +385,50 @@ describe('parseProject round-trip', () => {
 </svg>`;
     const parsed = parseProject(svg);
     expect(parsed.shapes[0].blendMode).toBeUndefined();
+  });
+
+  // Palette + per-shape ref attributes round-trip together. The SVG keeps the
+  // resolved hex on `fill` / `stroke` so external viewers render correctly,
+  // while data-vh-{fill,stroke}-ref preserves the link to the palette entry.
+  it('round-trips palette and per-shape fill/stroke refs', () => {
+    const settings: ProjectSettings = {
+      ...sampleSettings,
+      palette: [
+        { name: 'primary', color: '#ff8800' },
+        { name: 'ink', color: '#111111' },
+      ],
+      bg: '#ff8800',
+      bgRef: 'primary',
+    };
+    const shape: Shape = {
+      ...sampleShapes[0],
+      fill: '#ff8800',
+      fillRef: 'primary',
+      stroke: '#111111',
+      strokeRef: 'ink',
+      strokeWidth: 2,
+    };
+    const text = serializeProject(settings, [shape]);
+    expect(text).toContain('data-vh-palette="primary:#ff8800;ink:#111111"');
+    expect(text).toContain('data-vh-bg-ref="primary"');
+    expect(text).toContain('data-vh-fill-ref="primary"');
+    expect(text).toContain('data-vh-stroke-ref="ink"');
+    const parsed = parseProject(text);
+    expect(parsed.settings.palette).toEqual([
+      { name: 'primary', color: '#ff8800' },
+      { name: 'ink', color: '#111111' },
+    ]);
+    expect(parsed.settings.bgRef).toBe('primary');
+    expect(parsed.shapes[0].fillRef).toBe('primary');
+    expect(parsed.shapes[0].strokeRef).toBe('ink');
+  });
+
+  // Empty palette is the default — make sure we don't pollute the file with
+  // an empty data-vh-palette attribute.
+  it('omits palette attribute when empty', () => {
+    const text = serializeProject(sampleSettings, []);
+    expect(text).not.toContain('data-vh-palette');
+    expect(text).not.toContain('data-vh-bg-ref');
   });
 
   // Hidden/locked are editor-only flags: round-trip via data-vh-* attributes,
