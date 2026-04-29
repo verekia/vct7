@@ -1,66 +1,63 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { useStore } from '../store';
-import { effectiveBezier } from '../store';
-import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry';
-import { composeTransformString, hasTransform } from '../lib/transform';
-import {
-  IDENTITY_OFFSETS,
-  lerpOffsets,
-  offsetsToTransform,
-  sampleAnimation,
-} from '../lib/animation';
-import { useCanvasInteractions } from '../hooks/useCanvasInteractions';
-import type { BoxSelect } from '../store';
-import type { Drawing, Point, ProjectSettings, Shape } from '../types';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+
+import { useCanvasInteractions } from '../hooks/useCanvasInteractions'
+import { IDENTITY_OFFSETS, lerpOffsets, offsetsToTransform, sampleAnimation } from '../lib/animation'
+import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry'
+import { composeTransformString, hasTransform } from '../lib/transform'
+import { useStore } from '../store'
+import { effectiveBezier } from '../store'
+
+import type { BoxSelect } from '../store'
+import type { Drawing, Point, ProjectSettings, Shape } from '../types'
 
 interface ContainerSize {
-  w: number;
-  h: number;
+  w: number
+  h: number
 }
 
 export function Canvas() {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
   // Start at 0×0 so the fit effect's `size.w <= 1` gate skips the very first
   // pass — otherwise it'd lock the initial fit to a hardcoded fallback (and
   // the nonce gate prevents re-running once the real measurement arrives).
-  const [size, setSize] = useState<ContainerSize>({ w: 0, h: 0 });
+  const [size, setSize] = useState<ContainerSize>({ w: 0, h: 0 })
 
   // Track container size to drive the SVG viewBox.
   useLayoutEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth || 1, h: el.clientHeight || 1 });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    const el = wrapRef.current
+    if (!el) return
+    const measure = () => setSize({ w: el.clientWidth || 1, h: el.clientHeight || 1 })
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Refit when explicitly requested (initial mount, file load, F shortcut, …).
   // Resizing the window alone must NOT reset the user's view.
-  const settings = useStore((s) => s.settings);
-  const setView = useStore((s) => s.setView);
-  const fitNonce = useStore((s) => s.fitNonce);
-  const lastFitNonce = useRef(-1);
+  const settings = useStore(s => s.settings)
+  const setView = useStore(s => s.setView)
+  const fitNonce = useStore(s => s.fitNonce)
+  const lastFitNonce = useRef(-1)
   useEffect(() => {
-    if (size.w <= 1 || size.h <= 1) return;
-    if (lastFitNonce.current === fitNonce) return;
-    lastFitNonce.current = fitNonce;
-    const pad = 40;
+    if (size.w <= 1 || size.h <= 1) return
+    if (lastFitNonce.current === fitNonce) return
+    lastFitNonce.current = fitNonce
+    const pad = 40
     // Fit centers the artboard (= viewBox) in the viewport. The viewBox origin
     // may be non-zero, so subtract `vbX*scale` from the centering offset to
     // place the artboard's top-left where it belongs in world space.
-    const vbW = settings.viewBoxWidth;
-    const vbH = settings.viewBoxHeight;
-    const scale = Math.min((size.w - pad * 2) / vbW, (size.h - pad * 2) / vbH);
-    const s = scale > 0 ? scale : 1;
+    const vbW = settings.viewBoxWidth
+    const vbH = settings.viewBoxHeight
+    const scale = Math.min((size.w - pad * 2) / vbW, (size.h - pad * 2) / vbH)
+    const s = scale > 0 ? scale : 1
     setView({
       scale: s,
       x: (size.w - vbW * s) / 2 - settings.viewBoxX * s,
       y: (size.h - vbH * s) / 2 - settings.viewBoxY * s,
-    });
+    })
   }, [
     fitNonce,
     size.w,
@@ -70,36 +67,36 @@ export function Canvas() {
     settings.viewBoxWidth,
     settings.viewBoxHeight,
     setView,
-  ]);
+  ])
 
-  useCanvasInteractions(svgRef);
+  useCanvasInteractions(svgRef)
 
-  const tool = useStore((s) => s.tool);
-  const view = useStore((s) => s.view);
-  const cursor = useStore((s) => s.cursor);
-  const shapes = useStore((s) => s.shapes);
-  const drawing = useStore((s) => s.drawing);
-  const selectedShapeIds = useStore((s) => s.selectedShapeIds);
-  const selectedVertices = useStore((s) => s.selectedVertices);
-  const snapDisabled = useStore((s) => s.snapDisabled);
-  const spaceHeld = useStore((s) => s.spaceHeld);
-  const panning = useStore((s) => s.panning);
-  const vertexDragging = useStore((s) => s.vertexDragging);
-  const snapTarget = useStore((s) => s.snapTarget);
-  const boxSelect = useStore((s) => s.boxSelect);
-  const previewT = useStore((s) => s.previewT);
-  const onionSkin = useStore((s) => s.onionSkin);
+  const tool = useStore(s => s.tool)
+  const view = useStore(s => s.view)
+  const cursor = useStore(s => s.cursor)
+  const shapes = useStore(s => s.shapes)
+  const drawing = useStore(s => s.drawing)
+  const selectedShapeIds = useStore(s => s.selectedShapeIds)
+  const selectedVertices = useStore(s => s.selectedVertices)
+  const snapDisabled = useStore(s => s.snapDisabled)
+  const spaceHeld = useStore(s => s.spaceHeld)
+  const panning = useStore(s => s.panning)
+  const vertexDragging = useStore(s => s.vertexDragging)
+  const snapTarget = useStore(s => s.snapTarget)
+  const boxSelect = useStore(s => s.boxSelect)
+  const previewT = useStore(s => s.previewT)
+  const onionSkin = useStore(s => s.onionSkin)
   // Animation only renders when both the project switch and an active scrub /
   // play exist. Toggling animationEnabled off therefore behaves identically to
   // the pre-animation editor — shapes always show their rest pose.
-  const animationActive = settings.animationEnabled;
-  const sceneT = animationActive ? previewT : null;
-  const onionActive = animationActive && onionSkin;
+  const animationActive = settings.animationEnabled
+  const sceneT = animationActive ? previewT : null
+  const onionActive = animationActive && onionSkin
 
-  const selectedSet = useMemo(() => new Set(selectedShapeIds), [selectedShapeIds]);
-  const selectedShapes = shapes.filter((s) => selectedSet.has(s.id));
-  const singleSelected = selectedShapes.length === 1 ? selectedShapes[0] : null;
-  const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`;
+  const selectedSet = useMemo(() => new Set(selectedShapeIds), [selectedShapeIds])
+  const selectedShapes = shapes.filter(s => selectedSet.has(s.id))
+  const singleSelected = selectedShapes.length === 1 ? selectedShapes[0] : null
+  const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`
 
   const cls = [
     'canvas-svg block w-full h-full select-none relative z-[1]',
@@ -107,16 +104,11 @@ export function Canvas() {
     panning ? 'panning' : spaceHeld ? 'space' : '',
   ]
     .filter(Boolean)
-    .join(' ');
+    .join(' ')
 
   return (
-    <div ref={wrapRef} className="canvas-surface relative bg-bg-0 overflow-hidden">
-      <svg
-        ref={svgRef}
-        className={cls}
-        viewBox={`0 0 ${size.w} ${size.h}`}
-        xmlns="http://www.w3.org/2000/svg"
-      >
+    <div ref={wrapRef} className="canvas-surface bg-bg-0 relative overflow-hidden">
+      <svg ref={svgRef} className={cls} viewBox={`0 0 ${size.w} ${size.h}`} xmlns="http://www.w3.org/2000/svg">
         <g transform={transform}>
           {settings.bg === null && (
             <defs>
@@ -164,7 +156,7 @@ export function Canvas() {
             </defs>
           )}
           <g clipPath={settings.clip ? 'url(#vh-artboard-clip)' : undefined}>
-            {shapes.map((shape) =>
+            {shapes.map(shape =>
               shape.hidden ? null : (
                 <AnimatedShape
                   key={shape.id}
@@ -177,16 +169,14 @@ export function Canvas() {
             )}
           </g>
 
-          {selectedShapes.map((shape) => (
+          {selectedShapes.map(shape => (
             <SelectionLayer
               key={shape.id}
               shape={shape}
               // Vertex handles are only meaningful when a single shape is
               // selected — multi-select shows outlines only.
               selectedIndices={
-                singleSelected
-                  ? selectedVertices.filter((v) => v.shapeId === shape.id).map((v) => v.index)
-                  : []
+                singleSelected ? selectedVertices.filter(v => v.shapeId === shape.id).map(v => v.index) : []
               }
               showVertices={!!singleSelected}
               scale={view.scale}
@@ -201,11 +191,7 @@ export function Canvas() {
             selectedVertices.length === 1 &&
             selectedVertices[0].shapeId === singleSelected.id &&
             !snapDisabled && (
-              <VertexDragGuides
-                shape={singleSelected}
-                index={selectedVertices[0].index}
-                settings={settings}
-              />
+              <VertexDragGuides shape={singleSelected} index={selectedVertices[0].index} settings={settings} />
             )}
 
           {boxSelect && <MarqueeRect box={boxSelect} />}
@@ -234,7 +220,7 @@ export function Canvas() {
           )}
         </g>
       </svg>
-      <div className="hud-dots absolute bottom-3 right-3 flex gap-3.5 bg-[rgba(18,20,26,0.92)] border border-line px-3 py-[5px] text-[10px] text-muted pointer-events-none tracking-[1.5px] uppercase tabular-nums z-[2] backdrop-blur-[6px]">
+      <div className="hud-dots border-line text-muted pointer-events-none absolute right-3 bottom-3 z-[2] flex gap-3.5 border bg-[rgba(18,20,26,0.92)] px-3 py-[5px] text-[10px] tracking-[1.5px] uppercase tabular-nums backdrop-blur-[6px]">
         <span>
           {Math.round(cursor[0])}, {Math.round(cursor[1])}
         </span>
@@ -242,15 +228,15 @@ export function Canvas() {
         <span>{tool}</span>
       </div>
     </div>
-  );
+  )
 }
 
 // Checker tile thresholds in **screen pixels**, so tiles stay roughly constant
 // across zoom levels. The actual tile size is converted to canvas units (the
 // pattern coordinate space) on the fly via `/ scale`.
-const CHECKER_TARGET_PX = 40;
-const CHECKER_MIN_PX = 24;
-const CHECKER_MAX_PX = 64;
+const CHECKER_TARGET_PX = 40
+const CHECKER_MIN_PX = 24
+const CHECKER_MAX_PX = 64
 
 // Returns the tile size in canvas units. As long as the project has a grid
 // spacing (regardless of whether the grid is rendered), snaps the tile to
@@ -261,40 +247,40 @@ const CHECKER_MAX_PX = 64;
 // This gives the checker a "subdivides as you zoom in" feel that stays
 // grid-aligned at any zoom level.
 const computeCheckerSize = (gridSize: number, scale: number): number => {
-  const safeScale = scale > 0 ? scale : 1;
-  const targetCanvas = CHECKER_TARGET_PX / safeScale;
-  if (!(gridSize > 0)) return targetCanvas;
-  const minCanvas = CHECKER_MIN_PX / safeScale;
-  const maxCanvas = CHECKER_MAX_PX / safeScale;
+  const safeScale = scale > 0 ? scale : 1
+  const targetCanvas = CHECKER_TARGET_PX / safeScale
+  if (!(gridSize > 0)) return targetCanvas
+  const minCanvas = CHECKER_MIN_PX / safeScale
+  const maxCanvas = CHECKER_MAX_PX / safeScale
   // Pick the exponent k closest to the screen target.
-  let exp = Math.round(Math.log2(targetCanvas / gridSize));
-  let tile = gridSize * 2 ** exp;
+  let exp = Math.round(Math.log2(targetCanvas / gridSize))
+  let tile = gridSize * 2 ** exp
   // The MAX/MIN ratio (≥ 2) guarantees at least one power-of-2 step fits in
   // the band, so these loops settle quickly without oscillating.
   while (tile > maxCanvas) {
-    exp -= 1;
-    tile = gridSize * 2 ** exp;
+    exp -= 1
+    tile = gridSize * 2 ** exp
   }
   while (tile < minCanvas) {
-    exp += 1;
-    tile = gridSize * 2 ** exp;
+    exp += 1
+    tile = gridSize * 2 ** exp
   }
   // Adjusting up could overshoot MAX in pathological setups (very narrow
   // band) — give up on grid snapping rather than emit something too large.
-  if (tile > maxCanvas) return targetCanvas;
-  return tile;
-};
+  if (tile > maxCanvas) return targetCanvas
+  return tile
+}
 
 function CheckerPattern({ id, gridSize, scale }: { id: string; gridSize: number; scale: number }) {
-  const s = computeCheckerSize(gridSize, scale);
-  const t = s * 2;
+  const s = computeCheckerSize(gridSize, scale)
+  const t = s * 2
   return (
     <pattern id={id} x={0} y={0} width={t} height={t} patternUnits="userSpaceOnUse">
       <rect x={0} y={0} width={t} height={t} fill="#bcbcbc" />
       <rect x={0} y={0} width={s} height={s} fill="#aeaeae" />
       <rect x={s} y={s} width={s} height={s} fill="#aeaeae" />
     </pattern>
-  );
+  )
 }
 
 function GridLayer({
@@ -305,28 +291,28 @@ function GridLayer({
   boardH,
   scale,
 }: {
-  size: number;
-  boardX: number;
-  boardY: number;
-  boardW: number;
-  boardH: number;
-  scale: number;
+  size: number
+  boardX: number
+  boardY: number
+  boardW: number
+  boardH: number
+  scale: number
 }) {
   // Skip rendering if the grid would be visually noisy (sub-pixel) or huge.
-  const screenSpacing = size * scale;
+  const screenSpacing = size * scale
   const lines = useMemo(() => {
-    const xs: number[] = [];
-    const ys: number[] = [];
+    const xs: number[] = []
+    const ys: number[] = []
     // Lines start one cell in from the artboard origin and run up to (but not
     // including) the right/bottom edge — borders are already drawn.
-    for (let x = boardX + size; x < boardX + boardW; x += size) xs.push(x);
-    for (let y = boardY + size; y < boardY + boardH; y += size) ys.push(y);
-    return { xs, ys };
-  }, [size, boardX, boardY, boardW, boardH]);
-  if (screenSpacing < 4) return null;
+    for (let x = boardX + size; x < boardX + boardW; x += size) xs.push(x)
+    for (let y = boardY + size; y < boardY + boardH; y += size) ys.push(y)
+    return { xs, ys }
+  }, [size, boardX, boardY, boardW, boardH])
+  if (screenSpacing < 4) return null
   return (
     <g className="grid-layer" pointerEvents="none">
-      {lines.xs.map((x) => (
+      {lines.xs.map(x => (
         <line
           key={`x${x}`}
           x1={fmt(x)}
@@ -336,7 +322,7 @@ function GridLayer({
           vectorEffect="non-scaling-stroke"
         />
       ))}
-      {lines.ys.map((y) => (
+      {lines.ys.map(y => (
         <line
           key={`y${y}`}
           x1={fmt(boardX)}
@@ -347,7 +333,7 @@ function GridLayer({
         />
       ))}
     </g>
-  );
+  )
 }
 
 /**
@@ -367,41 +353,29 @@ function AnimatedShape({
   sceneT,
   onionSkin,
 }: {
-  shape: Shape;
-  bezier: number;
-  sceneT: number | null;
-  onionSkin: boolean;
+  shape: Shape
+  bezier: number
+  sceneT: number | null
+  onionSkin: boolean
 }) {
-  const offsets = sceneT === null ? IDENTITY_OFFSETS : sampleAnimation(shape, sceneT);
-  const transform = offsetsToTransform(shape, offsets);
-  const opacity = offsets.opacityMul < 1 ? offsets.opacityMul : undefined;
+  const offsets = sceneT === null ? IDENTITY_OFFSETS : sampleAnimation(shape, sceneT)
+  const transform = offsetsToTransform(shape, offsets)
+  const opacity = offsets.opacityMul < 1 ? offsets.opacityMul : undefined
   const ghostOffsets =
-    onionSkin && shape.animation
-      ? lerpOffsets(shape.animation.from, 0, shape.fill, shape.stroke)
-      : null;
-  const ghostTransform = ghostOffsets ? offsetsToTransform(shape, ghostOffsets) : '';
+    onionSkin && shape.animation ? lerpOffsets(shape.animation.from, 0, shape.fill, shape.stroke) : null
+  const ghostTransform = ghostOffsets ? offsetsToTransform(shape, ghostOffsets) : ''
 
   // Identity offsets + no ghost → render the bare ShapeNode so untouched
   // shapes have the exact same DOM shape as the pre-animation editor. This
   // matters for selection hit testing tests that inspect `<g data-shape-id>`.
-  if (
-    transform === '' &&
-    opacity === undefined &&
-    !ghostOffsets &&
-    offsets.fill === null &&
-    offsets.stroke === null
-  ) {
-    return <ShapeNode shape={shape} bezier={bezier} />;
+  if (transform === '' && opacity === undefined && !ghostOffsets && offsets.fill === null && offsets.stroke === null) {
+    return <ShapeNode shape={shape} bezier={bezier} />
   }
 
   return (
     <>
       {ghostOffsets && (
-        <g
-          transform={ghostTransform || undefined}
-          opacity={(ghostOffsets.opacityMul ?? 1) * 0.25}
-          pointerEvents="none"
-        >
+        <g transform={ghostTransform || undefined} opacity={(ghostOffsets.opacityMul ?? 1) * 0.25} pointerEvents="none">
           <ShapeNode
             shape={shape}
             bezier={bezier}
@@ -411,15 +385,10 @@ function AnimatedShape({
         </g>
       )}
       <g transform={transform || undefined} opacity={opacity}>
-        <ShapeNode
-          shape={shape}
-          bezier={bezier}
-          fillOverride={offsets.fill}
-          strokeOverride={offsets.stroke}
-        />
+        <ShapeNode shape={shape} bezier={bezier} fillOverride={offsets.fill} strokeOverride={offsets.stroke} />
       </g>
     </>
-  );
+  )
 }
 
 function ShapeNode({
@@ -428,31 +397,28 @@ function ShapeNode({
   fillOverride,
   strokeOverride,
 }: {
-  shape: Shape;
-  bezier: number;
-  fillOverride?: string | null;
-  strokeOverride?: string | null;
+  shape: Shape
+  bezier: number
+  fillOverride?: string | null
+  strokeOverride?: string | null
 }) {
   // Live-animation overrides take precedence over the authored fill/stroke. We
   // only swap the *visible* paint — the hit-area paths keep their black fill so
   // pointer detection survives a colorless from-state (e.g. fill = same as bg).
-  const visibleFill = fillOverride ?? shape.fill;
-  const visibleStroke = strokeOverride ?? shape.stroke;
-  const linejoin = shape.strokeLinejoin ?? 'round';
-  const linecap = shape.strokeLinecap ?? 'round';
-  const dasharray =
-    shape.strokeDasharray && shape.strokeDasharray.trim() !== ''
-      ? shape.strokeDasharray
-      : undefined;
-  const paintOrder = shape.paintOrder === 'stroke' ? 'stroke' : undefined;
+  const visibleFill = fillOverride ?? shape.fill
+  const visibleStroke = strokeOverride ?? shape.stroke
+  const linejoin = shape.strokeLinejoin ?? 'round'
+  const linecap = shape.strokeLinecap ?? 'round'
+  const dasharray = shape.strokeDasharray && shape.strokeDasharray.trim() !== '' ? shape.strokeDasharray : undefined
+  const paintOrder = shape.paintOrder === 'stroke' ? 'stroke' : undefined
   const blendStyle: CSSProperties | undefined =
-    shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined;
-  const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined;
+    shape.blendMode && shape.blendMode !== 'normal' ? { mixBlendMode: shape.blendMode } : undefined
+  const opacity = shape.opacity !== undefined && shape.opacity < 1 ? shape.opacity : undefined
   // The wrapping `<g>` carries the composed transform so rotation/scale (and,
   // for glyphs, the local-to-canvas translate) all live in one DOM node.
-  const transformAttr = composeTransformString(shape) || undefined;
+  const transformAttr = composeTransformString(shape) || undefined
   if (shape.kind === 'glyphs' && shape.glyphs && shape.points.length >= 2) {
-    const { d, width, height } = shape.glyphs;
+    const { d, width, height } = shape.glyphs
     return (
       <g data-shape-id={shape.id} transform={transformAttr}>
         <path
@@ -482,14 +448,14 @@ function ShapeNode({
           opacity={0}
         />
       </g>
-    );
+    )
   }
   if (shape.kind === 'circle' && shape.points.length >= 2) {
-    const [cx, cy] = shape.points[0];
-    const r = dist(shape.points[0], shape.points[1]);
+    const [cx, cy] = shape.points[0]
+    const r = dist(shape.points[0], shape.points[1])
     if (isPartialArc(shape.arc)) {
-      const d = arcToPath(cx, cy, r, shape.arc);
-      const filled = shape.arc.style !== 'open';
+      const d = arcToPath(cx, cy, r, shape.arc)
+      const filled = shape.arc.style !== 'open'
       return (
         <g data-shape-id={shape.id} transform={transformAttr}>
           <path
@@ -518,7 +484,7 @@ function ShapeNode({
             opacity={0}
           />
         </g>
-      );
+      )
     }
     return (
       <g data-shape-id={shape.id} transform={transformAttr}>
@@ -548,9 +514,9 @@ function ShapeNode({
           opacity={0}
         />
       </g>
-    );
+    )
   }
-  const d = pointsToPath(shape.points, shape.closed, bezier);
+  const d = pointsToPath(shape.points, shape.closed, bezier)
   return (
     <g data-shape-id={shape.id} transform={transformAttr}>
       <path
@@ -584,7 +550,7 @@ function ShapeNode({
         opacity={0}
       />
     </g>
-  );
+  )
 }
 
 function SelectionLayer({
@@ -593,54 +559,41 @@ function SelectionLayer({
   showVertices,
   scale,
 }: {
-  shape: Shape;
-  selectedIndices: number[];
-  showVertices: boolean;
-  scale: number;
+  shape: Shape
+  selectedIndices: number[]
+  showVertices: boolean
+  scale: number
 }) {
-  const selectedSet = useMemo(() => new Set(selectedIndices), [selectedIndices]);
+  const selectedSet = useMemo(() => new Set(selectedIndices), [selectedIndices])
   // Same composed transform as ShapeNode so the dashed outline + vertex handles
   // sit on top of the rendered shape regardless of rotation/scale.
-  const transformAttr = composeTransformString(shape) || undefined;
+  const transformAttr = composeTransformString(shape) || undefined
   // Vertex handles are pre-transform anchors. Once a transform is applied they
   // would render at the *transformed* positions but a drag would set the
   // underlying point in canvas coords without inverting — making the visual
   // jump. Cleanest UX: hide them, force the user to bake the transform first.
-  const transformed = hasTransform(shape);
+  const transformed = hasTransform(shape)
   // Glyphs render the dashed bbox as their outline — and never expose vertex
   // handles, since the block always moves as a single unit.
   if (shape.kind === 'glyphs' && shape.glyphs && shape.points.length >= 2) {
-    const { width, height } = shape.glyphs;
+    const { width, height } = shape.glyphs
     return (
       <g transform={transformAttr}>
-        <rect
-          x={0}
-          y={0}
-          width={fmt(width)}
-          height={fmt(height)}
-          className="selection-outline"
-          fill="none"
-        />
+        <rect x={0} y={0} width={fmt(width)} height={fmt(height)} className="selection-outline" fill="none" />
       </g>
-    );
+    )
   }
-  let outline;
+  let outline
   if (shape.kind === 'circle' && shape.points.length >= 2) {
-    const [cx, cy] = shape.points[0];
-    const r = dist(shape.points[0], shape.points[1]);
+    const [cx, cy] = shape.points[0]
+    const r = dist(shape.points[0], shape.points[1])
     if (isPartialArc(shape.arc)) {
-      outline = (
-        <path d={arcToPath(cx, cy, r, shape.arc)} className="selection-outline" fill="none" />
-      );
+      outline = <path d={arcToPath(cx, cy, r, shape.arc)} className="selection-outline" fill="none" />
     } else {
-      outline = (
-        <circle cx={fmt(cx)} cy={fmt(cy)} r={fmt(r)} className="selection-outline" fill="none" />
-      );
+      outline = <circle cx={fmt(cx)} cy={fmt(cy)} r={fmt(r)} className="selection-outline" fill="none" />
     }
   } else {
-    outline = (
-      <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
-    );
+    outline = <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
   }
   return (
     <g transform={transformAttr}>
@@ -660,14 +613,14 @@ function SelectionLayer({
           />
         ))}
     </g>
-  );
+  )
 }
 
 function MarqueeRect({ box }: { box: BoxSelect }) {
-  const x = Math.min(box.start[0], box.end[0]);
-  const y = Math.min(box.start[1], box.end[1]);
-  const w = Math.abs(box.end[0] - box.start[0]);
-  const h = Math.abs(box.end[1] - box.start[1]);
+  const x = Math.min(box.start[0], box.end[0])
+  const y = Math.min(box.start[1], box.end[1])
+  const w = Math.abs(box.end[0] - box.start[0])
+  const h = Math.abs(box.end[1] - box.start[1])
   return (
     <rect
       className="marquee"
@@ -678,31 +631,23 @@ function MarqueeRect({ box }: { box: BoxSelect }) {
       pointerEvents="none"
       vectorEffect="non-scaling-stroke"
     />
-  );
+  )
 }
 
-function VertexDragGuides({
-  shape,
-  index,
-  settings,
-}: {
-  shape: Shape;
-  index: number;
-  settings: ProjectSettings;
-}) {
-  if (settings.snapAngles.length === 0) return null;
-  const n = shape.points.length;
-  const anchors: Point[] = [];
-  if (index > 0) anchors.push(shape.points[index - 1]);
-  else if (shape.closed && n > 1) anchors.push(shape.points[n - 1]);
-  if (index < n - 1) anchors.push(shape.points[index + 1]);
-  else if (shape.closed && n > 1) anchors.push(shape.points[0]);
-  const rayLen = (settings.viewBoxWidth + settings.viewBoxHeight) * 2;
+function VertexDragGuides({ shape, index, settings }: { shape: Shape; index: number; settings: ProjectSettings }) {
+  if (settings.snapAngles.length === 0) return null
+  const n = shape.points.length
+  const anchors: Point[] = []
+  if (index > 0) anchors.push(shape.points[index - 1])
+  else if (shape.closed && n > 1) anchors.push(shape.points[n - 1])
+  if (index < n - 1) anchors.push(shape.points[index + 1])
+  else if (shape.closed && n > 1) anchors.push(shape.points[0])
+  const rayLen = (settings.viewBoxWidth + settings.viewBoxHeight) * 2
   return (
     <g>
       {anchors.map((a, ai) =>
-        settings.snapAngles.map((deg) => {
-          const rad = (deg * Math.PI) / 180;
+        settings.snapAngles.map(deg => {
+          const rad = (deg * Math.PI) / 180
           return (
             <line
               key={`${ai}-${deg}`}
@@ -713,11 +658,11 @@ function VertexDragGuides({
               className="snap-guide"
               vectorEffect="non-scaling-stroke"
             />
-          );
+          )
         }),
       )}
     </g>
-  );
+  )
 }
 
 function PreviewLayer({
@@ -730,38 +675,38 @@ function PreviewLayer({
   bezier,
   scale,
 }: {
-  drawing: Drawing;
-  cursor: Point;
-  snapDisabled: boolean;
-  snapAngles: number[];
-  boardW: number;
-  boardH: number;
-  bezier: number;
-  scale: number;
+  drawing: Drawing
+  cursor: Point
+  snapDisabled: boolean
+  snapAngles: number[]
+  boardW: number
+  boardH: number
+  bezier: number
+  scale: number
 }) {
-  if (drawing.points.length === 0) return null;
-  const last = drawing.points[drawing.points.length - 1];
-  const first = drawing.points[0];
+  if (drawing.points.length === 0) return null
+  const last = drawing.points[drawing.points.length - 1]
+  const first = drawing.points[0]
   // For polygons with ≥ 2 points, also project rays from the first vertex so
   // the user can align the closing edge with the start of the polygon before
   // clicking it to close. Circles only ever have one placed point (center) so
   // the ray fan from `last` is exactly the fan from the center — useful for
   // axis-aligning the radius before the second click.
-  const guideAnchors: Point[] = [last];
+  const guideAnchors: Point[] = [last]
   if (drawing.type === 'polygon' && drawing.points.length >= 2) {
-    guideAnchors.push(first);
+    guideAnchors.push(first)
   }
-  const previewPts: Point[] = [...drawing.points, [cursor[0], cursor[1]]];
-  const rayLen = (boardW + boardH) * 2;
-  const isCircle = drawing.type === 'circle';
-  const circleR = isCircle ? Math.hypot(cursor[0] - first[0], cursor[1] - first[1]) : 0;
+  const previewPts: Point[] = [...drawing.points, [cursor[0], cursor[1]]]
+  const rayLen = (boardW + boardH) * 2
+  const isCircle = drawing.type === 'circle'
+  const circleR = isCircle ? Math.hypot(cursor[0] - first[0], cursor[1] - first[1]) : 0
 
   return (
     <g>
       {!snapDisabled &&
         guideAnchors.flatMap((anchor, ai) =>
-          snapAngles.map((a) => {
-            const rad = (a * Math.PI) / 180;
+          snapAngles.map(a => {
+            const rad = (a * Math.PI) / 180
             return (
               <line
                 key={`${ai}-${a}`}
@@ -772,16 +717,12 @@ function PreviewLayer({
                 className="snap-guide"
                 vectorEffect="non-scaling-stroke"
               />
-            );
+            )
           }),
         )}
 
       {drawing.type === 'polygon' && previewPts.length >= 3 && (
-        <path
-          d={pointsToPath(previewPts, true, bezier)}
-          fill="rgba(255,59,48,0.08)"
-          stroke="none"
-        />
+        <path d={pointsToPath(previewPts, true, bezier)} fill="rgba(255,59,48,0.08)" stroke="none" />
       )}
 
       {isCircle ? (
@@ -804,16 +745,12 @@ function PreviewLayer({
           />
         </>
       ) : (
-        <path
-          d={pointsToPath(previewPts, false, bezier)}
-          className="preview-shape"
-          vectorEffect="non-scaling-stroke"
-        />
+        <path d={pointsToPath(previewPts, false, bezier)} className="preview-shape" vectorEffect="non-scaling-stroke" />
       )}
 
       {drawing.points.map((p, i) => (
         <circle key={i} cx={fmt(p[0])} cy={fmt(p[1])} r={3 / scale} className="preview-vertex" />
       ))}
     </g>
-  );
+  )
 }

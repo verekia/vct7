@@ -1,7 +1,10 @@
 node_modules/
+.next/
+out/
 dist/
+next-env.d.ts
 coverage/
 .DS_Store
 *.log
-.vite/
 .playwright-mcp/
+*.tsbuildinfo

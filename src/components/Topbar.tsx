@@ -1,7 +1,7 @@
-import { useStore } from '../store';
-import { newProject, openFile, saveFile, saveFileAs } from '../lib/file-ops';
-import { Toolbar } from './Toolbar';
-import { CodeButton } from './CodeDialog';
+import { newProject, openFile, saveFile, saveFileAs } from "../lib/file-ops";
+import { useStore } from "../store";
+import { CodeButton } from "./CodeDialog";
+import { Toolbar } from "./Toolbar";
 
 export function Topbar() {
   const fileName = useStore((s) => s.fileName);
@@ -12,14 +12,17 @@ export function Topbar() {
   const redo = useStore((s) => s.redo);
 
   return (
-    <header className="topbar-surface relative grid grid-cols-[1fr_auto_1fr] items-center px-3.5 border-b border-line">
+    <header className="topbar-surface border-line relative grid grid-cols-[1fr_auto_1fr] items-center border-b px-3.5">
       <div className="flex items-baseline gap-2.5">
-        <span className="text-accent tracking-[1px] font-bold [text-shadow:0_0_12px_rgba(255,59,48,0.45)]">
-          [ VH ]
+        <span className="text-accent font-bold tracking-[1px] [text-shadow:0_0_12px_rgba(255,59,48,0.45)]">
+          / VCT7 /
         </span>
-        <span className="tracking-[5px] uppercase font-semibold text-xs">vectorheart</span>
-        <span className="text-muted ml-3 text-[11px] tracking-[0.5px]">{fileName}</span>
-        <span className="text-accent w-2.5 inline-block text-center">{dirty ? '●' : ''}</span>
+        <span className="text-muted ml-3 text-[11px] tracking-[0.5px]">
+          {fileName}
+        </span>
+        <span className="text-accent inline-block w-2.5 text-center">
+          {dirty ? "●" : ""}
+        </span>
       </div>
       <div className="flex justify-center gap-1 py-1.5">
         <Toolbar />
@@ -28,7 +31,11 @@ export function Topbar() {
         <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl/Cmd+Z)">
           Undo
         </button>
-        <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">
+        <button
+          onClick={redo}
+          disabled={!canRedo}
+          title="Redo (Ctrl/Cmd+Shift+Z)"
+        >
           Redo
         </button>
         <button onClick={newProject} title="New (Ctrl/Cmd+N)">

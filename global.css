@@ -21,7 +21,7 @@
 @layer base {
   html,
   body,
-  #root {
+  #__next {
     margin: 0;
     height: 100%;
     background: var(--color-bg-0);
@@ -37,7 +37,7 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  #root {
+  #__next {
     display: grid;
     grid-template-rows: 42px 1fr auto 24px;
   }
@@ -266,13 +266,7 @@
   /* "None" swatch — 45° hatch over panel bg. */
   .swatch-none {
     background:
-      linear-gradient(
-        45deg,
-        transparent 46%,
-        var(--color-muted-2) 46%,
-        var(--color-muted-2) 54%,
-        transparent 54%
-      ),
+      linear-gradient(45deg, transparent 46%, var(--color-muted-2) 46%, var(--color-muted-2) 54%, transparent 54%),
       var(--color-bg-1);
   }
 

@@ -1,27 +1,29 @@
-import type { ReactElement } from 'react';
-import type { Tool } from '../types';
-import { useStore } from '../store';
+import type { ReactElement } from 'react'
+
+import { useStore } from '../store'
+
+import type { Tool } from '../types'
 
 const TOOLS: { id: Tool; label: string; key: string; icon: () => ReactElement }[] = [
   { id: 'select', label: 'Select', key: 'V', icon: SelectIcon },
   { id: 'line', label: 'Line', key: 'L', icon: LineIcon },
   { id: 'polygon', label: 'Polygon', key: 'P', icon: PolygonIcon },
   { id: 'circle', label: 'Circle', key: 'C', icon: CircleIcon },
-];
+]
 
 export function Toolbar() {
-  const tool = useStore((s) => s.tool);
-  const setTool = useStore((s) => s.setTool);
-  const setFontDialogOpen = useStore((s) => s.setFontDialogOpen);
+  const tool = useStore(s => s.tool)
+  const setTool = useStore(s => s.setTool)
+  const setFontDialogOpen = useStore(s => s.setFontDialogOpen)
 
   return (
-    <div className="flex gap-1 items-center">
-      {TOOLS.map((t) => {
-        const Icon = t.icon;
-        const isActive = tool === t.id;
+    <div className="flex items-center gap-1">
+      {TOOLS.map(t => {
+        const Icon = t.icon
+        const isActive = tool === t.id
         const cls = isActive
           ? 'flex items-center justify-center w-7 h-7 p-0 bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(255,59,48,0.25)]'
-          : 'flex items-center justify-center w-7 h-7 p-0 text-muted';
+          : 'flex items-center justify-center w-7 h-7 p-0 text-muted'
         return (
           <button
             key={t.id}
@@ -33,14 +35,14 @@ export function Toolbar() {
           >
             <Icon />
           </button>
-        );
+        )
       })}
       {/* "Text" is an insert action, not a drawing mode — clicking opens the
           font dialog and the active tool stays put. */}
-      <span className="w-px h-5 bg-line mx-1" aria-hidden />
+      <span className="bg-line mx-1 h-5 w-px" aria-hidden />
       <button
         type="button"
-        className="flex items-center justify-center w-7 h-7 p-0 text-muted"
+        className="text-muted flex h-7 w-7 items-center justify-center p-0"
         title="Add text (T)"
         aria-label="Add text"
         onClick={() => setFontDialogOpen(true)}
@@ -48,7 +50,7 @@ export function Toolbar() {
         <TextIcon />
       </button>
     </div>
-  );
+  )
 }
 
 function SelectIcon() {
@@ -62,25 +64,17 @@ function SelectIcon() {
         strokeLinejoin="round"
       />
     </svg>
-  );
+  )
 }
 
 function LineIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14">
-      <line
-        x1="3"
-        y1="13"
-        x2="13"
-        y2="3"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <line x1="3" y1="13" x2="13" y2="3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       <circle cx="3" cy="13" r="1.6" fill="currentColor" />
       <circle cx="13" cy="3" r="1.6" fill="currentColor" />
     </svg>
-  );
+  )
 }
 
 function PolygonIcon() {
@@ -94,7 +88,7 @@ function PolygonIcon() {
         strokeLinejoin="round"
       />
     </svg>
-  );
+  )
 }
 
 function CircleIcon() {
@@ -102,19 +96,13 @@ function CircleIcon() {
     <svg viewBox="0 0 16 16" width="14" height="14">
       <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
     </svg>
-  );
+  )
 }
 
 function TextIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14">
-      <path
-        d="M3 3h10v2.2M8 3v10M5 13h6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <path d="M3 3h10v2.2M8 3v10M5 13h6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
-  );
+  )
 }

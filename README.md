@@ -1,6 +1,6 @@
-# vectorheart
+# VCT7
 
-A focused SVG editor for _vectorheart_ compositions — diagonals, parallels,
+A focused SVG editor for _VCT7_ compositions — diagonals, parallels,
 sharp corners, optional rounding. The editor is intentionally minimal:
 
 - **Angle snapping** — every line segment snaps to one of a per-project angle
@@ -14,36 +14,37 @@ sharp corners, optional rounding. The editor is intentionally minimal:
 - **Lines and filled shapes** — `Line` for open polylines, `Polygon` for filled
   closed shapes.
 - **SVG-as-project-file** — the SVG you save _is_ the project file. Settings
-  and control points are stored in `data-vh-*` attributes so the file is still
+  and control points are stored in `data-v7-*` attributes so the file is still
   a perfectly valid SVG that any browser/Figma/Illustrator can render.
 - **File System Access API** — `Cmd/Ctrl+S` writes back to the same file you
   opened. No download dialog on every save.
 
 ## Stack
 
-Vite 8 · React 19 · TypeScript 6 · Zustand 5 · Vitest 4 · oxlint 1 · oxfmt 0.46
+Next.js 16 (pages router, static export) · React 19 · TypeScript 6 · Zustand 5
+· Tailwind v4 · `bun test` · oxlint · oxfmt
 
 ## Run
 
 ```sh
-npm install
-npm run dev      # http://localhost:5173
+bun install
+bun run dev      # http://localhost:3000
 ```
 
 ## Scripts
 
 | Script                 | Action                                  |
 | ---------------------- | --------------------------------------- |
-| `npm run dev`          | Vite dev server                         |
-| `npm run build`        | Type-check + production build           |
-| `npm run preview`      | Preview the built bundle                |
-| `npm run typecheck`    | `tsc -b --noEmit`                       |
-| `npm run lint`         | oxlint                                  |
-| `npm run format`       | oxfmt (write)                           |
-| `npm run format:check` | oxfmt (check only)                      |
-| `npm run test`         | Vitest run                              |
-| `npm run test:watch`   | Vitest watch mode                       |
-| `npm run check`        | typecheck + lint + format check + tests |
+| `bun run dev`          | Next.js dev server                      |
+| `bun run build`        | Static export to `out/`                 |
+| `bun run start`        | Serve the built export from `out/`      |
+| `bun run typecheck`    | `tsc --noEmit`                          |
+| `bun run lint`         | oxlint                                  |
+| `bun run format`       | oxfmt (write)                           |
+| `bun run format:check` | oxfmt (check only)                      |
+| `bun run test`         | `bun test`                              |
+| `bun run test:watch`   | `bun test --watch`                      |
+| `bun run all`          | format check + lint + typecheck + tests |
 
 ## Shortcuts
 
@@ -69,17 +70,17 @@ A saved file is a normal SVG with a few extra attributes:
 
 ```xml
 <svg viewBox="0 0 800 800"
-     data-vh-snap-angles="0,45,90,135,180,225,270,315"
-     data-vh-bezier="0.25"
-     data-vh-bg="#ffffff">
+     data-v7-snap-angles="0,45,90,135,180,225,270,315"
+     data-v7-bezier="0.25"
+     data-v7-bg="#ffffff">
   <rect width="800" height="800" fill="#ffffff"/>
   <path d="M 100 100 L 200 100 L 200 200 Z"
         fill="#000" stroke="none"
-        data-vh-points="100,100 200,100 200,200"
-        data-vh-closed="true"/>
+        data-v7-points="100,100 200,100 200,200"
+        data-v7-closed="true"/>
 </svg>
 ```
 
-`d` is the rendered path with rounding baked in. `data-vh-points` keeps the
+`d` is the rendered path with rounding baked in. `data-v7-points` keeps the
 editable control polyline so the editor can re-open the file losslessly.
-`data-vh-bezier` on a path overrides the project-wide value for that shape.
+`data-v7-bezier` on a path overrides the project-wide value for that shape.

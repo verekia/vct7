@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
-import { ANGLE_PRESETS } from '../lib/snap';
-import type { PaletteColor } from '../types';
+import { useEffect, useRef, useState } from 'react'
 
-const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
+import { ANGLE_PRESETS } from '../lib/snap'
+import { useStore } from '../store'
+
+import type { PaletteColor } from '../types'
+
+const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i
 // Mirrors PALETTE_NAME_RE in svg-io.ts — keep these aligned so a name accepted
 // by the editor also round-trips through the saved file.
-const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/;
+const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/
 
 const PRESET_LABELS: Record<string, string> = {
   ortho: '90°',
@@ -14,78 +16,77 @@ const PRESET_LABELS: Record<string, string> = {
   '30': '30°',
   '60': '60°',
   '15': '15°',
-};
+}
 
-const sameAngles = (a: number[], b: number[]): boolean =>
-  a.length === b.length && a.every((v, i) => v === b[i]);
+const sameAngles = (a: number[], b: number[]): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 
 // `<input type="color">` requires `#rrggbb`; expand a 3-digit hex if needed.
 const toLongHex = (c: string): string => {
-  if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+  if (/^#[0-9a-f]{6}$/i.test(c)) return c
   if (/^#[0-9a-f]{3}$/i.test(c)) {
     return (
       '#' +
       c
         .slice(1)
         .split('')
-        .map((ch) => ch + ch)
+        .map(ch => ch + ch)
         .join('')
-    );
+    )
   }
-  return '#ffffff';
-};
+  return '#ffffff'
+}
 
 export function ProjectPanel() {
-  const settings = useStore((s) => s.settings);
-  const setSettings = useStore((s) => s.setSettings);
-  const addPaletteColor = useStore((s) => s.addPaletteColor);
-  const updatePaletteColor = useStore((s) => s.updatePaletteColor);
-  const removePaletteColor = useStore((s) => s.removePaletteColor);
-  const setBgPaletteRef = useStore((s) => s.setBgPaletteRef);
+  const settings = useStore(s => s.settings)
+  const setSettings = useStore(s => s.setSettings)
+  const addPaletteColor = useStore(s => s.addPaletteColor)
+  const updatePaletteColor = useStore(s => s.updatePaletteColor)
+  const removePaletteColor = useStore(s => s.removePaletteColor)
+  const setBgPaletteRef = useStore(s => s.setBgPaletteRef)
 
-  const bgEnabled = settings.bg !== null;
-  const [bgText, setBgText] = useState(settings.bg ?? '');
-  useEffect(() => setBgText(settings.bg ?? ''), [settings.bg]);
+  const bgEnabled = settings.bg !== null
+  const [bgText, setBgText] = useState(settings.bg ?? '')
+  useEffect(() => setBgText(settings.bg ?? ''), [settings.bg])
   // Remember the last-used color so toggling the checkbox off and back on
   // restores it instead of resetting to white.
-  const lastBgRef = useRef<string>(settings.bg ?? '#ffffff');
+  const lastBgRef = useRef<string>(settings.bg ?? '#ffffff')
   useEffect(() => {
-    if (settings.bg) lastBgRef.current = settings.bg;
-  }, [settings.bg]);
+    if (settings.bg) lastBgRef.current = settings.bg
+  }, [settings.bg])
 
-  const [widthText, setWidthText] = useState(String(settings.width));
-  const [heightText, setHeightText] = useState(String(settings.height));
-  useEffect(() => setWidthText(String(settings.width)), [settings.width]);
-  useEffect(() => setHeightText(String(settings.height)), [settings.height]);
+  const [widthText, setWidthText] = useState(String(settings.width))
+  const [heightText, setHeightText] = useState(String(settings.height))
+  useEffect(() => setWidthText(String(settings.width)), [settings.width])
+  useEffect(() => setHeightText(String(settings.height)), [settings.height])
 
-  const [vbXText, setVbXText] = useState(String(settings.viewBoxX));
-  const [vbYText, setVbYText] = useState(String(settings.viewBoxY));
-  const [vbWText, setVbWText] = useState(String(settings.viewBoxWidth));
-  const [vbHText, setVbHText] = useState(String(settings.viewBoxHeight));
-  useEffect(() => setVbXText(String(settings.viewBoxX)), [settings.viewBoxX]);
-  useEffect(() => setVbYText(String(settings.viewBoxY)), [settings.viewBoxY]);
-  useEffect(() => setVbWText(String(settings.viewBoxWidth)), [settings.viewBoxWidth]);
-  useEffect(() => setVbHText(String(settings.viewBoxHeight)), [settings.viewBoxHeight]);
+  const [vbXText, setVbXText] = useState(String(settings.viewBoxX))
+  const [vbYText, setVbYText] = useState(String(settings.viewBoxY))
+  const [vbWText, setVbWText] = useState(String(settings.viewBoxWidth))
+  const [vbHText, setVbHText] = useState(String(settings.viewBoxHeight))
+  useEffect(() => setVbXText(String(settings.viewBoxX)), [settings.viewBoxX])
+  useEffect(() => setVbYText(String(settings.viewBoxY)), [settings.viewBoxY])
+  useEffect(() => setVbWText(String(settings.viewBoxWidth)), [settings.viewBoxWidth])
+  useEffect(() => setVbHText(String(settings.viewBoxHeight)), [settings.viewBoxHeight])
 
   const viewBoxMatchesCanvas =
     settings.viewBoxX === 0 &&
     settings.viewBoxY === 0 &&
     settings.viewBoxWidth === settings.width &&
-    settings.viewBoxHeight === settings.height;
+    settings.viewBoxHeight === settings.height
 
-  const [gridSizeText, setGridSizeText] = useState(String(settings.gridSize));
-  useEffect(() => setGridSizeText(String(settings.gridSize)), [settings.gridSize]);
+  const [gridSizeText, setGridSizeText] = useState(String(settings.gridSize))
+  useEffect(() => setGridSizeText(String(settings.gridSize)), [settings.gridSize])
 
   return (
-    <section className="relative px-3.5 py-3 border-b border-line last:border-b-0">
-      <div className="flex flex-col gap-1 mb-2.5 text-[11px] text-muted tracking-[0.4px]">
-        <span className="flex justify-between items-center gap-1.5">Snap angles</span>
+    <section className="border-line relative border-b px-3.5 py-3 last:border-b-0">
+      <div className="text-muted mb-2.5 flex flex-col gap-1 text-[11px] tracking-[0.4px]">
+        <span className="flex items-center justify-between gap-1.5">Snap angles</span>
         <div className="grid grid-cols-5 gap-[3px]">
-          {Object.keys(ANGLE_PRESETS).map((key) => {
-            const isActive = sameAngles(settings.snapAngles, ANGLE_PRESETS[key]);
+          {Object.keys(ANGLE_PRESETS).map(key => {
+            const isActive = sameAngles(settings.snapAngles, ANGLE_PRESETS[key])
             const cls = isActive
               ? 'text-[11px] px-[7px] py-[2px] bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(255,59,48,0.25)]'
-              : 'text-[11px] px-[7px] py-[2px]';
+              : 'text-[11px] px-[7px] py-[2px]'
             return (
               <button
                 key={key}
@@ -95,7 +96,7 @@ export function ProjectPanel() {
               >
                 {PRESET_LABELS[key] ?? `${key}°`}
               </button>
-            );
+            )
           })}
         </div>
       </div>
@@ -110,42 +111,38 @@ export function ProjectPanel() {
           max={1}
           step={0.01}
           value={settings.bezier}
-          onChange={(e) => setSettings({ bezier: parseFloat(e.target.value) })}
+          onChange={e => setSettings({ bezier: parseFloat(e.target.value) })}
         />
       </label>
 
       <label>
         <span>Background</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
+        <div className="flex flex-wrap items-center gap-1.5">
           <input
             type="checkbox"
             checked={bgEnabled}
             title="Toggle background"
-            onChange={(e) => setSettings({ bg: e.target.checked ? lastBgRef.current : null })}
+            onChange={e => setSettings({ bg: e.target.checked ? lastBgRef.current : null })}
           />
           <input
             type="color"
             value={toLongHex(settings.bg ?? lastBgRef.current)}
             disabled={!bgEnabled}
-            onChange={(e) => setSettings({ bg: e.target.value })}
+            onChange={e => setSettings({ bg: e.target.value })}
           />
           <input
             type="text"
             className="w-[72px]"
             value={bgText}
             disabled={!bgEnabled}
-            onChange={(e) => setBgText(e.target.value)}
+            onChange={e => setBgText(e.target.value)}
             onBlur={() => {
-              if (HEX_RE.test(bgText)) setSettings({ bg: bgText });
-              else setBgText(settings.bg ?? '');
+              if (HEX_RE.test(bgText)) setSettings({ bg: bgText })
+              else setBgText(settings.bg ?? '')
             }}
           />
           {settings.palette.length > 0 && bgEnabled && (
-            <PaletteRefSelect
-              palette={settings.palette}
-              value={settings.bgRef}
-              onChange={setBgPaletteRef}
-            />
+            <PaletteRefSelect palette={settings.palette} value={settings.bgRef} onChange={setBgPaletteRef} />
           )}
         </div>
       </label>
@@ -159,16 +156,16 @@ export function ProjectPanel() {
 
       <label>
         <span title="SVG width / height attributes — output rendered size">Output size</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
+        <div className="flex flex-wrap items-center gap-1.5">
           <input
             type="number"
             min={1}
             value={widthText}
-            onChange={(e) => setWidthText(e.target.value)}
+            onChange={e => setWidthText(e.target.value)}
             onBlur={() => {
-              const v = parseFloat(widthText);
-              if (Number.isFinite(v) && v > 0) setSettings({ width: v });
-              else setWidthText(String(settings.width));
+              const v = parseFloat(widthText)
+              if (Number.isFinite(v) && v > 0) setSettings({ width: v })
+              else setWidthText(String(settings.width))
             }}
           />
           <span>×</span>
@@ -176,19 +173,15 @@ export function ProjectPanel() {
             type="number"
             min={1}
             value={heightText}
-            onChange={(e) => setHeightText(e.target.value)}
+            onChange={e => setHeightText(e.target.value)}
             onBlur={() => {
-              const v = parseFloat(heightText);
-              if (Number.isFinite(v) && v > 0) setSettings({ height: v });
-              else setHeightText(String(settings.height));
+              const v = parseFloat(heightText)
+              if (Number.isFinite(v) && v > 0) setSettings({ height: v })
+              else setHeightText(String(settings.height))
             }}
           />
           <label className="checkbox" title="Hide parts of shapes that fall outside the artboard">
-            <input
-              type="checkbox"
-              checked={settings.clip}
-              onChange={(e) => setSettings({ clip: e.target.checked })}
-            />
+            <input type="checkbox" checked={settings.clip} onChange={e => setSettings({ clip: e.target.checked })} />
             <span>Clip</span>
           </label>
         </div>
@@ -196,27 +189,27 @@ export function ProjectPanel() {
 
       <label>
         <span title="SVG viewBox — drawing coordinate space and the editor artboard">ViewBox</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
+        <div className="flex flex-wrap items-center gap-1.5">
           <input
             type="number"
             value={vbXText}
             title="x"
-            onChange={(e) => setVbXText(e.target.value)}
+            onChange={e => setVbXText(e.target.value)}
             onBlur={() => {
-              const v = parseFloat(vbXText);
-              if (Number.isFinite(v)) setSettings({ viewBoxX: v });
-              else setVbXText(String(settings.viewBoxX));
+              const v = parseFloat(vbXText)
+              if (Number.isFinite(v)) setSettings({ viewBoxX: v })
+              else setVbXText(String(settings.viewBoxX))
             }}
           />
           <input
             type="number"
             value={vbYText}
             title="y"
-            onChange={(e) => setVbYText(e.target.value)}
+            onChange={e => setVbYText(e.target.value)}
             onBlur={() => {
-              const v = parseFloat(vbYText);
-              if (Number.isFinite(v)) setSettings({ viewBoxY: v });
-              else setVbYText(String(settings.viewBoxY));
+              const v = parseFloat(vbYText)
+              if (Number.isFinite(v)) setSettings({ viewBoxY: v })
+              else setVbYText(String(settings.viewBoxY))
             }}
           />
           <input
@@ -224,11 +217,11 @@ export function ProjectPanel() {
             min={1}
             value={vbWText}
             title="width"
-            onChange={(e) => setVbWText(e.target.value)}
+            onChange={e => setVbWText(e.target.value)}
             onBlur={() => {
-              const v = parseFloat(vbWText);
-              if (Number.isFinite(v) && v > 0) setSettings({ viewBoxWidth: v });
-              else setVbWText(String(settings.viewBoxWidth));
+              const v = parseFloat(vbWText)
+              if (Number.isFinite(v) && v > 0) setSettings({ viewBoxWidth: v })
+              else setVbWText(String(settings.viewBoxWidth))
             }}
           />
           <span>×</span>
@@ -237,16 +230,16 @@ export function ProjectPanel() {
             min={1}
             value={vbHText}
             title="height"
-            onChange={(e) => setVbHText(e.target.value)}
+            onChange={e => setVbHText(e.target.value)}
             onBlur={() => {
-              const v = parseFloat(vbHText);
-              if (Number.isFinite(v) && v > 0) setSettings({ viewBoxHeight: v });
-              else setVbHText(String(settings.viewBoxHeight));
+              const v = parseFloat(vbHText)
+              if (Number.isFinite(v) && v > 0) setSettings({ viewBoxHeight: v })
+              else setVbHText(String(settings.viewBoxHeight))
             }}
           />
           <button
             type="button"
-            className="text-[11px] px-[7px] py-[2px]"
+            className="px-[7px] py-[2px] text-[11px]"
             disabled={viewBoxMatchesCanvas}
             title="Reset viewBox to 0 0 (output width) (output height)"
             onClick={() =>
@@ -263,30 +256,30 @@ export function ProjectPanel() {
         </div>
       </label>
 
-      <div className="flex flex-col gap-1 mb-2.5 text-[11px] text-muted tracking-[0.4px]">
-        <span className="flex justify-between items-center gap-1.5">Grid</span>
-        <div className="flex gap-1.5 items-center flex-wrap">
+      <div className="text-muted mb-2.5 flex flex-col gap-1 text-[11px] tracking-[0.4px]">
+        <span className="flex items-center justify-between gap-1.5">Grid</span>
+        <div className="flex flex-wrap items-center gap-1.5">
           <input
             type="number"
             min={1}
             style={{ width: 60 }}
             value={gridSizeText}
-            onChange={(e) => {
-              const next = e.target.value;
-              setGridSizeText(next);
-              const v = parseFloat(next);
-              if (Number.isFinite(v) && v > 0) setSettings({ gridSize: v });
+            onChange={e => {
+              const next = e.target.value
+              setGridSizeText(next)
+              const v = parseFloat(next)
+              if (Number.isFinite(v) && v > 0) setSettings({ gridSize: v })
             }}
             onBlur={() => {
-              const v = parseFloat(gridSizeText);
-              if (!Number.isFinite(v) || v <= 0) setGridSizeText(String(settings.gridSize));
+              const v = parseFloat(gridSizeText)
+              if (!Number.isFinite(v) || v <= 0) setGridSizeText(String(settings.gridSize))
             }}
           />
           <label className="checkbox" title="Show grid (G)">
             <input
               type="checkbox"
               checked={settings.gridVisible}
-              onChange={(e) => setSettings({ gridVisible: e.target.checked })}
+              onChange={e => setSettings({ gridVisible: e.target.checked })}
             />
             <span>Show</span>
           </label>
@@ -294,17 +287,17 @@ export function ProjectPanel() {
             <input
               type="checkbox"
               checked={settings.gridSnap}
-              onChange={(e) => setSettings({ gridSnap: e.target.checked })}
+              onChange={e => setSettings({ gridSnap: e.target.checked })}
             />
             <span>Snap</span>
           </label>
         </div>
       </div>
     </section>
-  );
+  )
 }
 
-const DEFAULT_NEW_PALETTE_COLOR = '#888888';
+const DEFAULT_NEW_PALETTE_COLOR = '#888888'
 
 /**
  * Suggest the next default palette name when the user hits "Add" — `color1`,
@@ -312,13 +305,13 @@ const DEFAULT_NEW_PALETTE_COLOR = '#888888';
  * collide with an existing one.
  */
 const nextPaletteName = (palette: PaletteColor[]): string => {
-  const taken = new Set(palette.map((p) => p.name));
+  const taken = new Set(palette.map(p => p.name))
   for (let i = 1; i < 1000; i++) {
-    const candidate = `color${i}`;
-    if (!taken.has(candidate)) return candidate;
+    const candidate = `color${i}`
+    if (!taken.has(candidate)) return candidate
   }
-  return `color${palette.length + 1}`;
-};
+  return `color${palette.length + 1}`
+}
 
 function PaletteSection({
   palette,
@@ -326,41 +319,41 @@ function PaletteSection({
   updateColor,
   removeColor,
 }: {
-  palette: PaletteColor[];
-  addColor: (name: string, color: string) => void;
-  updateColor: (oldName: string, next: PaletteColor) => void;
-  removeColor: (name: string) => void;
+  palette: PaletteColor[]
+  addColor: (name: string, color: string) => void
+  updateColor: (oldName: string, next: PaletteColor) => void
+  removeColor: (name: string) => void
 }) {
   return (
-    <div className="flex flex-col gap-1 mb-2.5 text-[11px] text-muted tracking-[0.4px]">
-      <span className="flex justify-between items-center gap-1.5">
+    <div className="text-muted mb-2.5 flex flex-col gap-1 text-[11px] tracking-[0.4px]">
+      <span className="flex items-center justify-between gap-1.5">
         <span>Palette</span>
         <button
           type="button"
-          className="text-[11px] px-[7px] py-[2px]"
+          className="px-[7px] py-[2px] text-[11px]"
           onClick={() => addColor(nextPaletteName(palette), DEFAULT_NEW_PALETTE_COLOR)}
         >
           + Add
         </button>
       </span>
       {palette.length === 0 ? (
-        <span className="text-[10px] text-muted-2 normal-case tracking-normal leading-snug">
+        <span className="text-muted-2 text-[10px] leading-snug tracking-normal normal-case">
           No palette colors yet. Add one to reference it from shape fills and strokes.
         </span>
       ) : (
         <div className="flex flex-col gap-1">
-          {palette.map((entry) => (
+          {palette.map(entry => (
             <PaletteRow
               key={entry.name}
               entry={entry}
-              onChange={(next) => updateColor(entry.name, next)}
+              onChange={next => updateColor(entry.name, next)}
               onRemove={() => removeColor(entry.name)}
             />
           ))}
         </div>
       )}
     </div>
-  );
+  )
 }
 
 function PaletteRow({
@@ -368,39 +361,39 @@ function PaletteRow({
   onChange,
   onRemove,
 }: {
-  entry: PaletteColor;
-  onChange: (next: PaletteColor) => void;
-  onRemove: () => void;
+  entry: PaletteColor
+  onChange: (next: PaletteColor) => void
+  onRemove: () => void
 }) {
-  const [nameDraft, setNameDraft] = useState(entry.name);
-  const [colorDraft, setColorDraft] = useState(entry.color);
+  const [nameDraft, setNameDraft] = useState(entry.name)
+  const [colorDraft, setColorDraft] = useState(entry.color)
   // Resync local drafts when the underlying entry changes (rename via another
   // input, color change committed, etc.). The drafts are short-lived edit
   // buffers — the canonical value is what the store holds.
-  useEffect(() => setNameDraft(entry.name), [entry.name]);
-  useEffect(() => setColorDraft(entry.color), [entry.color]);
+  useEffect(() => setNameDraft(entry.name), [entry.name])
+  useEffect(() => setColorDraft(entry.color), [entry.color])
   return (
-    <div className="flex gap-1.5 items-center">
+    <div className="flex items-center gap-1.5">
       <input
         type="color"
         value={toLongHex(entry.color)}
-        onChange={(e) => {
-          setColorDraft(e.target.value);
-          onChange({ name: entry.name, color: e.target.value });
+        onChange={e => {
+          setColorDraft(e.target.value)
+          onChange({ name: entry.name, color: e.target.value })
         }}
       />
       <input
         type="text"
-        className="flex-1 min-w-0"
+        className="min-w-0 flex-1"
         value={nameDraft}
-        onChange={(e) => setNameDraft(e.target.value)}
+        onChange={e => setNameDraft(e.target.value)}
         onBlur={() => {
-          const trimmed = nameDraft.trim();
+          const trimmed = nameDraft.trim()
           if (trimmed && trimmed !== entry.name && PALETTE_NAME_RE.test(trimmed)) {
-            onChange({ name: trimmed, color: entry.color });
+            onChange({ name: trimmed, color: entry.color })
           } else if (trimmed !== entry.name) {
             // Reject invalid renames silently — easier than a toast for now.
-            setNameDraft(entry.name);
+            setNameDraft(entry.name)
           }
         }}
       />
@@ -408,25 +401,25 @@ function PaletteRow({
         type="text"
         className="w-[72px]"
         value={colorDraft}
-        onChange={(e) => setColorDraft(e.target.value)}
+        onChange={e => setColorDraft(e.target.value)}
         onBlur={() => {
           if (HEX_RE.test(colorDraft) && colorDraft !== entry.color) {
-            onChange({ name: entry.name, color: colorDraft });
+            onChange({ name: entry.name, color: colorDraft })
           } else if (colorDraft !== entry.color) {
-            setColorDraft(entry.color);
+            setColorDraft(entry.color)
           }
         }}
       />
       <button
         type="button"
-        className="text-[11px] px-[7px] py-[2px]"
+        className="px-[7px] py-[2px] text-[11px]"
         title="Remove color (shapes referencing it keep the resolved hex)"
         onClick={onRemove}
       >
         ×
       </button>
     </div>
-  );
+  )
 }
 
 /**
@@ -439,23 +432,23 @@ export function PaletteRefSelect({
   value,
   onChange,
 }: {
-  palette: PaletteColor[];
-  value: string | undefined;
-  onChange: (name: string | undefined) => void;
+  palette: PaletteColor[]
+  value: string | undefined
+  onChange: (name: string | undefined) => void
 }) {
   return (
     <select
       className="text-[11px]"
       title="Link to palette color"
       value={value ?? ''}
-      onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+      onChange={e => onChange(e.target.value === '' ? undefined : e.target.value)}
     >
       <option value="">— off-palette —</option>
-      {palette.map((p) => (
+      {palette.map(p => (
         <option key={p.name} value={p.name}>
           {p.name}
         </option>
       ))}
     </select>
-  );
+  )
 }

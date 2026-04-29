@@ -1,14 +1,30 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "printWidth": 100,
+  "printWidth": 120,
   "tabWidth": 2,
   "useTabs": false,
-  "semi": true,
+  "semi": false,
   "singleQuote": true,
-  "jsxSingleQuote": false,
   "trailingComma": "all",
+  "arrowParens": "avoid",
   "bracketSpacing": true,
-  "arrowParens": "always",
-  "endOfLine": "lf",
-  "ignorePatterns": ["dist", "node_modules", "coverage"]
+  "experimentalSortImports": {
+    "customGroups": [
+      {
+        "groupName": "react",
+        "elementNamePattern": ["react"]
+      }
+    ],
+    "groups": [
+      ["react"],
+      ["builtin", "external"],
+      ["parent", "sibling", "index"],
+      ["type-external"],
+      ["type-parent", "type-sibling", "type-index"]
+    ],
+    "newlinesBetween": true,
+    "ignoreCase": true
+  },
+  "experimentalTailwindcss": {},
+  "ignorePatterns": ["node_modules", "dist", "out", ".next"]
 }

@@ -2,14 +2,15 @@
 
 ## Project
 
-**vectorheart** is a focused SVG editor for diagonal/parallel/sharp-corner
+**VCT7** is a focused SVG editor for diagonal/parallel/sharp-corner
 compositions: angle snapping, global bezier rounding (with per-shape override),
 arc + glyph + animation primitives, and "SVG-as-project-file" round-tripping
-via `data-vh-*` attributes. The saved file is a perfectly valid SVG any
-browser/Figma/Illustrator can render — opening it in vectorheart restores the
+via `data-v7-*` attributes. The saved file is a perfectly valid SVG any
+browser/Figma/Illustrator can render — opening it in VCT7 restores the
 full editable project losslessly.
 
-Stack: Vite 8 · React 19 · TypeScript 6 · Zustand 5 · Vitest 4 · oxlint · oxfmt.
+Stack: Next.js 16 (pages router, static export) · React 19 (with React Compiler)
+· TypeScript 6 · Zustand 5 · Tailwind v4 (PostCSS) · `bun test` · oxlint · oxfmt.
 
 ## Package manager: Bun
 
@@ -18,21 +19,34 @@ generate or commit a `package-lock.json` or `yarn.lock`.
 
 ```sh
 bun install
-bun run dev          # http://localhost:5173
+bun run dev          # http://localhost:3000
 bun run all          # format:check + lint + typecheck + test (run before committing)
 ```
 
-Other scripts (all defined in `package.json`): `build`, `preview`, `typecheck`,
-`lint`, `format`, `format:check`, `test`, `test:watch`.
+Other scripts (all defined in `package.json`): `build` (produces `out/` static
+export), `start`, `typecheck`, `lint`, `format`, `format:check`, `test`,
+`test:watch`.
+
+Deployment: `Dockerfile` builds the static export and serves it via nginx
+(see `nginx.conf`). `deploy.sh` builds for arm64, ships the image to the
+`midgar` host, and runs `docker compose up -d vct7`.
 
 ## Layout
 
+- `pages/_app.tsx` — Next.js app shell; imports `global.css`.
+- `pages/index.tsx` — root page; lazy-loads `src/App` with `ssr: false` since
+  the editor relies on browser APIs (File System API, drag/drop, DOM globals).
+- `global.css` — Tailwind v4 entry + design tokens.
+- `src/App.tsx` — top-level editor component.
 - `src/types.ts` — `Shape`, `ProjectSettings`, animation/arc/glyph types.
 - `src/store.ts` — Zustand store; single source of truth for shapes + settings + history.
 - `src/components/` — React UI (`Canvas`, `ShapePanel`, `LayerPanel`, `Toolbar`, …).
 - `src/lib/` — pure helpers: `geometry`, `svg-io`, `transform`, `blend`, `animation`, `snap`, …
 - `src/hooks/` — interaction + keyboard hooks.
-- Tests live next to their subject (`*.test.ts`), run via Vitest + happy-dom.
+- Tests live next to their subject (`*.test.ts`), run via `bun test`. DOM
+  globals are registered for tests via `bun-test-setup.ts`
+  (`@happy-dom/global-registrator`), preloaded through `bunfig.toml`. The DOM
+  is needed because some lib code uses `DOMParser` at runtime.
 
 ---
 
