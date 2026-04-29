@@ -12,8 +12,10 @@ import type {
   PaletteColor,
   Shape,
   SpinSpec,
+  StrokeLinecap,
+  StrokeLinejoin,
 } from '../types';
-import { BLEND_MODES, EASINGS } from '../types';
+import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types';
 
 const blendValue = (b: BlendMode | undefined): BlendMode => b ?? 'normal';
 const blendPatch = (v: string): Partial<Shape> => ({
@@ -183,6 +185,128 @@ export function ShapePanel() {
 const APPLY_BTN =
   'text-[11px] px-[7px] py-[2px] bg-[#2563eb] text-white border-[#3b82f6] hover:bg-[#1d4ed8] hover:border-[#60a5fa] hover:text-white';
 
+/**
+ * Linejoin / linecap / dasharray inputs. Visibility is gated by the caller
+ * (only meaningful when stroke isn't 'none'); join/cap selects are hidden for
+ * full circles since `<circle>` has no joins to style.
+ *
+ * `mixed` flags are passed in from the multi-shape caller — when true, the
+ * select shows a "Mixed" placeholder option until the user picks a value, at
+ * which point that uniform value is written across the selection.
+ *
+ * Dasharray is a free-form text input so users can enter any valid SVG
+ * dasharray syntax (e.g. `"4 2"`, `"1,3"`, `"5 2 1 2"`); we forward it
+ * verbatim and clear it on empty/blank input.
+ */
+function StrokeStyleControls({
+  linejoin,
+  linecap,
+  dasharray,
+  strokeUnderFill,
+  showJoinCap,
+  linejoinMixed,
+  linecapMixed,
+  dasharrayMixed,
+  paintOrderMixed,
+  onLinejoin,
+  onLinecap,
+  onDasharray,
+  onStrokeUnderFill,
+}: {
+  linejoin: StrokeLinejoin;
+  linecap: StrokeLinecap;
+  dasharray: string;
+  strokeUnderFill: boolean;
+  showJoinCap: boolean;
+  linejoinMixed?: boolean;
+  linecapMixed?: boolean;
+  dasharrayMixed?: boolean;
+  paintOrderMixed?: boolean;
+  onLinejoin: (v: StrokeLinejoin) => void;
+  onLinecap: (v: StrokeLinecap) => void;
+  onDasharray: (v: string) => void;
+  onStrokeUnderFill: (v: boolean) => void;
+}) {
+  const [dashText, setDashText] = useState(dasharray);
+  const dashKey = dasharrayMixed ? '__mixed__' : dasharray;
+  useEffect(() => {
+    setDashText(dasharrayMixed ? '' : dasharray);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashKey]);
+
+  return (
+    <>
+      {showJoinCap && (
+        <>
+          <label>
+            <span>Line join</span>
+            <select
+              value={linejoinMixed ? '' : linejoin}
+              onChange={(e) => onLinejoin(e.target.value as StrokeLinejoin)}
+            >
+              {linejoinMixed && (
+                <option value="" disabled>
+                  Mixed
+                </option>
+              )}
+              {STROKE_LINEJOINS.map((j) => (
+                <option key={j} value={j}>
+                  {j}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Line cap</span>
+            <select
+              value={linecapMixed ? '' : linecap}
+              onChange={(e) => onLinecap(e.target.value as StrokeLinecap)}
+            >
+              {linecapMixed && (
+                <option value="" disabled>
+                  Mixed
+                </option>
+              )}
+              {STROKE_LINECAPS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
+      <label>
+        <span>Dash array</span>
+        <input
+          type="text"
+          value={dashText}
+          placeholder={dasharrayMixed ? 'Mixed' : 'solid (e.g. 4 2)'}
+          onChange={(e) => setDashText(e.target.value)}
+          onBlur={() => onDasharray(dashText.trim())}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
+      </label>
+      <label>
+        <span className="flex gap-1.5 items-center flex-wrap">
+          <span style={{ flex: 1 }}>Stroke under fill</span>
+          <input
+            type="checkbox"
+            checked={!paintOrderMixed && strokeUnderFill}
+            ref={(el) => {
+              if (el) el.indeterminate = !!paintOrderMixed;
+            }}
+            onChange={(e) => onStrokeUnderFill(e.target.checked)}
+            title="Paint stroke under the fill (SVG paint-order=stroke). Useful for outlined text and chunky icon strokes."
+          />
+        </span>
+      </label>
+    </>
+  );
+}
+
 const opacityValue = (s: Shape): number => s.opacity ?? 1;
 
 function ShapePanelInner({
@@ -320,6 +444,22 @@ function ShapePanelInner({
           />
         )}
       </label>
+
+      {shape.stroke !== 'none' && (
+        <StrokeStyleControls
+          linejoin={shape.strokeLinejoin ?? 'round'}
+          linecap={shape.strokeLinecap ?? 'round'}
+          dasharray={shape.strokeDasharray ?? ''}
+          strokeUnderFill={shape.paintOrder === 'stroke'}
+          showJoinCap={!(isCircle && !partial)}
+          onLinejoin={(v) =>
+            updateShape(shape.id, { strokeLinejoin: v === 'round' ? undefined : v })
+          }
+          onLinecap={(v) => updateShape(shape.id, { strokeLinecap: v === 'round' ? undefined : v })}
+          onDasharray={(v) => updateShape(shape.id, { strokeDasharray: v === '' ? undefined : v })}
+          onStrokeUnderFill={(v) => updateShape(shape.id, { paintOrder: v ? 'stroke' : undefined })}
+        />
+      )}
 
       {showFill && (
         <label>
@@ -1055,6 +1195,10 @@ function MultiShapePanel({
   const opacities = shapes.map(opacityValue);
   const rotations = shapes.map(shapeRotation);
   const scales = shapes.map(shapeScale);
+  const linejoins = shapes.map((s) => s.strokeLinejoin ?? 'round');
+  const linecaps = shapes.map((s) => s.strokeLinecap ?? 'round');
+  const dasharrays = shapes.map((s) => s.strokeDasharray ?? '');
+  const paintOrders = shapes.map((s) => s.paintOrder === 'stroke');
   const fillRefs = shapes.map((s) => s.fillRef);
   const strokeRefs = shapes.map((s) => s.strokeRef);
   const strokeUniform = allSame(strokes);
@@ -1065,6 +1209,10 @@ function MultiShapePanel({
   const opacityUniform = allSame(opacities);
   const rotationUniform = allSame(rotations);
   const scaleUniform = allSame(scales);
+  const linejoinUniform = allSame(linejoins);
+  const linecapUniform = allSame(linecaps);
+  const dasharrayUniform = allSame(dasharrays);
+  const paintOrderUniform = allSame(paintOrders);
   const fillRefUniform = allSame(fillRefs);
   const strokeRefUniform = allSame(strokeRefs);
 
@@ -1162,6 +1310,24 @@ function MultiShapePanel({
           />
         )}
       </label>
+
+      {strokes.some((s) => s !== 'none') && (
+        <StrokeStyleControls
+          linejoin={linejoinUniform ? linejoins[0] : 'round'}
+          linecap={linecapUniform ? linecaps[0] : 'round'}
+          dasharray={dasharrayUniform ? dasharrays[0] : ''}
+          strokeUnderFill={paintOrderUniform ? paintOrders[0] : false}
+          showJoinCap={kind !== 'circle'}
+          linejoinMixed={!linejoinUniform}
+          linecapMixed={!linecapUniform}
+          dasharrayMixed={!dasharrayUniform}
+          paintOrderMixed={!paintOrderUniform}
+          onLinejoin={(v) => applyAll({ strokeLinejoin: v === 'round' ? undefined : v })}
+          onLinecap={(v) => applyAll({ strokeLinecap: v === 'round' ? undefined : v })}
+          onDasharray={(v) => applyAll({ strokeDasharray: v === '' ? undefined : v })}
+          onStrokeUnderFill={(v) => applyAll({ paintOrder: v ? 'stroke' : undefined })}
+        />
+      )}
 
       {showFill && (
         <label>

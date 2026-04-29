@@ -132,6 +132,53 @@ describe('parseProject round-trip', () => {
     expect(parsed.shapes[0].scale).toBe(2);
   });
 
+  // stroke-linejoin / stroke-linecap default to round; explicit non-default
+  // values round-trip, and stroke-dasharray rides through verbatim. Round-only
+  // values are kept off the in-memory shape so toggling between defaults and
+  // overrides behaves predictably.
+  it('round-trips stroke-linejoin / linecap / dasharray', () => {
+    const shape: Shape = {
+      ...sampleShapes[1],
+      strokeLinejoin: 'bevel',
+      strokeLinecap: 'square',
+      strokeDasharray: '4 2',
+    };
+    const text = serializeProject(sampleSettings, [shape]);
+    expect(text).toContain('stroke-linejoin="bevel"');
+    expect(text).toContain('stroke-linecap="square"');
+    expect(text).toContain('stroke-dasharray="4 2"');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].strokeLinejoin).toBe('bevel');
+    expect(parsed.shapes[0].strokeLinecap).toBe('square');
+    expect(parsed.shapes[0].strokeDasharray).toBe('4 2');
+  });
+
+  it('omits stroke-dasharray when unset and treats round join/cap as default', () => {
+    const text = serializeProject(sampleSettings, [sampleShapes[1]]);
+    expect(text).not.toContain('stroke-dasharray');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].strokeLinejoin).toBeUndefined();
+    expect(parsed.shapes[0].strokeLinecap).toBeUndefined();
+    expect(parsed.shapes[0].strokeDasharray).toBeUndefined();
+  });
+
+  // paint-order=stroke flips stroke under fill; default order omits the attr
+  // entirely so unrelated files don't pick it up on re-save.
+  it('round-trips paint-order="stroke"', () => {
+    const shape: Shape = { ...sampleShapes[1], paintOrder: 'stroke' };
+    const text = serializeProject(sampleSettings, [shape]);
+    expect(text).toContain('paint-order="stroke"');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].paintOrder).toBe('stroke');
+  });
+
+  it('omits paint-order when default (fill first)', () => {
+    const text = serializeProject(sampleSettings, [sampleShapes[1]]);
+    expect(text).not.toContain('paint-order');
+    const parsed = parseProject(text);
+    expect(parsed.shapes[0].paintOrder).toBeUndefined();
+  });
+
   it('omits rotation/scale attrs at identity', () => {
     const text = serializeProject(sampleSettings, [sampleShapes[0]]);
     expect(text).not.toContain('data-vh-rotation');
