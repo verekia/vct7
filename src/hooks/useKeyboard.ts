@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 
+import { copyShapes, getClipboard } from '../lib/clipboard'
 import { newProject, openFile, saveFile, saveFileAs } from '../lib/file-ops'
 import { useStore } from '../store'
 
@@ -39,6 +40,34 @@ export function useKeyboard() {
       if (meta && ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y' || e.key === 'Y')) {
         e.preventDefault()
         useStore.getState().redo()
+        return
+      }
+      // Cmd/Ctrl+D — duplicate the selected shapes in place. Skipped inside
+      // editable targets so a stray binding doesn't fire while typing.
+      if (meta && (e.key === 'd' || e.key === 'D')) {
+        if (isEditableTarget(e.target)) return
+        e.preventDefault()
+        const state = useStore.getState()
+        if (state.selectedShapeIds.length > 0) state.duplicateShapes(state.selectedShapeIds)
+        return
+      }
+      // Cmd/Ctrl+C / +V — shape clipboard. Guarded against editable targets
+      // so users can still copy / paste text inside inputs.
+      if (meta && (e.key === 'c' || e.key === 'C')) {
+        if (isEditableTarget(e.target)) return
+        e.preventDefault()
+        const state = useStore.getState()
+        if (state.selectedShapeIds.length > 0) {
+          const ids = new Set(state.selectedShapeIds)
+          copyShapes(state.shapes.filter(sh => ids.has(sh.id)))
+        }
+        return
+      }
+      if (meta && (e.key === 'v' || e.key === 'V')) {
+        if (isEditableTarget(e.target)) return
+        e.preventDefault()
+        const tpl = getClipboard()
+        if (tpl.length > 0) useStore.getState().addShapes(tpl)
         return
       }
 

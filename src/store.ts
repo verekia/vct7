@@ -184,6 +184,20 @@ export interface AppState {
   moveVertices: (shapeId: string, items: { index: number; point: Point }[]) => void
   deleteShape: (id: string) => void
   deleteShapes: (ids: string[]) => void
+  /**
+   * Duplicate `ids` in place — each copy is inserted immediately after its
+   * source so it sits one step above in z-order. Copies share every property
+   * (geometry, fill, animation, …) but receive fresh ids. Selection moves to
+   * the copies. Returns the new ids in the same order as `ids`, which lets
+   * callers (alt-drag) immediately drive the duplicates without a re-read.
+   */
+  duplicateShapes: (ids: string[]) => string[]
+  /**
+   * Append `shapes` to the document with fresh ids — used by paste, where
+   * the clipboard holds shape templates whose original ids may collide or
+   * have been deleted. Selection moves to the appended shapes.
+   */
+  addShapes: (shapes: Shape[]) => void
   deleteVertex: (shapeId: string, index: number) => void
   /**
    * Delete every selected vertex from its owning shape. If a shape ends up
@@ -579,6 +593,63 @@ export const useStore = create<AppState>(set => ({
         selectedShapeIds: s.selectedShapeIds.filter(x => !idSet.has(x)),
         selectionAnchorId: s.selectionAnchorId && idSet.has(s.selectionAnchorId) ? null : s.selectionAnchorId,
         selectedVertices: s.selectedVertices.filter(v => !idSet.has(v.shapeId)),
+        dirty: true,
+      }
+    }),
+  duplicateShapes: ids => {
+    // Captured by the set callback; returned to the caller after set runs
+    // synchronously. Lets alt-drag start translating the duplicates without
+    // a follow-up store read.
+    const newIds: string[] = []
+    set(s => {
+      if (ids.length === 0) return s
+      const idSet = new Set(ids)
+      const idToNew = new Map<string, string>()
+      const next: Shape[] = []
+      for (const sh of s.shapes) {
+        next.push(sh)
+        if (!idSet.has(sh.id)) continue
+        const newId = makeId()
+        idToNew.set(sh.id, newId)
+        // Clone the points array so later edits to the source don't leak
+        // through the shared reference. Other nested fields (glyphs, arc,
+        // animation, …) are treated immutably elsewhere, so sharing is safe.
+        next.push({
+          ...sh,
+          id: newId,
+          points: sh.points.map(p => [p[0], p[1]] as Point),
+        })
+      }
+      for (const id of ids) {
+        const ni = idToNew.get(id)
+        if (ni) newIds.push(ni)
+      }
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        selectedShapeIds: newIds.slice(),
+        selectionAnchorId: newIds.length ? newIds[newIds.length - 1] : null,
+        selectedVertices: [],
+        dirty: true,
+      }
+    })
+    return newIds
+  },
+  addShapes: shapes =>
+    set(s => {
+      if (shapes.length === 0) return s
+      const added = shapes.map(sh => ({
+        ...sh,
+        id: makeId(),
+        points: sh.points.map(p => [p[0], p[1]] as Point),
+      }))
+      const newIds = added.map(sh => sh.id)
+      return {
+        ...pushSnapshot(s),
+        shapes: [...s.shapes, ...added],
+        selectedShapeIds: newIds,
+        selectionAnchorId: newIds[newIds.length - 1],
+        selectedVertices: [],
         dirty: true,
       }
     }),

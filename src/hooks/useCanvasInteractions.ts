@@ -57,6 +57,8 @@ interface PendingSelectState {
   startCanvas: Point
   shift: boolean
   meta: boolean
+  /** Alt/Option held — drag duplicates the shape(s) instead of moving them. */
+  alt: boolean
   /** Once true, the pointer has moved past threshold and is committed to a drag. */
   becameDrag: boolean
 }
@@ -324,6 +326,7 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         startCanvas: snapped,
         shift: e.shiftKey,
         meta: e.metaKey || e.ctrlKey,
+        alt: e.altKey,
         becameDrag: false,
       }
     }
@@ -395,6 +398,35 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         pendingSelect.becameDrag = true
 
         const state = useStore.getState()
+        // Alt-drag duplicates the shape(s) and drags the duplicates so the
+        // originals stay anchored. Hitting a selection-member duplicates the
+        // whole selection; hitting a non-member duplicates just that shape so
+        // the gesture matches the visible click target. duplicateShapes
+        // already pushes a history snapshot — moveShapes won't push, so the
+        // whole alt-drag collapses to one undo step.
+        if (pendingSelect.alt && pendingSelect.shapeId) {
+          const sourceIds = pendingSelect.hitSelected ? state.selectedShapeIds.slice() : [pendingSelect.shapeId]
+          const newIds = state.duplicateShapes(sourceIds)
+          if (newIds.length > 0) {
+            const idSet = new Set(newIds)
+            const startPoints = new Map<string, Point[]>()
+            for (const sh of useStore.getState().shapes) {
+              if (idSet.has(sh.id)) {
+                startPoints.set(
+                  sh.id,
+                  sh.points.map(p => [p[0], p[1]] as Point),
+                )
+              }
+            }
+            draggingShapes = {
+              ids: newIds,
+              startCursor: pendingSelect.startCanvas,
+              startPoints,
+            }
+            pendingSelect = null
+            return
+          }
+        }
         if (pendingSelect.hitSelected && !pendingSelect.shift && !pendingSelect.meta) {
           // Drag-move the entire current selection together.
           const ids = state.selectedShapeIds.slice()
