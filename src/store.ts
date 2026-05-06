@@ -24,6 +24,31 @@ interface HistoryEntry {
   pushedAt: number
 }
 
+/**
+ * Drop overrides for indices in `dropped` and shift the rest down so the
+ * map stays aligned with the new compacted points array. Returns undefined
+ * when the result is empty so the shape stays tidy.
+ */
+const reindexPointBeziers = (
+  overrides: Record<number, number> | undefined,
+  dropped: ReadonlySet<number>,
+): Record<number, number> | undefined => {
+  if (!overrides) return undefined
+  const sortedDrops = [...dropped].toSorted((a, b) => a - b)
+  const next: Record<number, number> = {}
+  for (const [k, v] of Object.entries(overrides)) {
+    const i = Number(k)
+    if (dropped.has(i)) continue
+    let shift = 0
+    for (const d of sortedDrops) {
+      if (d < i) shift++
+      else break
+    }
+    next[i - shift] = v
+  }
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
 const MAX_HISTORY = 100
 /** Repeated pushes with the same coalesceKey within this window replace the top entry. */
 const COALESCE_WINDOW_MS = 800
@@ -571,10 +596,17 @@ export const useStore = create<AppState>(set => ({
           dirty: true,
         }
       }
+      const dropped = new Set([index])
       return {
         ...pushSnapshot(s),
         shapes: s.shapes.map(sh =>
-          sh.id !== shapeId ? sh : { ...sh, points: sh.points.filter((_, i) => i !== index) },
+          sh.id !== shapeId
+            ? sh
+            : {
+                ...sh,
+                points: sh.points.filter((_, i) => i !== index),
+                pointBezierOverrides: reindexPointBeziers(sh.pointBezierOverrides, dropped),
+              },
         ),
         selectedVertices: [],
         dirty: true,
@@ -608,7 +640,11 @@ export const useStore = create<AppState>(set => ({
           removedShapeIds.add(sh.id)
           continue
         }
-        nextShapes.push({ ...sh, points: kept })
+        nextShapes.push({
+          ...sh,
+          points: kept,
+          pointBezierOverrides: reindexPointBeziers(sh.pointBezierOverrides, drop),
+        })
       }
       return {
         ...pushSnapshot(s),

@@ -82,18 +82,43 @@ export function corner(prev: Point, cur: Point, next: Point, t: number): CornerS
 /**
  * Render a polyline (or polygon) as an SVG `d` attribute, with corners rounded
  * by `bezier` ∈ [0, 1]. 0 produces straight `L` segments only.
+ *
+ * `perPointBezier` is an optional sparse override per vertex index — wins over
+ * the layer-level `bezier` for that single corner. Out-of-range or undefined
+ * entries fall through to `bezier`.
  */
-export function pointsToPath(points: Point[], closed: boolean, bezier: number): string {
+export function pointsToPath(
+  points: Point[],
+  closed: boolean,
+  bezier: number,
+  perPointBezier?: { readonly [k: number]: number | undefined },
+): string {
   if (points.length === 0) return ''
   if (points.length === 1) {
     const [x, y] = points[0]
     return `M ${fmt(x)} ${fmt(y)}`
   }
 
-  const t = Math.max(0, Math.min(1, bezier || 0))
+  const baseT = Math.max(0, Math.min(1, bezier || 0))
   const n = points.length
+  const cornerT = (i: number): number => {
+    const ov = perPointBezier?.[i]
+    if (ov === undefined) return baseT
+    return Math.max(0, Math.min(1, ov))
+  }
 
-  if (t <= 0) {
+  // Skip the rounded path entirely only when no corner has any rounding.
+  let anyCurve = baseT > 0
+  if (!anyCurve && perPointBezier) {
+    for (let i = 0; i < n; i++) {
+      const ov = perPointBezier[i]
+      if (ov !== undefined && ov > 0) {
+        anyCurve = true
+        break
+      }
+    }
+  }
+  if (!anyCurve) {
     let d = `M ${fmt(points[0][0])} ${fmt(points[0][1])}`
     for (let i = 1; i < n; i++) {
       d += ` L ${fmt(points[i][0])} ${fmt(points[i][1])}`
@@ -108,7 +133,7 @@ export function pointsToPath(points: Point[], closed: boolean, bezier: number): 
       const prev = points[(i - 1 + n) % n]
       const cur = points[i]
       const next = points[(i + 1) % n]
-      corners.push(corner(prev, cur, next, t))
+      corners.push(corner(prev, cur, next, cornerT(i)))
     }
     let d = `M ${fmt(corners[0].b[0])} ${fmt(corners[0].b[1])}`
     for (let i = 1; i < n; i++) {
@@ -125,7 +150,7 @@ export function pointsToPath(points: Point[], closed: boolean, bezier: number): 
 
   let d = `M ${fmt(points[0][0])} ${fmt(points[0][1])}`
   for (let i = 1; i < n - 1; i++) {
-    const c = corner(points[i - 1], points[i], points[i + 1], t)
+    const c = corner(points[i - 1], points[i], points[i + 1], cornerT(i))
     d += ` L ${fmt(c.a[0])} ${fmt(c.a[1])}`
     d += ` Q ${fmt(c.control[0])} ${fmt(c.control[1])} ${fmt(c.b[0])} ${fmt(c.b[1])}`
   }

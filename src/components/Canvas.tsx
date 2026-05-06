@@ -516,7 +516,7 @@ function ShapeNode({
       </g>
     )
   }
-  const d = pointsToPath(shape.points, shape.closed, bezier)
+  const d = pointsToPath(shape.points, shape.closed, bezier, shape.pointBezierOverrides)
   return (
     <g data-shape-id={shape.id} transform={transformAttr}>
       <path

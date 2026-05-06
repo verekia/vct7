@@ -74,6 +74,13 @@ export interface Shape {
   strokeRef?: string
   /** When null, the project's global bezier value applies. */
   bezierOverride: number | null
+  /**
+   * Sparse per-vertex bezier override map (`pointIndex → t`). Wins over the
+   * layer's `bezierOverride` and the project's global bezier for the corner
+   * at that vertex. Endpoints of open polylines have no corner — entries on
+   * those indices are stored faithfully but render as a no-op.
+   */
+  pointBezierOverrides?: Record<number, number>
   hidden: boolean
   locked: boolean
   /** User-supplied display name. Empty / undefined falls back to "polygon" / "line" / "circle". */

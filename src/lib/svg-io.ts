@@ -134,6 +134,21 @@ const parseGlyphsAttrs = (el: Element): GlyphData | undefined => {
   return { d, text, fontFamily, fontSize, width, height }
 }
 
+const parsePointBezierAttr = (raw: string | null): Record<number, number> | undefined => {
+  if (!raw) return undefined
+  const out: Record<number, number> = {}
+  for (const entry of raw.split(',')) {
+    const idx = entry.indexOf(':')
+    if (idx <= 0) continue
+    const k = parseInt(entry.slice(0, idx), 10)
+    const v = parseFloat(entry.slice(idx + 1))
+    if (!Number.isFinite(k) || k < 0) continue
+    if (!Number.isFinite(v)) continue
+    out[k] = v
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 const parseArcAttr = (raw: string | null): ArcRange | undefined => {
   if (!raw) return undefined
   const parts = raw.split(',').map(s => s.trim())
@@ -299,6 +314,15 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (!isCircle && shape.bezierOverride !== null) {
       baseAttrs.push(`data-v7-bezier="${fmt(shape.bezierOverride)}"`)
     }
+    if (!isCircle && !isGlyphs && shape.pointBezierOverrides) {
+      const entries = Object.entries(shape.pointBezierOverrides)
+        .map(([k, v]) => [Number(k), v] as const)
+        .filter(([k, v]) => Number.isFinite(k) && Number.isFinite(v))
+        .toSorted(([a], [b]) => a - b)
+        .map(([k, v]) => `${k}:${fmt(v)}`)
+        .join(',')
+      if (entries) baseAttrs.push(`data-v7-point-bezier="${entries}"`)
+    }
     if (shape.hidden) baseAttrs.push(`data-v7-hidden="true"`)
     if (shape.locked) baseAttrs.push(`data-v7-locked="true"`)
     if (shape.name) baseAttrs.push(`data-v7-name="${escapeAttr(shape.name)}"`)
@@ -351,7 +375,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`
     } else {
       const bz = shape.bezierOverride ?? settings.bezier
-      const d = pointsToPath(shape.points, shape.closed, bz)
+      const d = pointsToPath(shape.points, shape.closed, bz, shape.pointBezierOverrides)
       const transformAttr = composedTransform ? ` transform="${composedTransform}"` : ''
       element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`
     }
@@ -492,6 +516,8 @@ export function parseProject(text: string): ParsedProject {
     const overrideAttr = el.getAttribute('data-v7-bezier')
     const overrideNum = overrideAttr === null ? NaN : parseFloat(overrideAttr)
     const bezierOverride = !isCircle && !isGlyphs && Number.isFinite(overrideNum) ? overrideNum : null
+    const pointBezierOverrides =
+      !isCircle && !isGlyphs ? parsePointBezierAttr(el.getAttribute('data-v7-point-bezier')) : undefined
     const glyphs = isGlyphs ? parseGlyphsAttrs(el) : undefined
     if (isGlyphs && !glyphs) continue
 
@@ -558,6 +584,7 @@ export function parseProject(text: string): ParsedProject {
       stroke: el.getAttribute('stroke') ?? 'none',
       strokeWidth: parseFloat(el.getAttribute('stroke-width') ?? '2'),
       bezierOverride,
+      ...(pointBezierOverrides ? { pointBezierOverrides } : {}),
       hidden: el.getAttribute('data-v7-hidden') === 'true',
       locked: el.getAttribute('data-v7-locked') === 'true',
       ...(linejoin ? { strokeLinejoin: linejoin } : {}),

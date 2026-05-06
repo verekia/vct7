@@ -104,6 +104,7 @@ export function ShapePanel() {
   // Zustand's strict identity check (Maximum update depth exceeded).
   const shapes = useStore(s => s.shapes)
   const selectedShapeIds = useStore(s => s.selectedShapeIds)
+  const selectedVertices = useStore(s => s.selectedVertices)
   const globalBezier = useStore(s => s.settings.bezier)
   const snapAngles = useStore(s => s.settings.snapAngles)
   const animationEnabled = useStore(s => s.settings.animationEnabled)
@@ -135,9 +136,12 @@ export function ShapePanel() {
   }
 
   if (selectedShapes.length === 1) {
+    const shape = selectedShapes[0]
+    const vertexIndices = selectedVertices.filter(v => v.shapeId === shape.id).map(v => v.index)
     return (
       <ShapePanelInner
-        shape={selectedShapes[0]}
+        shape={shape}
+        selectedVertexIndices={vertexIndices}
         globalBezier={globalBezier}
         snapAngles={snapAngles}
         animationEnabled={animationEnabled}
@@ -307,6 +311,7 @@ const opacityValue = (s: Shape): number => s.opacity ?? 1
 
 function ShapePanelInner({
   shape,
+  selectedVertexIndices,
   globalBezier,
   snapAngles,
   animationEnabled,
@@ -320,6 +325,7 @@ function ShapePanelInner({
   applyTransform,
 }: {
   shape: Shape
+  selectedVertexIndices: number[]
   globalBezier: number
   snapAngles: number[]
   animationEnabled: boolean
@@ -568,7 +574,7 @@ function ShapePanelInner({
       {showBezierOverride && (
         <label>
           <span className="flex flex-wrap items-center gap-1.5">
-            <span style={{ flex: 1 }}>Bezier override</span>
+            <span style={{ flex: 1 }}>Layer bezier override</span>
             {shape.bezierOverride !== null && (
               <button
                 type="button"
@@ -593,6 +599,15 @@ function ShapePanelInner({
         </label>
       )}
 
+      {showBezierOverride && selectedVertexIndices.length > 0 && (
+        <PointBezierControl
+          shape={shape}
+          indices={selectedVertexIndices}
+          layerBezier={bezierValue}
+          updateShape={updateShape}
+        />
+      )}
+
       <AnimationControls shape={shape} animationEnabled={animationEnabled} updateShape={updateShape} />
 
       <div className="flex flex-wrap items-center gap-1.5">
@@ -605,6 +620,68 @@ function ShapePanelInner({
         </button>
       </div>
     </section>
+  )
+}
+
+/**
+ * Per-vertex bezier override slider. Visible only when at least one vertex is
+ * selected on a path-kind shape. The displayed value is uniform across the
+ * selected indices when they match; otherwise the readout shows "Mixed" and
+ * dragging the slider writes the new value to every selected vertex. "use
+ * layer" drops the entries (the corners fall back to the layer bezier).
+ */
+function PointBezierControl({
+  shape,
+  indices,
+  layerBezier,
+  updateShape,
+}: {
+  shape: Shape
+  indices: number[]
+  layerBezier: number
+  updateShape: (id: string, patch: Partial<Shape>) => void
+}) {
+  const overrides = shape.pointBezierOverrides
+  const values = indices.map(i => overrides?.[i])
+  const uniform = allSame(values)
+  const firstDefined = values.find(v => v !== undefined)
+  const sliderValue = uniform ? (values[0] ?? layerBezier) : (firstDefined ?? layerBezier)
+  const anyOverride = values.some(v => v !== undefined)
+  const label =
+    indices.length === 1 ? `Point bezier override (#${indices[0]})` : `Point bezier override (×${indices.length})`
+
+  const setAll = (v: number | undefined) => {
+    const next: Record<number, number> = { ...overrides }
+    for (const i of indices) {
+      if (v === undefined) delete next[i]
+      else next[i] = v
+    }
+    const trimmed = Object.keys(next).length > 0 ? next : undefined
+    updateShape(shape.id, { pointBezierOverrides: trimmed })
+  }
+
+  return (
+    <label>
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span style={{ flex: 1 }}>{label}</span>
+        {anyOverride && (
+          <button type="button" className="px-[7px] py-[2px] text-[11px]" onClick={() => setAll(undefined)}>
+            use layer
+          </button>
+        )}
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={sliderValue}
+        onChange={e => setAll(parseFloat(e.target.value))}
+      />
+      <span className="text-text tabular-nums">
+        {!uniform ? 'Mixed' : values[0] === undefined ? `— (layer ${layerBezier.toFixed(2)})` : values[0].toFixed(2)}
+      </span>
+    </label>
   )
 }
 
@@ -1319,7 +1396,7 @@ function MultiShapePanel({
       {showBezier && (
         <label>
           <span className="flex flex-wrap items-center gap-1.5">
-            <span style={{ flex: 1 }}>Bezier override</span>
+            <span style={{ flex: 1 }}>Layer bezier override</span>
             {overrides.some(o => o !== null) && (
               <button
                 type="button"
