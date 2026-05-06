@@ -71,6 +71,21 @@ const reindexPointBeziers = (
   return Object.keys(next).length > 0 ? next : undefined
 }
 
+/** Shift overrides up by 1 for entries at or after `insertIndex` so they keep
+ * pointing at the same vertex once a new point has been spliced in. */
+const shiftPointBeziersForInsert = (
+  overrides: Record<number, number> | undefined,
+  insertIndex: number,
+): Record<number, number> | undefined => {
+  if (!overrides) return undefined
+  const next: Record<number, number> = {}
+  for (const [k, v] of Object.entries(overrides)) {
+    const i = Number(k)
+    next[i >= insertIndex ? i + 1 : i] = v
+  }
+  return Object.keys(next).length > 0 ? next : undefined
+}
+
 const MAX_HISTORY = 100
 /** Repeated pushes with the same coalesceKey within this window replace the top entry. */
 const COALESCE_WINDOW_MS = 800
@@ -221,6 +236,13 @@ export interface AppState {
    */
   addShapes: (shapes: Shape[]) => void
   deleteVertex: (shapeId: string, index: number) => void
+  /**
+   * Insert a new vertex between two adjacent points of a path-kind shape, at
+   * their straight-line midpoint. "Adjacent" includes wrap-around for closed
+   * shapes (first ↔ last). The inserted point becomes the sole selected
+   * vertex; no-op when indices aren't adjacent or the shape isn't a path.
+   */
+  insertPointBetween: (shapeId: string, i: number, j: number) => void
   /**
    * Delete every selected vertex from its owning shape. If a shape ends up
    * with fewer than 2 points, the shape itself is removed. Always pushes a
@@ -745,6 +767,39 @@ export const useStore = create<AppState>(set => ({
               },
         ),
         selectedVertices: [],
+        dirty: true,
+      }
+    }),
+  insertPointBetween: (shapeId, i, j) =>
+    set(s => {
+      const shape = s.shapes.find(sh => sh.id === shapeId)
+      if (!shape) return s
+      if (shape.kind === 'circle' || shape.kind === 'glyphs') return s
+      const n = shape.points.length
+      if (i < 0 || i >= n || j < 0 || j >= n || i === j) return s
+      const lo = Math.min(i, j)
+      const hi = Math.max(i, j)
+      let insertAt: number
+      if (hi - lo === 1) insertAt = hi
+      else if (shape.closed && lo === 0 && hi === n - 1) insertAt = n
+      else return s
+      const a = shape.points[i]
+      const b = shape.points[j]
+      const mid: Point = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+      const nextPoints = shape.points.slice()
+      nextPoints.splice(insertAt, 0, mid)
+      return {
+        ...pushSnapshot(s),
+        shapes: s.shapes.map(sh =>
+          sh.id !== shapeId
+            ? sh
+            : {
+                ...sh,
+                points: nextPoints,
+                pointBezierOverrides: shiftPointBeziersForInsert(sh.pointBezierOverrides, insertAt),
+              },
+        ),
+        selectedVertices: [{ shapeId, index: insertAt }],
         dirty: true,
       }
     }),

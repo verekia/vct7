@@ -125,6 +125,7 @@ export function ShapePanel() {
   const toggleMirrorAxisVisibility = useStore(s => s.toggleMirrorAxisVisibility)
   const ejectMirror = useStore(s => s.ejectMirror)
   const mergeMirror = useStore(s => s.mergeMirror)
+  const insertPointBetween = useStore(s => s.insertPointBetween)
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds)
@@ -168,6 +169,7 @@ export function ShapePanel() {
         toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
         ejectMirror={ejectMirror}
         mergeMirror={mergeMirror}
+        insertPointBetween={insertPointBetween}
       />
     )
   }
@@ -346,6 +348,7 @@ function ShapePanelInner({
   toggleMirrorAxisVisibility,
   ejectMirror,
   mergeMirror,
+  insertPointBetween,
 }: {
   shape: Shape
   selectedVertexIndices: number[]
@@ -367,6 +370,7 @@ function ShapePanelInner({
   toggleMirrorAxisVisibility: (id: string) => void
   ejectMirror: (id: string) => string | null
   mergeMirror: (id: string) => boolean
+  insertPointBetween: (shapeId: string, i: number, j: number) => void
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
   const [fillText, setFillText] = useState(shape.fill)
@@ -662,6 +666,21 @@ function ShapePanelInner({
           </span>
         </label>
       )}
+
+      {showBezierOverride &&
+        selectedVertexIndices.length === 2 &&
+        areAdjacentVertices(shape, selectedVertexIndices[0], selectedVertexIndices[1]) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              className="px-[7px] py-[2px] text-[11px]"
+              onClick={() => insertPointBetween(shape.id, selectedVertexIndices[0], selectedVertexIndices[1])}
+              title="Insert a new vertex at the midpoint of the edge between the two selected points."
+            >
+              Insert point
+            </button>
+          </div>
+        )}
 
       {showBezierOverride && selectedVertexIndices.length > 0 && (
         <PointBezierControl
@@ -1386,6 +1405,21 @@ const canMergeMirror = (shape: Shape): boolean => {
   const n = shape.points.length
   if (n < 2) return false
   return isPointOnAxis(shape.points[0], axis) || isPointOnAxis(shape.points[n - 1], axis)
+}
+
+/**
+ * Two vertex indices count as adjacent when they sit next to each other in the
+ * point list, plus the wrap-around case (first ↔ last) on closed shapes. Used
+ * to gate the "Insert point" button — inserting only makes geometric sense
+ * along an actual edge of the path.
+ */
+const areAdjacentVertices = (shape: Shape, i: number, j: number): boolean => {
+  if (shape.kind === 'circle' || shape.kind === 'glyphs') return false
+  const n = shape.points.length
+  if (n < 2 || i === j) return false
+  if (i < 0 || i >= n || j < 0 || j >= n) return false
+  if (Math.abs(i - j) === 1) return true
+  return shape.closed && Math.min(i, j) === 0 && Math.max(i, j) === n - 1
 }
 
 const mergeMirrorHint = (shape: Shape): string =>
