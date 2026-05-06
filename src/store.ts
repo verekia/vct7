@@ -943,7 +943,9 @@ export const useStore = create<AppState>(set => ({
       if (!target) return s
       if (target.kind === 'glyphs') return s
       if (target.mirror) return s
-      const axis = defaultMirrorAxis(target)
+      const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2
+      const cy = s.settings.viewBoxY + s.settings.viewBoxHeight / 2
+      const axis = defaultMirrorAxis(cx, cy)
       return {
         ...pushSnapshot(s),
         shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: { axis } } : sh)),

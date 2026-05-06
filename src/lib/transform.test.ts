@@ -138,11 +138,10 @@ describe('transformPointsAround', () => {
 })
 
 describe('defaultMirrorAxis', () => {
-  it('places a vertical line through the shape bbox center', () => {
-    const s = baseShape()
-    const a = defaultMirrorAxis(s)
-    expect(a.x).toBeCloseTo(5)
-    expect(a.y).toBeCloseTo(5)
+  it('places a vertical line through the supplied canvas center', () => {
+    const a = defaultMirrorAxis(50, 75)
+    expect(a.x).toBe(50)
+    expect(a.y).toBe(75)
     expect(a.angle).toBe(90)
   })
 })

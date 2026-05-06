@@ -875,15 +875,15 @@ describe('store: live mirror', () => {
       ],
     })
 
-  it('enableMirror sets a default vertical axis through the bbox center', () => {
+  it('enableMirror sets a default vertical axis through the canvas center', () => {
     seed()
     useStore.getState().enableMirror('a')
     const sh = useStore.getState().shapes[0]
+    const settings = useStore.getState().settings
     expect(sh.mirror).toBeDefined()
     expect(sh.mirror?.axis.angle).toBe(90)
-    // Bbox of the seed triangle is [0..10, 0..10] → center (5, 5).
-    expect(sh.mirror?.axis.x).toBeCloseTo(5)
-    expect(sh.mirror?.axis.y).toBeCloseTo(5)
+    expect(sh.mirror?.axis.x).toBeCloseTo(settings.viewBoxX + settings.viewBoxWidth / 2)
+    expect(sh.mirror?.axis.y).toBeCloseTo(settings.viewBoxY + settings.viewBoxHeight / 2)
   })
 
   it('enableMirror is a no-op on glyph shapes (matches flipShapes guard)', () => {
