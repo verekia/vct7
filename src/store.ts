@@ -266,12 +266,13 @@ export interface AppState {
    */
   flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
   /**
-   * Enable a live mirror on the shape. The default axis is a vertical line
-   * through the shape's bbox center, producing an immediate horizontal
-   * reflection. Glyph shapes are unsupported (matching `flipShapes`); the
-   * call is a no-op for them.
+   * Enable a live mirror on the shape, anchored at the artboard center. The
+   * `axis` argument picks the orientation: `'horizontal'` reflects left/right
+   * (vertical axis line, 90°), `'vertical'` reflects top/bottom (horizontal
+   * axis line, 0°) — same naming as `flipShapes`. Glyph shapes are
+   * unsupported (matching `flipShapes`); the call is a no-op for them.
    */
-  enableMirror: (id: string) => void
+  enableMirror: (id: string, axis: 'horizontal' | 'vertical') => void
   /** Drop the live mirror without baking the reflection. */
   disableMirror: (id: string) => void
   /** Patch one or more axis fields. Coalesces with continuous axis drags so a slider/handle drag is one undo. */
@@ -937,7 +938,7 @@ export const useStore = create<AppState>(set => ({
       if (!changed) return s
       return { ...pushSnapshot(s), shapes: next, dirty: true }
     }),
-  enableMirror: id =>
+  enableMirror: (id, axis) =>
     set(s => {
       const target = s.shapes.find(sh => sh.id === id)
       if (!target) return s
@@ -945,10 +946,11 @@ export const useStore = create<AppState>(set => ({
       if (target.mirror) return s
       const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2
       const cy = s.settings.viewBoxY + s.settings.viewBoxHeight / 2
-      const axis = defaultMirrorAxis(cx, cy)
+      const angle = axis === 'vertical' ? 0 : 90
+      const axisSpec = defaultMirrorAxis(cx, cy, angle)
       return {
         ...pushSnapshot(s),
-        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: { axis } } : sh)),
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: { axis: axisSpec } } : sh)),
         dirty: true,
       }
     }),

@@ -875,13 +875,23 @@ describe('store: live mirror', () => {
       ],
     })
 
-  it('enableMirror sets a default vertical axis through the canvas center', () => {
+  it('enableMirror "horizontal" sets a vertical axis (angle 90°) through the canvas center', () => {
     seed()
-    useStore.getState().enableMirror('a')
+    useStore.getState().enableMirror('a', 'horizontal')
     const sh = useStore.getState().shapes[0]
     const settings = useStore.getState().settings
     expect(sh.mirror).toBeDefined()
     expect(sh.mirror?.axis.angle).toBe(90)
+    expect(sh.mirror?.axis.x).toBeCloseTo(settings.viewBoxX + settings.viewBoxWidth / 2)
+    expect(sh.mirror?.axis.y).toBeCloseTo(settings.viewBoxY + settings.viewBoxHeight / 2)
+  })
+
+  it('enableMirror "vertical" sets a horizontal axis (angle 0°) through the canvas center', () => {
+    seed()
+    useStore.getState().enableMirror('a', 'vertical')
+    const sh = useStore.getState().shapes[0]
+    const settings = useStore.getState().settings
+    expect(sh.mirror?.axis.angle).toBe(0)
     expect(sh.mirror?.axis.x).toBeCloseTo(settings.viewBoxX + settings.viewBoxWidth / 2)
     expect(sh.mirror?.axis.y).toBeCloseTo(settings.viewBoxY + settings.viewBoxHeight / 2)
   })
@@ -907,13 +917,13 @@ describe('store: live mirror', () => {
         },
       ],
     })
-    useStore.getState().enableMirror('g')
+    useStore.getState().enableMirror('g', 'horizontal')
     expect(useStore.getState().shapes[0].mirror).toBeUndefined()
   })
 
   it('updateMirrorAxis patches axis fields and coalesces drags', () => {
     seed()
-    useStore.getState().enableMirror('a')
+    useStore.getState().enableMirror('a', 'horizontal')
     const before = useStore.getState().past.length
     useStore.getState().updateMirrorAxis('a', { angle: 45 })
     useStore.getState().updateMirrorAxis('a', { angle: 60 })
@@ -927,7 +937,7 @@ describe('store: live mirror', () => {
 
   it('toggleMirrorAxisVisibility flips the showAxis flag', () => {
     seed()
-    useStore.getState().enableMirror('a')
+    useStore.getState().enableMirror('a', 'horizontal')
     expect(useStore.getState().shapes[0].mirror?.showAxis).toBeUndefined()
     useStore.getState().toggleMirrorAxisVisibility('a')
     expect(useStore.getState().shapes[0].mirror?.showAxis).toBe(true)
@@ -937,7 +947,7 @@ describe('store: live mirror', () => {
 
   it('disableMirror removes the modifier without baking', () => {
     seed()
-    useStore.getState().enableMirror('a')
+    useStore.getState().enableMirror('a', 'horizontal')
     useStore.getState().disableMirror('a')
     expect(useStore.getState().shapes).toHaveLength(1)
     expect(useStore.getState().shapes[0].mirror).toBeUndefined()
@@ -945,7 +955,7 @@ describe('store: live mirror', () => {
 
   it('ejectMirror inserts a baked sibling right after the source', () => {
     seed()
-    useStore.getState().enableMirror('a')
+    useStore.getState().enableMirror('a', 'horizontal')
     // Move axis to x=20 so the reflection lands at x ∈ [30..40].
     useStore.getState().updateMirrorAxis('a', { x: 20, angle: 90 })
     const newId = useStore.getState().ejectMirror('a')
@@ -962,7 +972,7 @@ describe('store: live mirror', () => {
 
   it('ejectMirror bakes the group rotation into both halves', () => {
     seed()
-    useStore.getState().enableMirror('a')
+    useStore.getState().enableMirror('a', 'horizontal')
     useStore.getState().updateShape('a', { rotation: 90 })
     const newId = useStore.getState().ejectMirror('a')!
     const shapes = useStore.getState().shapes

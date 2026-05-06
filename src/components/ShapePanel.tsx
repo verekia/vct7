@@ -358,7 +358,7 @@ function ShapePanelInner({
   applyOpacity: (ids: string[]) => void
   applyTransform: (ids: string[]) => void
   flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
-  enableMirror: (id: string) => void
+  enableMirror: (id: string, axis: 'horizontal' | 'vertical') => void
   disableMirror: (id: string) => void
   updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
   toggleMirrorAxisVisibility: (id: string) => void
@@ -1243,7 +1243,7 @@ function MirrorControls({
   ejectMirror,
 }: {
   shape: Shape
-  enableMirror: (id: string) => void
+  enableMirror: (id: string, axis: 'horizontal' | 'vertical') => void
   disableMirror: (id: string) => void
   updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
   toggleMirrorAxisVisibility: (id: string) => void
@@ -1257,10 +1257,18 @@ function MirrorControls({
         <button
           type="button"
           className="px-[7px] py-[2px] text-[11px]"
-          onClick={() => enableMirror(shape.id)}
-          title="Add a live mirror modifier — the reflected copy updates as you edit the source."
+          onClick={() => enableMirror(shape.id, 'horizontal')}
+          title="Add a live mirror modifier with a vertical axis through the canvas center (left ↔ right reflection)."
         >
-          Add mirror
+          Horizontal
+        </button>
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={() => enableMirror(shape.id, 'vertical')}
+          title="Add a live mirror modifier with a horizontal axis through the canvas center (top ↔ bottom reflection)."
+        >
+          Vertical
         </button>
       </div>
     )

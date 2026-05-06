@@ -138,10 +138,15 @@ describe('transformPointsAround', () => {
 })
 
 describe('defaultMirrorAxis', () => {
-  it('places a vertical line through the supplied canvas center', () => {
+  it('places a vertical line (angle 90°) through the supplied canvas center by default', () => {
     const a = defaultMirrorAxis(50, 75)
     expect(a.x).toBe(50)
     expect(a.y).toBe(75)
     expect(a.angle).toBe(90)
+  })
+
+  it('accepts an explicit angle (0° = horizontal axis line / top-bottom flip)', () => {
+    const a = defaultMirrorAxis(50, 75, 0)
+    expect(a.angle).toBe(0)
   })
 })

@@ -108,15 +108,16 @@ export const reflectPoint = (p: Point, axis: MirrorAxis): Point => {
 }
 
 /**
- * Default axis for a freshly-enabled mirror: a vertical line through the
- * artboard center, which produces an immediate horizontal reflection across
- * the canvas. Anchoring at the canvas (not the shape's bbox) means a shape
- * drawn off-center mirrors *across* the canvas rather than back onto itself.
+ * Default axis for a freshly-enabled mirror, anchored at the supplied center
+ * point. Angle defaults to 90° (vertical line → horizontal/left-right
+ * reflection); pass 0° for a horizontal line / vertical/top-bottom reflection.
+ * Anchoring at the canvas (not the shape's bbox) means a shape drawn
+ * off-center mirrors *across* the canvas rather than back onto itself.
  */
-export const defaultMirrorAxis = (centerX: number, centerY: number): MirrorAxis => ({
+export const defaultMirrorAxis = (centerX: number, centerY: number, angle = 90): MirrorAxis => ({
   x: centerX,
   y: centerY,
-  angle: 90,
+  angle,
 })
 
 /**
