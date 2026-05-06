@@ -117,6 +117,7 @@ export function ShapePanel() {
   const applyBlending = useStore(s => s.applyBlending)
   const applyOpacity = useStore(s => s.applyOpacity)
   const applyTransform = useStore(s => s.applyTransform)
+  const flipShapes = useStore(s => s.flipShapes)
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds)
@@ -153,6 +154,7 @@ export function ShapePanel() {
         applyBlending={applyBlending}
         applyOpacity={applyOpacity}
         applyTransform={applyTransform}
+        flipShapes={flipShapes}
       />
     )
   }
@@ -184,6 +186,7 @@ export function ShapePanel() {
       applyBlending={applyBlending}
       applyOpacity={applyOpacity}
       applyTransform={applyTransform}
+      flipShapes={flipShapes}
     />
   )
 }
@@ -323,6 +326,7 @@ function ShapePanelInner({
   applyBlending,
   applyOpacity,
   applyTransform,
+  flipShapes,
 }: {
   shape: Shape
   selectedVertexIndices: number[]
@@ -337,6 +341,7 @@ function ShapePanelInner({
   applyBlending: (ids: string[]) => void
   applyOpacity: (ids: string[]) => void
   applyTransform: (ids: string[]) => void
+  flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
   const [fillText, setFillText] = useState(shape.fill)
@@ -553,6 +558,28 @@ function ShapePanelInner({
         />
         <span className="text-text tabular-nums">{opacityValue(shape).toFixed(2)}</span>
       </label>
+
+      {!isGlyphs && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Flip</span>
+          <button
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() => flipShapes([shape.id], 'horizontal')}
+            title="Mirror the shape across its vertical center axis."
+          >
+            Horizontal
+          </button>
+          <button
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() => flipShapes([shape.id], 'vertical')}
+            title="Mirror the shape across its horizontal center axis."
+          >
+            Vertical
+          </button>
+        </div>
+      )}
 
       <TransformControls
         rotation={shapeRotation(shape)}
@@ -1188,6 +1215,7 @@ function MultiShapePanel({
   applyBlending,
   applyOpacity,
   applyTransform,
+  flipShapes,
 }: {
   shapes: Shape[]
   kind: ShapeKind
@@ -1201,6 +1229,7 @@ function MultiShapePanel({
   applyBlending: (ids: string[]) => void
   applyOpacity: (ids: string[]) => void
   applyTransform: (ids: string[]) => void
+  flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
 }) {
   const showFill = kind !== 'line'
   const showBezier = kind !== 'circle' && kind !== 'text'
@@ -1480,6 +1509,38 @@ function MultiShapePanel({
         />
         <span className="text-text tabular-nums">{opacityUniform ? opacities[0].toFixed(2) : 'Mixed'}</span>
       </label>
+
+      {kind !== 'text' && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Flip</span>
+          <button
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() =>
+              flipShapes(
+                shapes.map(sh => sh.id),
+                'horizontal',
+              )
+            }
+            title="Mirror each selected shape across its vertical center axis."
+          >
+            Horizontal
+          </button>
+          <button
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() =>
+              flipShapes(
+                shapes.map(sh => sh.id),
+                'vertical',
+              )
+            }
+            title="Mirror each selected shape across its horizontal center axis."
+          >
+            Vertical
+          </button>
+        </div>
+      )}
 
       <TransformControls
         rotation={rotationUniform ? rotations[0] : 0}

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 import { blendColor, findColorBelow, mix, parseHex, toHex } from './lib/blend'
 import { DEFAULT_SETTINGS, makeId } from './lib/svg-io'
-import { applyTransformToPoint, hasTransform, shapeRotation } from './lib/transform'
+import { applyTransformToPoint, hasTransform, shapeBBoxCenter, shapeRotation } from './lib/transform'
 
 import type { Drawing, GlyphData, PaletteColor, Point, ProjectSettings, Shape, Tool, ViewState } from './types'
 
@@ -234,6 +234,17 @@ export interface AppState {
    * shift `arc.start` / `arc.end` so the wedge keeps its visual orientation.
    */
   applyTransform: (ids: string[]) => void
+  /**
+   * Mirror shapes across their visual bbox center on the chosen axis. Each
+   * shape's points are reflected and its rotation is negated so the on-screen
+   * result matches a true mirror flip even for rotated shapes (R reflects to
+   * −R; the matrix derivation is M·R·M = R⁻¹ for an axis-aligned reflection
+   * M). Partial-circle arc angles are mirrored and start/end swap so the
+   * arc keeps its clockwise-sweep convention. Glyph shapes are skipped — the
+   * model has no separable scale-x/scale-y to encode a glyph mirror, same
+   * caveat as `applyTransform`.
+   */
+  flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
   /**
    * Add a new palette entry. The name must be unique and non-empty; if either
    * condition fails the call is a no-op so callers don't have to guard.
@@ -847,6 +858,37 @@ export const useStore = create<AppState>(set => ({
           // shift them; otherwise the wedge would snap back to its pre-rotation
           // orientation when rotation resets to 0.
           patch.arc = { ...sh.arc, start: sh.arc.start + rot, end: sh.arc.end + rot }
+        }
+        if (next === s.shapes) next = s.shapes.slice()
+        next[i] = { ...sh, ...patch }
+        changed = true
+      }
+      if (!changed) return s
+      return { ...pushSnapshot(s), shapes: next, dirty: true }
+    }),
+  flipShapes: (ids, axis) =>
+    set(s => {
+      if (ids.length === 0) return s
+      const idSet = new Set(ids)
+      const flipH = axis === 'horizontal'
+      let next = s.shapes
+      let changed = false
+      for (let i = 0; i < next.length; i++) {
+        const sh = next[i]
+        if (!idSet.has(sh.id)) continue
+        if (sh.kind === 'glyphs') continue
+        const [cx, cy] = shapeBBoxCenter(sh)
+        const newPoints = sh.points.map(p => (flipH ? [2 * cx - p[0], p[1]] : [p[0], 2 * cy - p[1]]) as Point)
+        const patch: Partial<Shape> = { points: newPoints }
+        const rot = shapeRotation(sh)
+        if (rot !== 0) patch.rotation = -rot
+        if (sh.kind === 'circle' && sh.arc) {
+          // Arc angles measure clockwise from 3 o'clock, so an H-flip mirrors
+          // each across the vertical axis (θ → 180°−θ) and a V-flip across
+          // the horizontal axis (θ → −θ). The sweep direction also reverses,
+          // so swap start/end to keep the clockwise-sweep convention.
+          const a = sh.arc
+          patch.arc = flipH ? { ...a, start: 180 - a.end, end: 180 - a.start } : { ...a, start: -a.end, end: -a.start }
         }
         if (next === s.shapes) next = s.shapes.slice()
         next[i] = { ...sh, ...patch }
