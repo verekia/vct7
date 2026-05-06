@@ -1,6 +1,6 @@
 import { parseHex, toHex } from './blend'
 import { fmt } from './geometry'
-import { shapeBBoxCenter } from './transform'
+import { shapePivot } from './transform'
 
 import type { AnimationFromState, AnimationSpec, Easing, Shape } from '../types'
 import type { RGB } from './blend'
@@ -191,7 +191,10 @@ const applySpin = (offsets: AnimationOffsets, anim: AnimationSpec, sceneT: numbe
  */
 export const offsetsToTransform = (shape: Shape, o: AnimationOffsets): string => {
   if (o.rotation === 0 && o.scale === 1 && o.translateX === 0 && o.translateY === 0) return ''
-  const [cx, cy] = shapeBBoxCenter(shape)
+  // Mirror-attached shapes pivot at the combined pair center so the source
+  // and reflection rotate as one rigid group during animation. Non-mirrored
+  // shapes pivot at their own bbox center as before.
+  const [cx, cy] = shapePivot(shape)
   const parts: string[] = []
   if (o.translateX !== 0 || o.translateY !== 0) {
     parts.push(`translate(${fmt(o.translateX)} ${fmt(o.translateY)})`)
@@ -312,7 +315,7 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
       const spin = sh.animation.spin
       const period = Math.abs(360 / spin.speed) * 1000 // ms per revolution
       const direction = spin.speed >= 0 ? 360 : -360
-      const [cx, cy] = shapeBBoxCenter(sh)
+      const [cx, cy] = shapePivot(sh)
       const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`
       const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`
       const start = `${pivotIn} rotate(0deg) ${pivotOut}`
@@ -345,7 +348,7 @@ const cssTransformPair = (shape: Shape, o: AnimationOffsets): { from: string; to
     toParts.push(`translate(0px, 0px)`)
   }
   if (o.rotation !== 0 || o.scale !== 1) {
-    const [cx, cy] = shapeBBoxCenter(shape)
+    const [cx, cy] = shapePivot(shape)
     const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`
     const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`
     fromParts.push(pivotIn)

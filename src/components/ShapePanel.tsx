@@ -12,6 +12,7 @@ import type {
   ArcRange,
   BlendMode,
   Easing,
+  MirrorAxis,
   PaletteColor,
   Shape,
   SpinSpec,
@@ -118,6 +119,11 @@ export function ShapePanel() {
   const applyOpacity = useStore(s => s.applyOpacity)
   const applyTransform = useStore(s => s.applyTransform)
   const flipShapes = useStore(s => s.flipShapes)
+  const enableMirror = useStore(s => s.enableMirror)
+  const disableMirror = useStore(s => s.disableMirror)
+  const updateMirrorAxis = useStore(s => s.updateMirrorAxis)
+  const toggleMirrorAxisVisibility = useStore(s => s.toggleMirrorAxisVisibility)
+  const ejectMirror = useStore(s => s.ejectMirror)
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds)
@@ -155,6 +161,11 @@ export function ShapePanel() {
         applyOpacity={applyOpacity}
         applyTransform={applyTransform}
         flipShapes={flipShapes}
+        enableMirror={enableMirror}
+        disableMirror={disableMirror}
+        updateMirrorAxis={updateMirrorAxis}
+        toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
+        ejectMirror={ejectMirror}
       />
     )
   }
@@ -327,6 +338,11 @@ function ShapePanelInner({
   applyOpacity,
   applyTransform,
   flipShapes,
+  enableMirror,
+  disableMirror,
+  updateMirrorAxis,
+  toggleMirrorAxisVisibility,
+  ejectMirror,
 }: {
   shape: Shape
   selectedVertexIndices: number[]
@@ -342,6 +358,11 @@ function ShapePanelInner({
   applyOpacity: (ids: string[]) => void
   applyTransform: (ids: string[]) => void
   flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
+  enableMirror: (id: string) => void
+  disableMirror: (id: string) => void
+  updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
+  toggleMirrorAxisVisibility: (id: string) => void
+  ejectMirror: (id: string) => string | null
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
   const [fillText, setFillText] = useState(shape.fill)
@@ -579,6 +600,17 @@ function ShapePanelInner({
             Vertical
           </button>
         </div>
+      )}
+
+      {!isGlyphs && (
+        <MirrorControls
+          shape={shape}
+          enableMirror={enableMirror}
+          disableMirror={disableMirror}
+          updateMirrorAxis={updateMirrorAxis}
+          toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
+          ejectMirror={ejectMirror}
+        />
       )}
 
       <TransformControls
@@ -1192,6 +1224,121 @@ function ArcControls({
         </>
       )}
     </>
+  )
+}
+
+/**
+ * Live mirror modifier section. Empty when mirror is off — a single "Add
+ * mirror" button enables it with a sensible default axis (vertical line
+ * through bbox center). With it on, exposes axis x/y/angle inputs, the
+ * "show axis" canvas toggle, and an "Eject" button that bakes the
+ * reflection into a sibling shape and clears the link.
+ */
+function MirrorControls({
+  shape,
+  enableMirror,
+  disableMirror,
+  updateMirrorAxis,
+  toggleMirrorAxisVisibility,
+  ejectMirror,
+}: {
+  shape: Shape
+  enableMirror: (id: string) => void
+  disableMirror: (id: string) => void
+  updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
+  toggleMirrorAxisVisibility: (id: string) => void
+  ejectMirror: (id: string) => string | null
+}) {
+  const mirror = shape.mirror
+  if (!mirror) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Mirror</span>
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={() => enableMirror(shape.id)}
+          title="Add a live mirror modifier — the reflected copy updates as you edit the source."
+        >
+          Add mirror
+        </button>
+      </div>
+    )
+  }
+  const ax = mirror.axis
+  return (
+    <section className="border-line mt-2.5 border-t pt-2.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-muted flex-1 text-[11px] tracking-[0.5px] uppercase">Mirror</span>
+        <button type="button" className="px-[7px] py-[2px] text-[11px]" onClick={() => disableMirror(shape.id)}>
+          Remove
+        </button>
+      </div>
+      <label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span style={{ flex: 1 }}>Show axis on canvas</span>
+          <input type="checkbox" checked={!!mirror.showAxis} onChange={() => toggleMirrorAxisVisibility(shape.id)} />
+        </span>
+      </label>
+      <label>
+        <span>Axis X / Y</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            step={1}
+            value={ax.x}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateMirrorAxis(shape.id, { x: v })
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={ax.y}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateMirrorAxis(shape.id, { y: v })
+            }}
+          />
+        </div>
+      </label>
+      <label>
+        <span>Axis angle (°)</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={1}
+            value={ax.angle}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateMirrorAxis(shape.id, { angle: v })
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={ax.angle}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateMirrorAxis(shape.id, { angle: v })
+            }}
+          />
+        </div>
+      </label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          className={APPLY_BTN}
+          onClick={() => ejectMirror(shape.id)}
+          title="Bake the reflection into an independent shape so source and copy can be edited separately."
+        >
+          Eject
+        </button>
+      </div>
+    </section>
   )
 }
 

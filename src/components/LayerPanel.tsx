@@ -186,6 +186,15 @@ export function LayerPanel() {
                   {shape.name || defaultLayerName(shape)}
                 </span>
               )}
+              {shape.mirror && (
+                <span
+                  className="text-muted-2 shrink-0"
+                  title="Live mirror modifier — eject from the shape panel to split into two layers."
+                  aria-label="Mirrored layer"
+                >
+                  <MirrorIcon />
+                </span>
+              )}
               {needsApply(shape) && (
                 <span
                   className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#3b82f6]"
@@ -367,6 +376,22 @@ function LockIcon() {
     <svg viewBox="0 0 16 16" width="14" height="14">
       <rect x="3" y="7" width="10" height="7" fill="currentColor" rx="1" />
       <path d="M5.5 7V5a2.5 2.5 0 015 0v2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
+function MirrorIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path d="M3 2v12M13 2v12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path
+        d="M5 4l-1.5 4L5 12M11 4l1.5 4L11 12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path d="M8 1v14" stroke="currentColor" strokeWidth="0.8" strokeDasharray="1.5 1.5" />
     </svg>
   )
 }

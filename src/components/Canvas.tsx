@@ -4,7 +4,14 @@ import type { CSSProperties } from 'react'
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions'
 import { IDENTITY_OFFSETS, lerpOffsets, offsetsToTransform, sampleAnimation } from '../lib/animation'
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry'
-import { composeTransformString, hasTransform } from '../lib/transform'
+import {
+  composeTransformString,
+  hasTransform,
+  pairBBoxCenter,
+  reflectShape,
+  shapeRotation,
+  shapeScale,
+} from '../lib/transform'
 import { useStore } from '../store'
 import { effectiveBezier } from '../store'
 
@@ -364,12 +371,22 @@ function AnimatedShape({
   const ghostOffsets =
     onionSkin && shape.animation ? lerpOffsets(shape.animation.from, 0, shape.fill, shape.stroke) : null
   const ghostTransform = ghostOffsets ? offsetsToTransform(shape, ghostOffsets) : ''
+  const renderMirror = (fillOverride?: string | null, strokeOverride?: string | null) =>
+    shape.mirror ? (
+      <MirrorNode shape={shape} bezier={bezier} fillOverride={fillOverride} strokeOverride={strokeOverride} />
+    ) : null
 
   // Identity offsets + no ghost → render the bare ShapeNode so untouched
   // shapes have the exact same DOM shape as the pre-animation editor. This
   // matters for selection hit testing tests that inspect `<g data-shape-id>`.
   if (transform === '' && opacity === undefined && !ghostOffsets && offsets.fill === null && offsets.stroke === null) {
-    return <ShapeNode shape={shape} bezier={bezier} />
+    if (!shape.mirror) return <ShapeNode shape={shape} bezier={bezier} />
+    return (
+      <>
+        <ShapeNode shape={shape} bezier={bezier} />
+        {renderMirror()}
+      </>
+    )
   }
 
   return (
@@ -382,12 +399,49 @@ function AnimatedShape({
             fillOverride={ghostOffsets.fill}
             strokeOverride={ghostOffsets.stroke}
           />
+          {renderMirror(ghostOffsets.fill, ghostOffsets.stroke)}
         </g>
       )}
       <g transform={transform || undefined} opacity={opacity}>
         <ShapeNode shape={shape} bezier={bezier} fillOverride={offsets.fill} strokeOverride={offsets.stroke} />
+        {renderMirror(offsets.fill, offsets.stroke)}
       </g>
     </>
+  )
+}
+
+/**
+ * Live mirror copy. The reflected geometry comes from `reflectShape`, which
+ * inherits the source's `rotation` / `scale`; we strip both before rendering
+ * and apply them ourselves around the combined pair pivot via an outer `<g>`,
+ * so the source and reflection rotate as one rigid group rather than each
+ * pivoting at their own bbox center. The inner `ShapeNode` re-uses the
+ * source's id for hit testing — clicking the mirror selects the source.
+ */
+function MirrorNode({
+  shape,
+  bezier,
+  fillOverride,
+  strokeOverride,
+}: {
+  shape: Shape
+  bezier: number
+  fillOverride?: string | null
+  strokeOverride?: string | null
+}) {
+  if (!shape.mirror) return null
+  const reflected: Shape = { ...reflectShape(shape, shape.mirror.axis), rotation: undefined, scale: undefined }
+  const r = shapeRotation(shape)
+  const sc = shapeScale(shape)
+  const [cx, cy] = pairBBoxCenter(shape)
+  const wrapperTransform =
+    r === 0 && sc === 1
+      ? undefined
+      : `translate(${fmt(cx)} ${fmt(cy)}) rotate(${fmt(r)}) scale(${fmt(sc)}) translate(${fmt(-cx)} ${fmt(-cy)})`
+  return (
+    <g transform={wrapperTransform}>
+      <ShapeNode shape={reflected} bezier={bezier} fillOverride={fillOverride} strokeOverride={strokeOverride} />
+    </g>
   )
 }
 
@@ -568,6 +622,10 @@ function SelectionLayer({
   // Same composed transform as ShapeNode so the dashed outline + vertex handles
   // sit on top of the rendered shape regardless of rotation/scale.
   const transformAttr = composeTransformString(shape) || undefined
+  const mirrorOutline = shape.mirror ? mirrorSelectionOutline(shape) : null
+  const axisLayer = shape.mirror?.showAxis ? (
+    <MirrorAxisLayer shape={shape} scale={scale} disabled={hasTransform(shape)} />
+  ) : null
   // Vertex handles are pre-transform anchors. Once a transform is applied they
   // would render at the *transformed* positions but a drag would set the
   // underlying point in canvas coords without inverting — making the visual
@@ -580,6 +638,8 @@ function SelectionLayer({
     return (
       <g transform={transformAttr}>
         <rect x={0} y={0} width={fmt(width)} height={fmt(height)} className="selection-outline" fill="none" />
+        {mirrorOutline}
+        {axisLayer}
       </g>
     )
   }
@@ -598,6 +658,8 @@ function SelectionLayer({
   return (
     <g transform={transformAttr}>
       {outline}
+      {mirrorOutline}
+      {axisLayer}
       {showVertices &&
         !transformed &&
         shape.points.map((p, i) => (
@@ -612,6 +674,91 @@ function SelectionLayer({
             pointerEvents={shape.locked ? 'none' : undefined}
           />
         ))}
+    </g>
+  )
+}
+
+/**
+ * Dashed outline of the live mirror copy. Geometry mirrors `SelectionLayer`'s
+ * source-outline branches (path / circle / partial-arc) but using the
+ * reflected shape's points so the user sees both halves selected.
+ */
+const mirrorSelectionOutline = (shape: Shape) => {
+  if (!shape.mirror) return null
+  const r = reflectShape(shape, shape.mirror.axis)
+  if (r.kind === 'circle' && r.points.length >= 2) {
+    const [cx, cy] = r.points[0]
+    const radius = dist(r.points[0], r.points[1])
+    if (isPartialArc(r.arc)) {
+      return <path d={arcToPath(cx, cy, radius, r.arc)} className="selection-outline" fill="none" />
+    }
+    return <circle cx={fmt(cx)} cy={fmt(cy)} r={fmt(radius)} className="selection-outline" fill="none" />
+  }
+  return <path d={pointsToPath(r.points, r.closed, 0)} className="selection-outline" />
+}
+
+const MIRROR_AXIS_HANDLE_PX = 60
+
+/**
+ * Bright-green axis line + drag handles for the live mirror. Drawn inside the
+ * source's transform wrapper, so when the source has a baked rotation/scale
+ * the axis tilts with the group; while the source has *unbaked* transforms
+ * (rotation / scale fields), the handles are disabled (matches the vertex
+ * handle convention — bake first to edit).
+ */
+function MirrorAxisLayer({ shape, scale, disabled }: { shape: Shape; scale: number; disabled: boolean }) {
+  if (!shape.mirror) return null
+  const { x, y, angle } = shape.mirror.axis
+  const rad = (angle * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const handleDist = MIRROR_AXIS_HANDLE_PX / scale
+  // Stretch the axis line well past the shape so it visibly reaches both sides
+  // of the artboard. 4× the handle distance is enough at any reasonable zoom.
+  const lineHalf = handleDist * 4
+  const x1 = x - cos * lineHalf
+  const y1 = y - sin * lineHalf
+  const x2 = x + cos * lineHalf
+  const y2 = y + sin * lineHalf
+  const hx = x + cos * handleDist
+  const hy = y + sin * handleDist
+  const handleR = 5 / scale
+  return (
+    <g pointerEvents={disabled ? 'none' : undefined}>
+      <line
+        x1={fmt(x1)}
+        y1={fmt(y1)}
+        x2={fmt(x2)}
+        y2={fmt(y2)}
+        stroke="#00ff00"
+        strokeWidth={1.5}
+        vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
+      />
+      <circle
+        cx={fmt(x)}
+        cy={fmt(y)}
+        r={handleR}
+        fill="#00ff00"
+        stroke="#003300"
+        strokeWidth={1}
+        vectorEffect="non-scaling-stroke"
+        data-mirror-handle="pos"
+        data-shape-id={shape.id}
+        style={{ cursor: disabled ? 'default' : 'move' }}
+      />
+      <circle
+        cx={fmt(hx)}
+        cy={fmt(hy)}
+        r={handleR}
+        fill="#00ff00"
+        stroke="#003300"
+        strokeWidth={1}
+        vectorEffect="non-scaling-stroke"
+        data-mirror-handle="rot"
+        data-shape-id={shape.id}
+        style={{ cursor: disabled ? 'default' : 'crosshair' }}
+      />
     </g>
   )
 }

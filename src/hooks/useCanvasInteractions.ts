@@ -34,6 +34,18 @@ interface DragVertexState {
   startCursor: Point
 }
 
+interface DragMirrorAxisState {
+  shapeId: string
+  /** `pos` translates the axis center; `rot` orbits the rotation handle around the center. */
+  mode: 'pos' | 'rot'
+  /** Pre-drag axis snapshot so the gesture coalesces into a single undo. */
+  startAxisX: number
+  startAxisY: number
+  startAxisAngle: number
+  /** Pre-drag canvas cursor (in the source's untransformed coord space). */
+  startCursor: Point
+}
+
 interface PanState {
   startX: number
   startY: number
@@ -63,12 +75,14 @@ interface PendingSelectState {
   becameDrag: boolean
 }
 
-const findShapeRef = (target: EventTarget | null): { shapeId?: string; vertexIndex?: string } => {
+const findShapeRef = (
+  target: EventTarget | null,
+): { shapeId?: string; vertexIndex?: string; mirrorHandle?: string } => {
   let node: Element | null = target as Element | null
   while (node && node !== document.body) {
     const ds = (node as HTMLElement).dataset
-    if (ds && (ds.shapeId || ds.vertexIndex)) {
-      return { shapeId: ds.shapeId, vertexIndex: ds.vertexIndex }
+    if (ds && (ds.shapeId || ds.vertexIndex || ds.mirrorHandle)) {
+      return { shapeId: ds.shapeId, vertexIndex: ds.vertexIndex, mirrorHandle: ds.mirrorHandle }
     }
     node = node.parentElement
   }
@@ -166,6 +180,7 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
     let panning: PanState | null = null
     let draggingShapes: DragShapesState | null = null
     let draggingVertex: DragVertexState | null = null
+    let draggingMirrorAxis: DragMirrorAxisState | null = null
     let pendingSelect: PendingSelectState | null = null
     /**
      * Active marquee. `shape` mode picks shapes (default — replaces / extends
@@ -271,6 +286,23 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
 
       // Select tool
       const ref = findShapeRef(e.target)
+      if (ref.shapeId && ref.mirrorHandle) {
+        const target = state.shapes.find(sh => sh.id === ref.shapeId)
+        if (target?.mirror && !hasTransform(target)) {
+          draggingMirrorAxis = {
+            shapeId: ref.shapeId,
+            mode: ref.mirrorHandle === 'rot' ? 'rot' : 'pos',
+            startAxisX: target.mirror.axis.x,
+            startAxisY: target.mirror.axis.y,
+            startAxisAngle: target.mirror.axis.angle,
+            startCursor: snapped,
+          }
+          // Snapshot before the gesture so the whole drag collapses to one
+          // undo. updateMirrorAxis already coalesces follow-up writes.
+          state.pushHistory()
+          return
+        }
+      }
       if (ref.shapeId && ref.vertexIndex !== undefined) {
         const idx = parseInt(ref.vertexIndex, 10)
         const shapeId = ref.shapeId
@@ -343,6 +375,25 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
 
       const { snapped, raw } = updateCursor(e.clientX, e.clientY)
 
+      if (draggingMirrorAxis) {
+        const state = useStore.getState()
+        if (draggingMirrorAxis.mode === 'pos') {
+          // Translate axis by the cursor delta.
+          const dx = raw[0] - draggingMirrorAxis.startCursor[0]
+          const dy = raw[1] - draggingMirrorAxis.startCursor[1]
+          state.updateMirrorAxis(draggingMirrorAxis.shapeId, {
+            x: draggingMirrorAxis.startAxisX + dx,
+            y: draggingMirrorAxis.startAxisY + dy,
+          })
+        } else {
+          // Rotate axis: angle from center to cursor, in canvas degrees.
+          const dx = raw[0] - draggingMirrorAxis.startAxisX
+          const dy = raw[1] - draggingMirrorAxis.startAxisY
+          const angle = (Math.atan2(dy, dx) * 180) / Math.PI
+          state.updateMirrorAxis(draggingMirrorAxis.shapeId, { angle })
+        }
+        return
+      }
       if (draggingVertex) {
         const state = useStore.getState()
         // Translate every selected vertex by the snapped delta. We snap the
@@ -548,6 +599,7 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       pendingSelect = null
       draggingShapes = null
       draggingVertex = null
+      draggingMirrorAxis = null
       // Drag is over → no anchors / no targets are computed in updateCursor,
       // so clear any leftover indicator immediately rather than waiting for
       // the next pointermove.

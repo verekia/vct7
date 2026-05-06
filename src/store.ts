@@ -2,9 +2,29 @@ import { create } from 'zustand'
 
 import { blendColor, findColorBelow, mix, parseHex, toHex } from './lib/blend'
 import { DEFAULT_SETTINGS, makeId } from './lib/svg-io'
-import { applyTransformToPoint, hasTransform, shapeBBoxCenter, shapeRotation } from './lib/transform'
+import {
+  applyTransformToPoint,
+  defaultMirrorAxis,
+  hasTransform,
+  pairBBoxCenter,
+  reflectShape,
+  shapeBBoxCenter,
+  shapeRotation,
+  shapeScale,
+  transformPointsAround,
+} from './lib/transform'
 
-import type { Drawing, GlyphData, PaletteColor, Point, ProjectSettings, Shape, Tool, ViewState } from './types'
+import type {
+  Drawing,
+  GlyphData,
+  MirrorAxis,
+  PaletteColor,
+  Point,
+  ProjectSettings,
+  Shape,
+  Tool,
+  ViewState,
+} from './types'
 
 export interface SelectedVertex {
   shapeId: string
@@ -245,6 +265,26 @@ export interface AppState {
    * caveat as `applyTransform`.
    */
   flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
+  /**
+   * Enable a live mirror on the shape. The default axis is a vertical line
+   * through the shape's bbox center, producing an immediate horizontal
+   * reflection. Glyph shapes are unsupported (matching `flipShapes`); the
+   * call is a no-op for them.
+   */
+  enableMirror: (id: string) => void
+  /** Drop the live mirror without baking the reflection. */
+  disableMirror: (id: string) => void
+  /** Patch one or more axis fields. Coalesces with continuous axis drags so a slider/handle drag is one undo. */
+  updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
+  /** Toggle visibility of the bright-green axis line + handles on canvas. Doesn't change geometry. */
+  toggleMirrorAxisVisibility: (id: string) => void
+  /**
+   * Bake the live mirror into a separate, independent shape inserted right
+   * after the source in z-order. Source shape keeps its geometry (and its own
+   * rotation), but `mirror` is cleared. Returns the new shape's id, or null
+   * when the source has no mirror.
+   */
+  ejectMirror: (id: string) => string | null
   /**
    * Add a new palette entry. The name must be unique and non-empty; if either
    * condition fails the call is a no-op so callers don't have to guard.
@@ -897,6 +937,116 @@ export const useStore = create<AppState>(set => ({
       if (!changed) return s
       return { ...pushSnapshot(s), shapes: next, dirty: true }
     }),
+  enableMirror: id =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target) return s
+      if (target.kind === 'glyphs') return s
+      if (target.mirror) return s
+      const axis = defaultMirrorAxis(target)
+      return {
+        ...pushSnapshot(s),
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: { axis } } : sh)),
+        dirty: true,
+      }
+    }),
+  disableMirror: id =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target?.mirror) return s
+      return {
+        ...pushSnapshot(s),
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: undefined } : sh)),
+        dirty: true,
+      }
+    }),
+  updateMirrorAxis: (id, patch) =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target?.mirror) return s
+      const nextAxis: MirrorAxis = { ...target.mirror.axis, ...patch }
+      return {
+        // Coalesce continuous axis drags (handle move, slider drag) so the
+        // whole gesture collapses to one undo entry.
+        ...pushSnapshot(s, `mirrorAxis:${id}`),
+        shapes: s.shapes.map(sh =>
+          sh.id === id && sh.mirror ? { ...sh, mirror: { ...sh.mirror, axis: nextAxis } } : sh,
+        ),
+        dirty: true,
+      }
+    }),
+  toggleMirrorAxisVisibility: id =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target?.mirror) return s
+      const next = !target.mirror.showAxis
+      return {
+        shapes: s.shapes.map(sh =>
+          sh.id === id && sh.mirror ? { ...sh, mirror: { ...sh.mirror, showAxis: next || undefined } } : sh,
+        ),
+      }
+    }),
+  ejectMirror: id => {
+    let newId: string | null = null
+    set(s => {
+      const idx = s.shapes.findIndex(sh => sh.id === id)
+      if (idx === -1) return s
+      const source = s.shapes[idx]
+      if (!source.mirror) return s
+      // Bake the group rotation/scale (which pivots at the combined pair
+      // center while a mirror is attached) into both halves so the ejected
+      // pair stays at its current visual rest pose. Without baking, the
+      // source would jump to its own-bbox-pivoted rotation post-eject and
+      // the reflection would lose its rotational alignment entirely.
+      const rot = shapeRotation(source)
+      const scl = shapeScale(source)
+      const [cx, cy] = pairBBoxCenter(source)
+      const reflected = reflectShape(source, source.mirror.axis)
+      newId = makeId()
+      let bakedSourcePoints = source.points
+      let bakedSourceArc = source.arc
+      let bakedMirrorPoints = reflected.points
+      let bakedMirrorArc = reflected.arc
+      if (rot !== 0 || scl !== 1) {
+        bakedSourcePoints = transformPointsAround(source.points, rot, scl, cx, cy)
+        bakedMirrorPoints = transformPointsAround(reflected.points, rot, scl, cx, cy)
+        // Arc angles in canvas-frame degrees shift by the baked rotation;
+        // mirrors flipShapes' arc-shift logic in `applyTransform`.
+        if (rot !== 0) {
+          if (source.arc) bakedSourceArc = { ...source.arc, start: source.arc.start + rot, end: source.arc.end + rot }
+          if (reflected.arc) {
+            bakedMirrorArc = { ...reflected.arc, start: reflected.arc.start + rot, end: reflected.arc.end + rot }
+          }
+        }
+      }
+      const next = s.shapes.slice()
+      next[idx] = {
+        ...source,
+        points: bakedSourcePoints,
+        rotation: undefined,
+        scale: undefined,
+        mirror: undefined,
+        ...(bakedSourceArc ? { arc: bakedSourceArc } : {}),
+      }
+      const ejected: Shape = {
+        ...reflected,
+        id: newId,
+        points: bakedMirrorPoints,
+        rotation: undefined,
+        scale: undefined,
+        ...(bakedMirrorArc ? { arc: bakedMirrorArc } : {}),
+      }
+      // Insert the ejected copy immediately after the source so it sits one
+      // step above in z-order — matches the "two layers" mental model.
+      next.splice(idx + 1, 0, ejected)
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        dirty: true,
+      }
+    })
+    return newId
+  },
   addPaletteColor: (name, color) =>
     set(s => {
       const trimmed = name.trim()

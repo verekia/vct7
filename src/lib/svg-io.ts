@@ -1,7 +1,7 @@
 import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
 import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation'
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry'
-import { composeTransformString, shapeRotation, shapeScale } from './transform'
+import { composeTransformString, pairBBoxCenter, reflectShape, shapeRotation, shapeScale } from './transform'
 
 import type {
   AnimationFromState,
@@ -10,6 +10,7 @@ import type {
   BlendMode,
   Easing,
   GlyphData,
+  MirrorAxis,
   PaletteColor,
   Point,
   ProjectSettings,
@@ -149,6 +150,13 @@ const parsePointBezierAttr = (raw: string | null): Record<number, number> | unde
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+const parseMirrorAxisAttr = (raw: string | null): MirrorAxis | undefined => {
+  if (!raw) return undefined
+  const parts = raw.split(',').map(s => parseFloat(s.trim()))
+  if (parts.length !== 3 || !parts.every(Number.isFinite)) return undefined
+  return { x: parts[0], y: parts[1], angle: parts[2] }
+}
+
 const parseArcAttr = (raw: string | null): ArcRange | undefined => {
   if (!raw) return undefined
   const parts = raw.split(',').map(s => s.trim())
@@ -210,6 +218,90 @@ const parsePalette = (raw: string | null): PaletteColor[] => {
 }
 
 const escapeAttr = (v: string): string => v.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
+
+const animationEmitsPaint = (shape: Shape, settings: ProjectSettings): boolean =>
+  settings.animationEnabled && !!shape.animation && animationHasPaint(shape)
+
+/**
+ * Compose `translate(C) rotate(r) scale(sc) translate(-C)` with an explicit
+ * pivot. Mirror siblings need this because they have no `mirror` field of
+ * their own (we strip it on `reflectShape` to break recursion), so calling
+ * `composeTransformString` on the reflected shape would pick the reflection's
+ * own bbox center instead of the combined pair pivot we actually want.
+ */
+const transformStringAround = (rot: number, scl: number, cx: number, cy: number): string => {
+  if (rot === 0 && scl === 1) return ''
+  return (
+    `translate(${fmt(cx)} ${fmt(cy)}) ` +
+    `rotate(${fmt(rot)}) scale(${fmt(scl)}) ` +
+    `translate(${fmt(-cx)} ${fmt(-cy)})`
+  )
+}
+
+/**
+ * Build a render-only `<path>` / `<circle>` for the source's mirror copy. The
+ * sibling carries paint attributes (so external viewers render both halves),
+ * `data-v7-mirror-of` so on parse we recognize and skip it (the source's axis
+ * metadata is the authoritative source for the live mirror), and the same
+ * paint-animation class as the source so a per-shape color animation runs on
+ * both halves in sync. No `data-v7-points` — the parser's shape loop bails
+ * on missing points before considering this element.
+ */
+const buildMirrorSibling = (source: Shape, settings: ProjectSettings, emitsPaint: boolean): string | null => {
+  if (!source.mirror) return null
+  const reflected = reflectShape(source, source.mirror.axis)
+  const isCircle = reflected.kind === 'circle' && reflected.points.length >= 2
+  const partialArc = isCircle && isPartialArc(reflected.arc) ? reflected.arc : undefined
+  const filled = partialArc ? partialArc.style !== 'open' : reflected.closed
+  const hasStroke = reflected.stroke !== 'none'
+
+  const attrs: string[] = []
+  attrs.push(`fill="${escapeAttr(filled ? reflected.fill : 'none')}"`)
+  if (hasStroke) {
+    attrs.push(`stroke="${escapeAttr(reflected.stroke)}"`, `stroke-width="${fmt(reflected.strokeWidth)}"`)
+    const isPathElement = !isCircle || !!partialArc
+    if (isPathElement) {
+      const linejoin = reflected.strokeLinejoin ?? 'round'
+      const linecap = reflected.strokeLinecap ?? 'round'
+      attrs.push(`stroke-linejoin="${linejoin}"`, `stroke-linecap="${linecap}"`)
+    }
+    const dash = reflected.strokeDasharray?.trim()
+    if (dash) attrs.push(`stroke-dasharray="${escapeAttr(dash)}"`)
+    if (reflected.paintOrder === 'stroke') attrs.push(`paint-order="stroke"`)
+  }
+  if (reflected.hidden) attrs.push(`visibility="hidden"`)
+  if (reflected.blendMode && reflected.blendMode !== 'normal') {
+    attrs.push(`style="mix-blend-mode:${reflected.blendMode}"`)
+  }
+  if (reflected.opacity !== undefined && reflected.opacity < 1) {
+    attrs.push(`opacity="${fmt(Math.max(0, reflected.opacity))}"`)
+  }
+  attrs.push(`data-v7-mirror-of="${escapeAttr(source.id)}"`)
+  if (emitsPaint) attrs.push(`class="vh-anim-${source.id}-paint"`)
+
+  // Use the source's combined pair pivot for the reflection's transform so
+  // both halves rotate/scale around the same center.
+  const rot = shapeRotation(source)
+  const scl = shapeScale(source)
+  const [cx, cy] = pairBBoxCenter(source)
+  const composed = transformStringAround(rot, scl, cx, cy)
+  const transformAttr = composed ? ` transform="${composed}"` : ''
+
+  if (isCircle && !partialArc) {
+    const [rcx, rcy] = reflected.points[0]
+    const r = dist(reflected.points[0], reflected.points[1])
+    return `<circle cx="${fmt(rcx)}" cy="${fmt(rcy)}" r="${fmt(r)}"${transformAttr} ${attrs.join(' ')}/>`
+  }
+  if (isCircle && partialArc) {
+    const [rcx, rcy] = reflected.points[0]
+    const r = dist(reflected.points[0], reflected.points[1])
+    const d = arcToPath(rcx, rcy, r, partialArc)
+    return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
+  }
+  const bz = reflected.bezierOverride ?? settings.bezier
+  const d = pointsToPath(reflected.points, reflected.closed, bz, reflected.pointBezierOverrides)
+  return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
+}
 
 let nextId = 1
 export const makeId = (): string => `s${nextId++}`
@@ -336,6 +428,11 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.opacity !== undefined && shape.opacity < 1) {
       baseAttrs.push(`opacity="${fmt(Math.max(0, shape.opacity))}"`)
     }
+    if (shape.mirror) {
+      const ax = shape.mirror.axis
+      baseAttrs.push(`data-v7-mirror-axis="${fmt(ax.x)},${fmt(ax.y)},${fmt(ax.angle)}"`)
+      if (shape.mirror.showAxis) baseAttrs.push(`data-v7-mirror-show-axis="true"`)
+    }
     // Animation metadata is only emitted when the project switch is on, so the
     // file is byte-identical to a non-animated project when the user toggles
     // animation off.
@@ -380,23 +477,38 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`
     }
 
+    // Build the live mirror's sibling element when this shape has one. The
+    // sibling carries the reflected geometry as a real <path>/<circle> so any
+    // SVG viewer renders both halves; we mark it `data-v7-mirror-of` so the
+    // parser knows it's derived (it gets recomputed on load from the source's
+    // axis metadata, never read directly). No `data-v7-points` means the
+    // parser's regular shape path skips it cleanly.
+    const mirrorElement: string | null = shape.mirror
+      ? buildMirrorSibling(shape, settings, animationEmitsPaint(shape, settings))
+      : null
+
     // Wrap animated shapes in a <g> the CSS keyframes can target. Only when
     // animationEnabled — otherwise emit the raw element (no extra DOM node).
     // When spin is set, an extra nested wrapper carries the spin animation so
-    // the entrance's transform animation is not shadowed.
+    // the entrance's transform animation is not shadowed. With a live mirror,
+    // both source and reflection sit inside the same wrapper so they animate
+    // as one rigid group (matching the in-editor pivot).
     if (settings.animationEnabled && shape.animation) {
       const id = shape.id
       lines.push(`  <g class="vh-anim-${id}">`)
       if (animationHasSpin(shape)) {
         lines.push(`    <g class="vh-anim-${id}-spin">`)
         lines.push(`      ${element}`)
+        if (mirrorElement) lines.push(`      ${mirrorElement}`)
         lines.push(`    </g>`)
       } else {
         lines.push(`    ${element}`)
+        if (mirrorElement) lines.push(`    ${mirrorElement}`)
       }
       lines.push(`  </g>`)
     } else {
       lines.push(`  ${element}`)
+      if (mirrorElement) lines.push(`  ${mirrorElement}`)
     }
   }
   if (settings.clip) lines.push('  </g>')
@@ -497,6 +609,9 @@ export function parseProject(text: string): ParsedProject {
   const shapes: Shape[] = []
   // Iterate path AND circle elements in document order so z-order survives.
   for (const el of Array.from(svg.querySelectorAll('path, circle'))) {
+    // Skip render-only mirror siblings — they are derived on the fly from the
+    // source's `data-v7-mirror-axis` and don't materialize as their own Shape.
+    if (el.hasAttribute('data-v7-mirror-of')) continue
     const ptsAttr = el.getAttribute('data-v7-points')
     if (!ptsAttr) continue
     const points = ptsAttr
@@ -552,6 +667,10 @@ export function parseProject(text: string): ParsedProject {
     const scaleNum = scaleAttr === null ? NaN : parseFloat(scaleAttr)
     const scale = Number.isFinite(scaleNum) && scaleNum !== 1 ? scaleNum : undefined
     const animation = parseAnimationAttr(el.getAttribute('data-v7-anim'))
+    const mirrorAxis = parseMirrorAxisAttr(el.getAttribute('data-v7-mirror-axis'))
+    const mirror = mirrorAxis
+      ? { axis: mirrorAxis, ...(el.getAttribute('data-v7-mirror-show-axis') === 'true' ? { showAxis: true } : {}) }
+      : undefined
     // The legacy default is 'round' for both — treat round as undefined so
     // re-saving a legacy file doesn't introduce a difference, and only persist
     // explicit non-default choices in memory.
@@ -601,6 +720,7 @@ export function parseProject(text: string): ParsedProject {
       ...(rotation !== undefined ? { rotation } : {}),
       ...(scale !== undefined ? { scale } : {}),
       ...(animation ? { animation } : {}),
+      ...(mirror ? { mirror } : {}),
     })
   }
 

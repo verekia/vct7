@@ -118,6 +118,33 @@ export interface Shape {
    * export.
    */
   animation?: AnimationSpec
+  /**
+   * Live mirror modifier — adds a reflected copy of the shape that updates as
+   * the source is edited. Source and reflection behave as one rigid pair: the
+   * shape's instance rotation/scale and its animation pivot move from the
+   * source's bbox center to the *combined* bbox center while a mirror is
+   * attached. Use `ejectMirror` on the store to bake the reflection into a
+   * second independent shape.
+   */
+  mirror?: MirrorSpec
+}
+
+/**
+ * Mirror axis as a line through `(x, y)` at `angle` degrees from the canvas
+ * x-axis (0 = horizontal line, 90 = vertical line / horizontal flip). Stored
+ * in the source shape's untransformed coord space — the source's instance
+ * rotation rotates the axis with the shape so the pair behaves as a unit.
+ */
+export interface MirrorAxis {
+  x: number
+  y: number
+  angle: number
+}
+
+export interface MirrorSpec {
+  axis: MirrorAxis
+  /** Render the bright-green axis line + its drag handles on canvas. Default false. */
+  showAxis?: boolean
 }
 
 /**

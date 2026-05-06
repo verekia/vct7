@@ -504,3 +504,43 @@ describe('parseProject round-trip', () => {
     expect(parsed.shapes[1].locked).toBe(false)
   })
 })
+
+describe('mirror round-trip', () => {
+  const mirrored: Shape = {
+    id: 'm',
+    points: [
+      [0, 0],
+      [10, 0],
+      [10, 10],
+    ],
+    closed: true,
+    fill: '#0000ff',
+    stroke: 'none',
+    strokeWidth: 1,
+    bezierOverride: null,
+    hidden: false,
+    locked: false,
+    mirror: { axis: { x: 20, y: 0, angle: 90 }, showAxis: true },
+  }
+
+  it('emits the source plus a sibling element for the live mirror', () => {
+    const text = serializeProject(sampleSettings, [mirrored])
+    expect(text).toContain('data-v7-mirror-axis="20,0,90"')
+    expect(text).toContain('data-v7-mirror-show-axis="true"')
+    // Sibling carries data-v7-mirror-of so the parser knows to skip it.
+    expect(text).toContain(`data-v7-mirror-of="${mirrored.id}"`)
+    // Two visible elements (source + sibling) for one logical Shape.
+    const elements = text.match(/<(?:path|circle)[^/]*\/>/g) ?? []
+    expect(elements.length).toBe(2)
+  })
+
+  it('parses back to a single Shape with the mirror metadata restored', () => {
+    resetIds(1)
+    const text = serializeProject(sampleSettings, [mirrored])
+    const parsed = parseProject(text)
+    expect(parsed.shapes).toHaveLength(1)
+    expect(parsed.shapes[0].mirror).toBeDefined()
+    expect(parsed.shapes[0].mirror?.axis).toEqual({ x: 20, y: 0, angle: 90 })
+    expect(parsed.shapes[0].mirror?.showAxis).toBe(true)
+  })
+})

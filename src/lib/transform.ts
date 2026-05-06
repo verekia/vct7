@@ -1,6 +1,6 @@
 import { bbox, dist, fmt } from './geometry'
 
-import type { Point, Shape } from '../types'
+import type { MirrorAxis, Point, Shape } from '../types'
 
 /**
  * Effective rotation (degrees) and uniform scale of a shape. Defaults so callers
@@ -66,7 +66,7 @@ export const composeTransformString = (shape: Shape): string => {
     )
   }
 
-  const [cx, cy] = shapeBBoxCenter(shape)
+  const [cx, cy] = shapePivot(shape)
   return (
     `translate(${fmt(cx)} ${fmt(cy)}) ` +
     `rotate(${fmt(rot)}) scale(${fmt(scl)}) ` +
@@ -79,7 +79,7 @@ export const applyTransformToPoint = (shape: Shape, p: Point): Point => {
   const rot = shapeRotation(shape)
   const scl = shapeScale(shape)
   if (rot === 0 && scl === 1) return p
-  const [cx, cy] = shapeBBoxCenter(shape)
+  const [cx, cy] = shapePivot(shape)
   const dx = (p[0] - cx) * scl
   const dy = (p[1] - cy) * scl
   const rad = (rot * Math.PI) / 180
@@ -87,6 +87,98 @@ export const applyTransformToPoint = (shape: Shape, p: Point): Point => {
   const sin = Math.sin(rad)
   return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos]
 }
+
+/**
+ * Reflect a point across a line through `(ax, ay)` at `angle` degrees from
+ * the x-axis. Standard 2D reflection: shift the line to the origin, rotate so
+ * it lies on the x-axis, negate y, undo. The closed-form below folds those
+ * three steps into a single matrix application.
+ */
+export const reflectPoint = (p: Point, axis: MirrorAxis): Point => {
+  const rad = (axis.angle * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const dx = p[0] - axis.x
+  const dy = p[1] - axis.y
+  // M = R(-θ) · diag(1,-1) · R(θ) — reflection across the line at angle θ.
+  // Expanded: [[cos2θ, sin2θ], [sin2θ, -cos2θ]].
+  const c2 = cos * cos - sin * sin
+  const s2 = 2 * sin * cos
+  return [axis.x + c2 * dx + s2 * dy, axis.y + s2 * dx - c2 * dy]
+}
+
+/**
+ * Default axis for a freshly-enabled mirror: a vertical line through the
+ * shape's bbox center, which produces an immediate horizontal reflection.
+ */
+export const defaultMirrorAxis = (shape: Shape): MirrorAxis => {
+  const [cx, cy] = shapeBBoxCenter(shape)
+  return { x: cx, y: cy, angle: 90 }
+}
+
+/**
+ * Reflect a shape's geometry across `axis`. Used by the live-mirror renderer
+ * (each frame) and by `ejectMirror` (one-shot bake). The result keeps the
+ * source's `rotation` / `scale` *unchanged* — the live renderer applies them
+ * to source and reflection alike around the combined pair pivot, so the pair
+ * rotates as one rigid group rather than each half pivoting independently.
+ *
+ * Arc angles flip across the reflection line (α → 2θ − α) and start/end swap
+ * so the clockwise-sweep convention survives. `mirror` is cleared on the
+ * output to prevent recursion (`pairBBoxCenter` calls this helper).
+ */
+export const reflectShape = (shape: Shape, axis: MirrorAxis): Shape => {
+  const newPoints = shape.points.map(p => reflectPoint(p, axis))
+  const next: Shape = { ...shape, points: newPoints, mirror: undefined }
+  if (shape.kind === 'circle' && shape.arc) {
+    const a = shape.arc
+    next.arc = { ...a, start: 2 * axis.angle - a.end, end: 2 * axis.angle - a.start }
+  }
+  return next
+}
+
+/**
+ * Rotate + scale `points` around an explicit pivot, returning new points.
+ * Used by `ejectMirror` to bake the group transform (which pivots at the
+ * combined pair center, not the shape's own bbox) into both the source and
+ * the materialized reflection so the ejected pair is at its visual rest pose.
+ */
+export const transformPointsAround = (points: Point[], rot: number, scl: number, cx: number, cy: number): Point[] => {
+  if (rot === 0 && scl === 1) return points.map(p => [p[0], p[1]] as Point)
+  const rad = (rot * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  return points.map(p => {
+    const dx = (p[0] - cx) * scl
+    const dy = (p[1] - cy) * scl
+    return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos] as Point
+  })
+}
+
+/**
+ * Combined bbox center of a source shape and its mirrored counterpart, in
+ * the same canvas coords as `shapeBBoxCenter`. This is the rotation/scale
+ * pivot used while a mirror is attached so the pair rotates and animates as
+ * one rigid group rather than each half pivoting independently.
+ */
+export const pairBBoxCenter = (shape: Shape): Point => {
+  if (!shape.mirror) return shapeBBoxCenter(shape)
+  const a = untransformedBBox(shape)
+  const reflected = reflectShape(shape, shape.mirror.axis)
+  const b = untransformedBBox(reflected)
+  const minX = Math.min(a.x, b.x)
+  const minY = Math.min(a.y, b.y)
+  const maxX = Math.max(a.x + a.w, b.x + b.w)
+  const maxY = Math.max(a.y + a.h, b.y + b.h)
+  return [(minX + maxX) / 2, (minY + maxY) / 2]
+}
+
+/**
+ * Pivot for the shape's rotation/scale and animation transforms — the
+ * combined center while a mirror is attached, the source's own bbox center
+ * otherwise. Matches the user-visible "rotate as a group" rule.
+ */
+export const shapePivot = (shape: Shape): Point => (shape.mirror ? pairBBoxCenter(shape) : shapeBBoxCenter(shape))
 
 /** AABB of the rotated+scaled bbox. Used by marquee selection so a rotated shape still hits. */
 export const visualBBox = (shape: Shape): { x: number; y: number; w: number; h: number } => {

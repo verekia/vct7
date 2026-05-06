@@ -852,3 +852,127 @@ describe('store: applyOpacity', () => {
     expect(useStore.getState().past).toEqual([])
   })
 })
+
+describe('store: live mirror', () => {
+  const seed = () =>
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+
+  it('enableMirror sets a default vertical axis through the bbox center', () => {
+    seed()
+    useStore.getState().enableMirror('a')
+    const sh = useStore.getState().shapes[0]
+    expect(sh.mirror).toBeDefined()
+    expect(sh.mirror?.axis.angle).toBe(90)
+    // Bbox of the seed triangle is [0..10, 0..10] → center (5, 5).
+    expect(sh.mirror?.axis.x).toBeCloseTo(5)
+    expect(sh.mirror?.axis.y).toBeCloseTo(5)
+  })
+
+  it('enableMirror is a no-op on glyph shapes (matches flipShapes guard)', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'g',
+          kind: 'glyphs',
+          points: [
+            [0, 0],
+            [50, 50],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          glyphs: { d: 'M0 0', text: 'X', fontFamily: 'serif', fontSize: 50, width: 50, height: 50 },
+        },
+      ],
+    })
+    useStore.getState().enableMirror('g')
+    expect(useStore.getState().shapes[0].mirror).toBeUndefined()
+  })
+
+  it('updateMirrorAxis patches axis fields and coalesces drags', () => {
+    seed()
+    useStore.getState().enableMirror('a')
+    const before = useStore.getState().past.length
+    useStore.getState().updateMirrorAxis('a', { angle: 45 })
+    useStore.getState().updateMirrorAxis('a', { angle: 60 })
+    useStore.getState().updateMirrorAxis('a', { x: 0 })
+    const sh = useStore.getState().shapes[0]
+    expect(sh.mirror?.axis.angle).toBe(60)
+    expect(sh.mirror?.axis.x).toBe(0)
+    // Coalesced: all three writes share one history entry on top of enableMirror's.
+    expect(useStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('toggleMirrorAxisVisibility flips the showAxis flag', () => {
+    seed()
+    useStore.getState().enableMirror('a')
+    expect(useStore.getState().shapes[0].mirror?.showAxis).toBeUndefined()
+    useStore.getState().toggleMirrorAxisVisibility('a')
+    expect(useStore.getState().shapes[0].mirror?.showAxis).toBe(true)
+    useStore.getState().toggleMirrorAxisVisibility('a')
+    expect(useStore.getState().shapes[0].mirror?.showAxis).toBeUndefined()
+  })
+
+  it('disableMirror removes the modifier without baking', () => {
+    seed()
+    useStore.getState().enableMirror('a')
+    useStore.getState().disableMirror('a')
+    expect(useStore.getState().shapes).toHaveLength(1)
+    expect(useStore.getState().shapes[0].mirror).toBeUndefined()
+  })
+
+  it('ejectMirror inserts a baked sibling right after the source', () => {
+    seed()
+    useStore.getState().enableMirror('a')
+    // Move axis to x=20 so the reflection lands at x ∈ [30..40].
+    useStore.getState().updateMirrorAxis('a', { x: 20, angle: 90 })
+    const newId = useStore.getState().ejectMirror('a')
+    expect(newId).not.toBeNull()
+    const shapes = useStore.getState().shapes
+    expect(shapes).toHaveLength(2)
+    expect(shapes[0].id).toBe('a')
+    expect(shapes[0].mirror).toBeUndefined()
+    expect(shapes[1].id).toBe(newId as string)
+    // Source point (10, 0) reflects across vertical line at x=20 → (30, 0).
+    expect(shapes[1].points[1][0]).toBeCloseTo(30)
+    expect(shapes[1].points[1][1]).toBeCloseTo(0)
+  })
+
+  it('ejectMirror bakes the group rotation into both halves', () => {
+    seed()
+    useStore.getState().enableMirror('a')
+    useStore.getState().updateShape('a', { rotation: 90 })
+    const newId = useStore.getState().ejectMirror('a')!
+    const shapes = useStore.getState().shapes
+    expect(shapes[0].rotation).toBeUndefined()
+    expect(shapes.find(s => s.id === newId)?.rotation).toBeUndefined()
+  })
+
+  it('ejectMirror is a no-op when mirror is not set', () => {
+    seed()
+    expect(useStore.getState().ejectMirror('a')).toBeNull()
+    expect(useStore.getState().shapes).toHaveLength(1)
+  })
+})
