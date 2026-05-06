@@ -325,7 +325,8 @@
     stroke: var(--color-accent);
     stroke-width: 1.5;
     vector-effect: non-scaling-stroke;
-    pointer-events: none;
+    pointer-events: all;
+    cursor: move;
   }
   .vertex-handle.selected {
     fill: var(--color-accent);
@@ -347,10 +348,6 @@
   }
   .canvas-svg.tool-select .shape-hit {
     cursor: move;
-  }
-  .canvas-svg.tool-select .vertex-handle {
-    cursor: move;
-    pointer-events: all;
   }
   .canvas-svg:not(.tool-select) .shape-hit {
     pointer-events: none;

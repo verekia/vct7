@@ -257,7 +257,17 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       if (e.button !== 0) return
 
       const { snapped } = updateCursor(e.clientX, e.clientY)
-      const state = useStore.getState()
+      const ref = findShapeRef(e.target)
+      let state = useStore.getState()
+
+      // Clicking a vertex handle of the selected shape always means "edit this
+      // vertex" — even mid-drawing. Handles only render for the selected
+      // shape, so a hit unambiguously expresses edit intent. Auto-switch to
+      // select so the existing vertex-drag path runs as-is.
+      if (ref.shapeId && ref.vertexIndex !== undefined && state.tool !== 'select') {
+        state.setTool('select')
+        state = useStore.getState()
+      }
 
       if (state.tool === 'line' || state.tool === 'polygon' || state.tool === 'circle') {
         if (!state.drawing) {
@@ -285,7 +295,6 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       }
 
       // Select tool
-      const ref = findShapeRef(e.target)
       if (ref.shapeId && ref.mirrorHandle) {
         const target = state.shapes.find(sh => sh.id === ref.shapeId)
         if (target?.mirror && !hasTransform(target)) {
