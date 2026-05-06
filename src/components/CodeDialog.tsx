@@ -18,7 +18,8 @@ export function CodeButton() {
 function CodeDialog({ onClose }: { onClose: () => void }) {
   const settings = useStore(s => s.settings)
   const shapes = useStore(s => s.shapes)
-  const code = useMemo(() => serializeProject(settings, shapes), [settings, shapes])
+  const groups = useStore(s => s.groups)
+  const code = useMemo(() => serializeProject(settings, shapes, groups), [settings, shapes, groups])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -127,6 +127,24 @@ export interface Shape {
    * second independent shape.
    */
   mirror?: MirrorSpec
+  /**
+   * Optional group membership — when set, the shape is a member of the
+   * project-level group with this id. Group is purely a logical/selection
+   * concept (no nesting, no transform inheritance); members keep their own
+   * z-position in the shapes array.
+   */
+  groupId?: string
+}
+
+/**
+ * Project-level group — a flat, named container shapes can opt into via
+ * `groupId`. Groups live independently of z-order so members can appear
+ * anywhere in the shape stack. Click-cycling on the canvas alternates between
+ * selecting the whole group and the clicked individual member.
+ */
+export interface Group {
+  id: string
+  name: string
 }
 
 /**

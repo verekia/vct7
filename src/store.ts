@@ -19,6 +19,7 @@ import {
 import type {
   Drawing,
   GlyphData,
+  Group,
   MirrorAxis,
   PaletteColor,
   Point,
@@ -41,6 +42,7 @@ export interface BoxSelect {
 interface HistoryEntry {
   shapes: Shape[]
   settings: ProjectSettings
+  groups: Group[]
   /** Identifies a logical edit so rapid repeats (slider drags) collapse. */
   coalesceKey?: string
   pushedAt: number
@@ -86,13 +88,66 @@ const shiftPointBeziersForInsert = (
   return Object.keys(next).length > 0 ? next : undefined
 }
 
+/** Tolerance for "are these two vertices the same point" used by mergeShapes. */
+const POINT_EQ_TOL = 1e-3
+const pointsClose = (a: Point, b: Point): boolean => {
+  const dx = a[0] - b[0]
+  const dy = a[1] - b[1]
+  return dx * dx + dy * dy < POINT_EQ_TOL * POINT_EQ_TOL
+}
+
+/**
+ * Of the two arcs of a closed point ring split by indices `i` and `j`, return
+ * the one with more vertices (the polygon's body, as opposed to the seam edge
+ * between two adjacent shared vertices). Both endpoints of the returned arc
+ * are the seam vertices `pts[i]` / `pts[j]`. Used by mergeShapes to pick the
+ * "outward" arc for each polygon — same shape as mergeMirror's heuristic.
+ */
+const longerArc = (pts: Point[], i: number, j: number): Point[] => {
+  const n = pts.length
+  const lo = Math.min(i, j)
+  const hi = Math.max(i, j)
+  const forward: Point[] = []
+  for (let k = lo; k <= hi; k++) forward.push(pts[k])
+  const wrap: Point[] = []
+  for (let k = hi; k < n; k++) wrap.push(pts[k])
+  for (let k = 0; k <= lo; k++) wrap.push(pts[k])
+  return forward.length >= wrap.length ? forward : wrap
+}
+
+/** First name not already taken by an existing group, in `Group N` form. */
+const defaultGroupName = (groups: Group[]): string => {
+  const taken = new Set(groups.map(g => g.name))
+  for (let n = 1; n <= groups.length + 1; n++) {
+    const candidate = `Group ${n}`
+    if (!taken.has(candidate)) return candidate
+  }
+  return `Group ${groups.length + 1}`
+}
+
+/**
+ * Build a Group[] from shapes whose groupIds reference groups not present in
+ * the parser's record list (older files written before the v7-groups attribute,
+ * or hand-edited SVGs). Each unique groupId gets a generated display name.
+ */
+const synthesizeGroupsFromShapes = (shapes: Shape[]): Group[] => {
+  const seen = new Set<string>()
+  const out: Group[] = []
+  for (const sh of shapes) {
+    if (!sh.groupId || seen.has(sh.groupId)) continue
+    seen.add(sh.groupId)
+    out.push({ id: sh.groupId, name: `Group ${out.length + 1}` })
+  }
+  return out
+}
+
 const MAX_HISTORY = 100
 /** Repeated pushes with the same coalesceKey within this window replace the top entry. */
 const COALESCE_WINDOW_MS = 800
 const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
 const pushSnapshot = (
-  s: { past: HistoryEntry[]; shapes: Shape[]; settings: ProjectSettings },
+  s: { past: HistoryEntry[]; shapes: Shape[]; settings: ProjectSettings; groups: Group[] },
   coalesceKey?: string,
 ): { past: HistoryEntry[]; future: HistoryEntry[] } => {
   const t = now()
@@ -107,6 +162,7 @@ const pushSnapshot = (
   const entry: HistoryEntry = {
     shapes: s.shapes,
     settings: s.settings,
+    groups: s.groups,
     coalesceKey,
     pushedAt: t,
   }
@@ -117,6 +173,12 @@ const pushSnapshot = (
 
 export interface AppState {
   shapes: Shape[]
+  /**
+   * Project-level groups. Membership is encoded on each shape via `groupId`;
+   * this array is the authoritative list of group records (id + display name)
+   * including empty groups, which the layer panel surfaces as drop targets.
+   */
+  groups: Group[]
   selectedShapeIds: string[]
   /** Last shape id that anchored the selection (plain or cmd click). Drives shift+click range. */
   selectionAnchorId: string | null
@@ -322,6 +384,38 @@ export interface AppState {
    */
   mergeMirror: (id: string) => boolean
   /**
+   * Stitch two layers (both polygons or both lines) into a single shape along
+   * coincident vertices. For closed polygons the two shapes must share exactly
+   * two vertices (the seam); the longer arc of each is concatenated. For open
+   * lines at least one endpoint of `idA` must coincide with an endpoint of
+   * `idB`; the result is a single polyline (or a closed polygon when both
+   * endpoint pairs match). The first id's shape inherits the merged geometry
+   * and keeps its position in the z-stack and group; the second is removed.
+   * Returns true on success, false when the shapes don't qualify.
+   */
+  mergeShapes: (idA: string, idB: string) => boolean
+  /**
+   * Append a new empty group with a default name. Returns the new group id so
+   * callers can immediately rename or assign members. The id space is shared
+   * with shape ids (`makeId`) so groupId / shapeId references can't collide.
+   */
+  addGroup: () => string
+  /** Remove a group; member shapes lose their `groupId` (no shapes are deleted). */
+  removeGroup: (id: string) => void
+  /** Rename a group; trims whitespace, ignores empty names. */
+  renameGroup: (id: string, name: string) => void
+  /**
+   * Set or clear a shape's group membership. Pass `undefined` to ungroup.
+   * Group membership is independent of z-order — the shape stays at its
+   * current position in the array.
+   */
+  setShapeGroup: (shapeId: string, groupId: string | undefined) => void
+  /**
+   * Replace the selection with every shape that belongs to `groupId`. Empty
+   * groups produce an empty selection (clears any current selection).
+   */
+  selectGroup: (groupId: string) => void
+  /**
    * Add a new palette entry. The name must be unique and non-empty; if either
    * condition fails the call is a no-op so callers don't have to guard.
    */
@@ -346,7 +440,7 @@ export interface AppState {
   setShapePaletteRef: (id: string, channel: 'fill' | 'stroke', name: string | undefined) => void
   /** Same as above for the project background. */
   setBgPaletteRef: (name: string | undefined) => void
-  setProject: (settings: ProjectSettings, shapes: Shape[]) => void
+  setProject: (settings: ProjectSettings, shapes: Shape[], groups?: Group[]) => void
   newProject: () => void
   setFileMeta: (name: string, handle: unknown) => void
   markDirty: () => void
@@ -368,6 +462,7 @@ const DEFAULT_VIEW: ViewState = { x: 0, y: 0, scale: 1 }
 
 export const useStore = create<AppState>(set => ({
   shapes: [],
+  groups: [],
   selectedShapeIds: [],
   selectionAnchorId: null,
   selectedVertices: [],
@@ -1226,6 +1321,182 @@ export const useStore = create<AppState>(set => ({
     })
     return merged
   },
+  mergeShapes: (idA, idB) => {
+    let merged = false
+    set(s => {
+      if (idA === idB) return s
+      const idxA = s.shapes.findIndex(sh => sh.id === idA)
+      const idxB = s.shapes.findIndex(sh => sh.id === idB)
+      if (idxA === -1 || idxB === -1) return s
+      const a = s.shapes[idxA]
+      const b = s.shapes[idxB]
+      // Same exclusions as mergeMirror — only path / polygon shapes have a
+      // sensible "shared vertices" topology to stitch along.
+      if (a.kind === 'circle' || a.kind === 'glyphs') return s
+      if (b.kind === 'circle' || b.kind === 'glyphs') return s
+      if (a.closed !== b.closed) return s
+      // Live transforms (rotation/scale) make the shapes' rendered coords
+      // diverge from `points`; coincidence has to be checked at the visual
+      // positions. Bake any pending transform into the points first so the
+      // merge operates on a single consistent coordinate space.
+      const pointsOf = (sh: Shape): Point[] =>
+        hasTransform(sh) ? sh.points.map(p => applyTransformToPoint(sh, p)) : sh.points
+      const aPoints = pointsOf(a)
+      const bPoints = pointsOf(b)
+
+      let nextPoints: Point[] | null = null
+      let nextClosed = a.closed
+      if (a.closed) {
+        // Polygon-to-polygon merge: need exactly two coincident vertex pairs
+        // (the seam). The longer arc of each shape is the body we keep; we
+        // splice them around the seam vertices, dropping the duplicates.
+        const shared: { i: number; j: number }[] = []
+        for (let i = 0; i < aPoints.length; i++) {
+          for (let j = 0; j < bPoints.length; j++) {
+            if (pointsClose(aPoints[i], bPoints[j])) {
+              shared.push({ i, j })
+              break
+            }
+          }
+        }
+        if (shared.length !== 2) return s
+        const arcA = longerArc(aPoints, shared[0].i, shared[1].i)
+        const arcB = longerArc(bPoints, shared[0].j, shared[1].j)
+        // arcA already includes both seam endpoints; arcB's interior is what we
+        // splice in. Walk arcB in reverse so the orientation lines up — this
+        // mirrors the polygon-merge stitch in mergeMirror.
+        const interiorB: Point[] = []
+        for (let k = arcB.length - 2; k > 0; k--) interiorB.push(arcB[k])
+        // Either shared endpoint of arcA might be at a different position in
+        // arcB; ensure the splice closes back onto arcA's start. The two
+        // endpoints of arcA correspond to the two seam vertices (shared[0],
+        // shared[1]); arcB ends at shared[1] and starts at shared[0] (or vice
+        // versa). With the reverse walk above, interiorB joins arcA seamlessly.
+        nextPoints = [...arcA, ...interiorB]
+      } else {
+        // Polyline merge: need at least one endpoint of `a` to coincide with
+        // an endpoint of `b`. We try the pairings in a fixed order; the first
+        // match wins.
+        const aStart = aPoints[0]
+        const aEnd = aPoints[aPoints.length - 1]
+        const bStart = bPoints[0]
+        const bEnd = bPoints[bPoints.length - 1]
+        if (pointsClose(aEnd, bStart)) {
+          nextPoints = [...aPoints, ...bPoints.slice(1)]
+        } else if (pointsClose(aStart, bEnd)) {
+          nextPoints = [...bPoints, ...aPoints.slice(1)]
+        } else if (pointsClose(aStart, bStart)) {
+          nextPoints = [...aPoints.toReversed(), ...bPoints.slice(1)]
+        } else if (pointsClose(aEnd, bEnd)) {
+          const reversed = bPoints.toReversed()
+          nextPoints = [...aPoints, ...reversed.slice(1)]
+        } else {
+          return s
+        }
+        // When both endpoint pairs coincide the join wraps around — drop the
+        // duplicated final point and emit a closed polygon.
+        if (nextPoints.length >= 3 && pointsClose(nextPoints[0], nextPoints[nextPoints.length - 1])) {
+          nextPoints = nextPoints.slice(0, -1)
+          nextClosed = true
+        }
+      }
+
+      if (!nextPoints || nextPoints.length < 2) return s
+      const next = s.shapes.slice()
+      next[idxA] = {
+        ...a,
+        points: nextPoints,
+        closed: nextClosed,
+        // Baked the transform above (via pointsOf); reset both fields so the
+        // merged shape stays at the same visual pose. Per-vertex bezier
+        // overrides no longer line up with the new point list — drop them
+        // rather than guess; same convention as mergeMirror.
+        rotation: undefined,
+        scale: undefined,
+        pointBezierOverrides: undefined,
+        // Mirror modifier on either source is meaningless after a merge —
+        // there's no longer a clean axis relationship to preserve.
+        mirror: undefined,
+      }
+      // Remove the second shape; preserve idxA's spot in the array (and group
+      // membership) so the merged result keeps its z-order and group. We
+      // wrote next[idxA] above before splicing, so when idxB < idxA the
+      // merged element simply shifts up by one — both halves still drop the
+      // intended shape.
+      next.splice(idxB, 1)
+      merged = true
+      const removedSet = new Set([idB])
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        selectedShapeIds: [idA],
+        selectionAnchorId: idA,
+        selectedVertices: s.selectedVertices.filter(v => !removedSet.has(v.shapeId)),
+        dirty: true,
+      }
+    })
+    return merged
+  },
+  addGroup: () => {
+    const id = makeId()
+    set(s => ({
+      ...pushSnapshot(s),
+      groups: [...s.groups, { id, name: defaultGroupName(s.groups) }],
+      dirty: true,
+    }))
+    return id
+  },
+  removeGroup: id =>
+    set(s => {
+      if (!s.groups.some(g => g.id === id)) return s
+      return {
+        ...pushSnapshot(s),
+        groups: s.groups.filter(g => g.id !== id),
+        // Clear the membership pointer on every shape; we keep the shapes
+        // themselves so removing a group never deletes user geometry.
+        shapes: s.shapes.map(sh => (sh.groupId === id ? { ...sh, groupId: undefined } : sh)),
+        dirty: true,
+      }
+    }),
+  renameGroup: (id, name) =>
+    set(s => {
+      const trimmed = name.trim()
+      if (!trimmed) return s
+      const idx = s.groups.findIndex(g => g.id === id)
+      if (idx === -1) return s
+      if (s.groups[idx].name === trimmed) return s
+      const groups = s.groups.slice()
+      groups[idx] = { ...groups[idx], name: trimmed }
+      return {
+        ...pushSnapshot(s, `renameGroup:${id}`),
+        groups,
+        dirty: true,
+      }
+    }),
+  setShapeGroup: (shapeId, groupId) =>
+    set(s => {
+      const shape = s.shapes.find(sh => sh.id === shapeId)
+      if (!shape) return s
+      // No-op when nothing changes — don't pollute the undo stack.
+      if (shape.groupId === groupId) return s
+      // Reject unknown group ids so a stale ref can't sneak through; passing
+      // undefined to ungroup is always allowed.
+      if (groupId !== undefined && !s.groups.some(g => g.id === groupId)) return s
+      return {
+        ...pushSnapshot(s),
+        shapes: s.shapes.map(sh => (sh.id === shapeId ? { ...sh, groupId } : sh)),
+        dirty: true,
+      }
+    }),
+  selectGroup: groupId =>
+    set(s => {
+      const ids = s.shapes.filter(sh => sh.groupId === groupId).map(sh => sh.id)
+      return {
+        selectedShapeIds: ids,
+        selectionAnchorId: ids.length ? ids[ids.length - 1] : null,
+        selectedVertices: [],
+      }
+    }),
   addPaletteColor: (name, color) =>
     set(s => {
       const trimmed = name.trim()
@@ -1333,10 +1604,15 @@ export const useStore = create<AppState>(set => ({
         dirty: true,
       }
     }),
-  setProject: (settings, shapes) =>
+  setProject: (settings, shapes, groups) =>
     set(s => ({
       settings,
       shapes,
+      // The parser supplies the authoritative group list (preserving names
+      // and including empty groups). When older callers omit it we synthesize
+      // entries from the shapes' groupIds so legacy files without explicit
+      // group records still get usable defaults.
+      groups: groups ?? synthesizeGroupsFromShapes(shapes),
       selectedShapeIds: [],
       selectionAnchorId: null,
       selectedVertices: [],
@@ -1354,6 +1630,7 @@ export const useStore = create<AppState>(set => ({
     set(s => ({
       settings: { ...DEFAULT_SETTINGS },
       shapes: [],
+      groups: [],
       selectedShapeIds: [],
       selectionAnchorId: null,
       selectedVertices: [],
@@ -1378,6 +1655,7 @@ export const useStore = create<AppState>(set => ({
       const redoEntry: HistoryEntry = {
         shapes: s.shapes,
         settings: s.settings,
+        groups: s.groups,
         pushedAt: now(),
       }
       const future = [...s.future, redoEntry]
@@ -1389,6 +1667,7 @@ export const useStore = create<AppState>(set => ({
         future,
         shapes: top.shapes,
         settings: top.settings,
+        groups: top.groups,
         selectedShapeIds,
         selectionAnchorId: s.selectionAnchorId && restoredIds.has(s.selectionAnchorId) ? s.selectionAnchorId : null,
         selectedVertices: [],
@@ -1404,6 +1683,7 @@ export const useStore = create<AppState>(set => ({
       const undoEntry: HistoryEntry = {
         shapes: s.shapes,
         settings: s.settings,
+        groups: s.groups,
         pushedAt: now(),
       }
       const past = [...s.past, undoEntry]
@@ -1414,6 +1694,7 @@ export const useStore = create<AppState>(set => ({
         future,
         shapes: top.shapes,
         settings: top.settings,
+        groups: top.groups,
         selectedShapeIds,
         selectionAnchorId: s.selectionAnchorId && restoredIds.has(s.selectionAnchorId) ? s.selectionAnchorId : null,
         selectedVertices: [],

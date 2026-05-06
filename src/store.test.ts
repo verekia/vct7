@@ -7,6 +7,7 @@ const reset = () => {
   // Replace the Zustand state without losing action references.
   useStore.setState({
     shapes: [],
+    groups: [],
     selectedShapeIds: [],
     selectionAnchorId: null,
     selectedVertices: [],
@@ -1170,5 +1171,362 @@ describe('store: live mirror', () => {
     })
     expect(useStore.getState().mergeMirror('a')).toBe(false)
     expect(useStore.getState().shapes[0].mirror).toBeDefined()
+  })
+})
+
+describe('store: mergeShapes', () => {
+  it('stitches two open lines that share an endpoint into a single polyline', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [10, 10],
+            [20, 10],
+            [20, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    expect(useStore.getState().mergeShapes('a', 'b')).toBe(true)
+    const shapes = useStore.getState().shapes
+    expect(shapes).toHaveLength(1)
+    expect(shapes[0].id).toBe('a')
+    expect(shapes[0].closed).toBe(false)
+    expect(shapes[0].points).toEqual([
+      [0, 0],
+      [10, 0],
+      [10, 10],
+      [20, 10],
+      [20, 0],
+    ])
+    expect(useStore.getState().selectedShapeIds).toEqual(['a'])
+  })
+
+  it('closes into a polygon when both endpoints of two lines coincide', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 0],
+            [10, 10],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [10, 10],
+            [0, 10],
+            [0, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    expect(useStore.getState().mergeShapes('a', 'b')).toBe(true)
+    const shapes = useStore.getState().shapes
+    expect(shapes).toHaveLength(1)
+    expect(shapes[0].closed).toBe(true)
+    // Walking forward from a then through b's interior should give 4 vertices
+    // of a unit square (the duplicated junctions are dropped).
+    expect(shapes[0].points).toHaveLength(4)
+  })
+
+  it('merges two polygons that share exactly two vertices along the seam', () => {
+    // Triangle A (0,0)-(10,0)-(5,5) and triangle B (10,0)-(15,5)-(5,5),
+    // sharing the edge between (10,0) and (5,5).
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 0],
+            [5, 5],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [10, 0],
+            [15, 5],
+            [5, 5],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    expect(useStore.getState().mergeShapes('a', 'b')).toBe(true)
+    const shapes = useStore.getState().shapes
+    expect(shapes).toHaveLength(1)
+    expect(shapes[0].closed).toBe(true)
+    expect(shapes[0].points).toHaveLength(4)
+  })
+
+  it('refuses to merge mismatched kinds (open vs closed)', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [0, 0],
+            [10, 0],
+            [5, 5],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    expect(useStore.getState().mergeShapes('a', 'b')).toBe(false)
+    expect(useStore.getState().shapes).toHaveLength(2)
+  })
+
+  it('refuses to merge two lines without coincident endpoints', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [50, 50],
+            [60, 60],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    expect(useStore.getState().mergeShapes('a', 'b')).toBe(false)
+    expect(useStore.getState().shapes).toHaveLength(2)
+  })
+})
+
+describe('store: groups', () => {
+  it('addGroup appends a uniquely-named record and returns its id', () => {
+    const id1 = useStore.getState().addGroup()
+    const id2 = useStore.getState().addGroup()
+    const groups = useStore.getState().groups
+    expect(groups).toHaveLength(2)
+    expect(groups[0].id).toBe(id1)
+    expect(groups[1].id).toBe(id2)
+    expect(groups[0].name).not.toBe(groups[1].name)
+  })
+
+  it('setShapeGroup assigns and clears membership', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 's1',
+          points: [
+            [0, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('s1', gid)
+    expect(useStore.getState().shapes[0].groupId).toBe(gid)
+    useStore.getState().setShapeGroup('s1', undefined)
+    expect(useStore.getState().shapes[0].groupId).toBeUndefined()
+  })
+
+  it('rejects setShapeGroup pointing at an unknown group id', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 's1',
+          points: [
+            [0, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    useStore.getState().setShapeGroup('s1', 'nonexistent')
+    expect(useStore.getState().shapes[0].groupId).toBeUndefined()
+  })
+
+  it('removeGroup unlinks members but does not delete shapes', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 's1',
+          points: [
+            [0, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('s1', gid)
+    useStore.getState().removeGroup(gid)
+    expect(useStore.getState().groups).toHaveLength(0)
+    expect(useStore.getState().shapes).toHaveLength(1)
+    expect(useStore.getState().shapes[0].groupId).toBeUndefined()
+  })
+
+  it('selectGroup replaces selection with every member of the group', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 's1',
+          points: [
+            [0, 0],
+            [1, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 's2',
+          points: [
+            [2, 0],
+            [3, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 's3',
+          points: [
+            [4, 0],
+            [5, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('s1', gid)
+    useStore.getState().setShapeGroup('s3', gid)
+    useStore.getState().selectGroup(gid)
+    expect(useStore.getState().selectedShapeIds).toEqual(['s1', 's3'])
   })
 })

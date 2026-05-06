@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { dist, isPartialArc } from '../lib/geometry'
-import { hasTransform, isPointOnAxis, shapeRotation, shapeScale } from '../lib/transform'
+import { applyTransformToPoint, hasTransform, isPointOnAxis, shapeRotation, shapeScale } from '../lib/transform'
 import { useStore } from '../store'
 import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
 import { PaletteRefSelect } from './ProjectPanel'
@@ -14,6 +14,7 @@ import type {
   Easing,
   MirrorAxis,
   PaletteColor,
+  Point,
   Shape,
   SpinSpec,
   StrokeLinecap,
@@ -125,6 +126,7 @@ export function ShapePanel() {
   const toggleMirrorAxisVisibility = useStore(s => s.toggleMirrorAxisVisibility)
   const ejectMirror = useStore(s => s.ejectMirror)
   const mergeMirror = useStore(s => s.mergeMirror)
+  const mergeShapes = useStore(s => s.mergeShapes)
   const insertPointBetween = useStore(s => s.insertPointBetween)
 
   const selectedShapes = useMemo(() => {
@@ -202,6 +204,7 @@ export function ShapePanel() {
       applyOpacity={applyOpacity}
       applyTransform={applyTransform}
       flipShapes={flipShapes}
+      mergeShapes={mergeShapes}
     />
   )
 }
@@ -1427,6 +1430,58 @@ const mergeMirrorHint = (shape: Shape): string =>
     ? 'Combine source and reflection into one polygon along the two axis-touching vertices.'
     : 'Stitch source and reflection into one continuous line at the axis-touching endpoint.'
 
+const SHARED_VERTEX_TOL = 1e-3
+const samePoint = (a: Point, b: Point): boolean => {
+  const dx = a[0] - b[0]
+  const dy = a[1] - b[1]
+  return dx * dx + dy * dy < SHARED_VERTEX_TOL * SHARED_VERTEX_TOL
+}
+
+/**
+ * Visual coordinates of every vertex — applies the live rotation/scale so
+ * coincidence is checked at the rendered position. Mirrors the bake step
+ * mergeShapes performs in the store.
+ */
+const visualPoints = (shape: Shape): Point[] =>
+  hasTransform(shape) ? shape.points.map(p => applyTransformToPoint(shape, p)) : shape.points
+
+/**
+ * Eligibility check for the multi-shape "Merge" button. Two closed polygons
+ * qualify when they share exactly two coincident vertices (the seam); two
+ * open lines qualify when at least one endpoint of each coincides. Mirrors
+ * the store's `mergeShapes` so the button stays out unless the operation
+ * would actually succeed.
+ */
+const canMergeShapes = (a: Shape, b: Shape): boolean => {
+  if (a.id === b.id) return false
+  if (a.kind === 'circle' || a.kind === 'glyphs') return false
+  if (b.kind === 'circle' || b.kind === 'glyphs') return false
+  if (a.closed !== b.closed) return false
+  const ap = visualPoints(a)
+  const bp = visualPoints(b)
+  if (ap.length < 2 || bp.length < 2) return false
+  if (a.closed) {
+    let shared = 0
+    for (let i = 0; i < ap.length; i++) {
+      for (let j = 0; j < bp.length; j++) {
+        if (samePoint(ap[i], bp[j])) {
+          shared++
+          break
+        }
+      }
+      // Three or more coincident vertices is ambiguous for the seam pick;
+      // bail rather than guess which two form the join.
+      if (shared > 2) return false
+    }
+    return shared === 2
+  }
+  const aStart = ap[0]
+  const aEnd = ap[ap.length - 1]
+  const bStart = bp[0]
+  const bEnd = bp[bp.length - 1]
+  return samePoint(aEnd, bStart) || samePoint(aStart, bEnd) || samePoint(aStart, bStart) || samePoint(aEnd, bEnd)
+}
+
 /**
  * Multi-shape inspector. All edits dispatch updateShape per id, so each shape
  * stores its own copy of the new value (independent updates, not group state).
@@ -1448,6 +1503,7 @@ function MultiShapePanel({
   applyOpacity,
   applyTransform,
   flipShapes,
+  mergeShapes,
 }: {
   shapes: Shape[]
   kind: ShapeKind
@@ -1462,6 +1518,7 @@ function MultiShapePanel({
   applyOpacity: (ids: string[]) => void
   applyTransform: (ids: string[]) => void
   flipShapes: (ids: string[], axis: 'horizontal' | 'vertical') => void
+  mergeShapes: (idA: string, idB: string) => boolean
 }) {
   const showFill = kind !== 'line'
   const showBezier = kind !== 'circle' && kind !== 'text'
@@ -1788,6 +1845,24 @@ function MultiShapePanel({
         onReset={() => applyAll({ rotation: undefined, scale: undefined })}
         onApply={() => applyTransform(shapes.map(sh => sh.id))}
       />
+
+      {shapes.length === 2 && canMergeShapes(shapes[0], shapes[1]) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Merge</span>
+          <button
+            type="button"
+            className={APPLY_BTN}
+            onClick={() => mergeShapes(shapes[0].id, shapes[1].id)}
+            title={
+              shapes[0].closed
+                ? 'Combine the two polygons into one along their shared seam (the two coincident vertices).'
+                : 'Stitch the two lines into a single polyline at their coincident endpoint.'
+            }
+          >
+            Merge layers
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-1.5">
         <button

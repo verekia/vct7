@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent }
 import { bbox, dist, pointsToPath } from '../lib/geometry'
 import { useStore, effectiveBezier } from '../store'
 
-import type { Shape } from '../types'
+import type { Group, Shape } from '../types'
 
 interface DropTarget {
   id: string
@@ -12,16 +12,35 @@ interface DropTarget {
 
 export function LayerPanel() {
   const shapes = useStore(s => s.shapes)
+  const groups = useStore(s => s.groups)
   const selectedShapeIds = useStore(s => s.selectedShapeIds)
   const settings = useStore(s => s.settings)
   const selectShape = useStore(s => s.selectShape)
+  const selectGroup = useStore(s => s.selectGroup)
   const toggleShapeSelection = useStore(s => s.toggleShapeSelection)
   const selectShapeRange = useStore(s => s.selectShapeRange)
   const toggleShapeVisibility = useStore(s => s.toggleShapeVisibility)
   const toggleShapeLock = useStore(s => s.toggleShapeLock)
   const reorderShape = useStore(s => s.reorderShape)
   const renameShape = useStore(s => s.renameShape)
+  const addGroup = useStore(s => s.addGroup)
+  const removeGroup = useStore(s => s.removeGroup)
+  const renameGroup = useStore(s => s.renameGroup)
+  const setShapeGroup = useStore(s => s.setShapeGroup)
   const selectedSet = useMemo(() => new Set(selectedShapeIds), [selectedShapeIds])
+  const groupNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const g of groups) map.set(g.id, g.name)
+    return map
+  }, [groups])
+  const groupMemberCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const sh of shapes) {
+      if (!sh.groupId) continue
+      counts.set(sh.groupId, (counts.get(sh.groupId) ?? 0) + 1)
+    }
+    return counts
+  }, [shapes])
 
   const onRowClick = (e: MouseEvent<HTMLLIElement>, id: string) => {
     if (e.shiftKey) {
@@ -35,11 +54,15 @@ export function LayerPanel() {
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+  /** Group row currently hovered while dragging a layer — drop assigns. */
+  const [groupDropTargetId, setGroupDropTargetId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
 
   const clearDrag = () => {
     setDraggingId(null)
     setDropTarget(null)
+    setGroupDropTargetId(null)
   }
 
   const onDragStart = (e: DragEvent<HTMLLIElement>, id: string) => {
@@ -52,6 +75,7 @@ export function LayerPanel() {
     if (!draggingId) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
+    if (groupDropTargetId) setGroupDropTargetId(null)
     if (id === draggingId) {
       if (dropTarget) setDropTarget(null)
       return
@@ -63,9 +87,26 @@ export function LayerPanel() {
     }
   }
 
-  const onDrop = (e: DragEvent<HTMLOListElement>) => {
+  const onDragOverGroup = (e: DragEvent<HTMLLIElement>, groupId: string) => {
+    if (!draggingId) return
     e.preventDefault()
-    if (!draggingId || !dropTarget) {
+    e.dataTransfer.dropEffect = 'move'
+    if (dropTarget) setDropTarget(null)
+    if (groupDropTargetId !== groupId) setGroupDropTargetId(groupId)
+  }
+
+  const onDrop = (e: DragEvent<HTMLElement>) => {
+    e.preventDefault()
+    if (!draggingId) {
+      clearDrag()
+      return
+    }
+    if (groupDropTargetId) {
+      setShapeGroup(draggingId, groupDropTargetId)
+      clearDrag()
+      return
+    }
+    if (!dropTarget) {
       clearDrag()
       return
     }
@@ -82,10 +123,33 @@ export function LayerPanel() {
     clearDrag()
   }
 
+  const groupsSection = (
+    <GroupsSection
+      groups={groups}
+      memberCounts={groupMemberCounts}
+      draggingId={draggingId}
+      dropTargetId={groupDropTargetId}
+      editingId={editingGroupId}
+      onAddGroup={() => addGroup()}
+      onRemoveGroup={removeGroup}
+      onRenameGroup={(id, name) => {
+        renameGroup(id, name)
+        setEditingGroupId(null)
+      }}
+      onCancelRename={() => setEditingGroupId(null)}
+      onStartRename={setEditingGroupId}
+      onSelectGroup={selectGroup}
+      onDragOver={onDragOverGroup}
+      onDrop={onDrop}
+      onDragLeave={() => setGroupDropTargetId(null)}
+    />
+  )
+
   if (shapes.length === 0) {
     return (
       <section className="border-line relative border-b px-3.5 py-3 last:border-b-0">
-        <p className="text-muted mt-1 text-[11px] leading-[1.55] tracking-[0.3px]">
+        {groupsSection}
+        <p className="text-muted mt-3 text-[11px] leading-[1.55] tracking-[0.3px]">
           No layers yet — draw a line, polygon, or circle.
         </p>
       </section>
@@ -96,8 +160,9 @@ export function LayerPanel() {
 
   return (
     <section className="border-line relative border-b px-3.5 py-3 last:border-b-0">
+      {groupsSection}
       <ol
-        className="m-0 flex list-none flex-col gap-px p-0"
+        className="m-0 mt-2 flex list-none flex-col gap-px p-0"
         onDrop={onDrop}
         onDragOver={e => {
           if (draggingId) e.preventDefault()
@@ -186,6 +251,19 @@ export function LayerPanel() {
                   {shape.name || defaultLayerName(shape)}
                 </span>
               )}
+              {(() => {
+                const gName = shape.groupId ? groupNameById.get(shape.groupId) : undefined
+                if (!gName) return null
+                return (
+                  <GroupChip
+                    name={gName}
+                    onRemove={e => {
+                      e.stopPropagation()
+                      setShapeGroup(shape.id, undefined)
+                    }}
+                  />
+                )
+              })()}
               {shape.mirror && (
                 <span
                   className="text-muted-2 shrink-0"
@@ -401,6 +479,152 @@ function UnlockIcon() {
     <svg viewBox="0 0 16 16" width="14" height="14">
       <rect x="3" y="7" width="10" height="7" fill="none" stroke="currentColor" strokeWidth="1.2" rx="1" />
       <path d="M5.5 7V5a2.5 2.5 0 015 0" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  )
+}
+
+/**
+ * Top-of-panel groups list. Renders the Add button, every existing group as a
+ * drop target, and threads through the rename inline-edit state from the
+ * parent so the panel stays the single source of truth for which row is in
+ * edit mode. Group rows aren't draggable — they're targets only.
+ */
+function GroupsSection({
+  groups,
+  memberCounts,
+  draggingId,
+  dropTargetId,
+  editingId,
+  onAddGroup,
+  onRemoveGroup,
+  onRenameGroup,
+  onCancelRename,
+  onStartRename,
+  onSelectGroup,
+  onDragOver,
+  onDrop,
+  onDragLeave,
+}: {
+  groups: Group[]
+  memberCounts: Map<string, number>
+  draggingId: string | null
+  dropTargetId: string | null
+  editingId: string | null
+  onAddGroup: () => void
+  onRemoveGroup: (id: string) => void
+  onRenameGroup: (id: string, name: string) => void
+  onCancelRename: () => void
+  onStartRename: (id: string) => void
+  onSelectGroup: (id: string) => void
+  onDragOver: (e: DragEvent<HTMLLIElement>, id: string) => void
+  onDrop: (e: DragEvent<HTMLElement>) => void
+  onDragLeave: () => void
+}) {
+  return (
+    <div className="mb-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-muted text-[10px] tracking-[0.5px] uppercase">Groups</span>
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={onAddGroup}
+          title="Create a new empty group. Drag layers onto it to add members."
+        >
+          + Add group
+        </button>
+      </div>
+      {groups.length > 0 && (
+        <ol className="m-0 flex list-none flex-col gap-px p-0">
+          {groups.map(g => {
+            const count = memberCounts.get(g.id) ?? 0
+            const hot = dropTargetId === g.id
+            const cls = [
+              'group/grow flex items-center gap-1.5 px-1.5 py-1 border border-l-2 border-dashed cursor-pointer',
+              'text-[11px] tracking-[0.4px] select-none transition-[background,border-color] duration-75',
+              hot
+                ? 'border-accent bg-[rgba(255,59,48,0.08)] text-text'
+                : 'border-line bg-bg-2 text-muted hover:bg-bg-3',
+            ].join(' ')
+            return (
+              <li
+                key={g.id}
+                className={cls}
+                onDragOver={e => onDragOver(e, g.id)}
+                onDrop={onDrop}
+                onDragLeave={onDragLeave}
+                onClick={() => onSelectGroup(g.id)}
+                title={
+                  draggingId
+                    ? `Drop to add the dragged layer to "${g.name}"`
+                    : `Click to select all ${count} member${count === 1 ? '' : 's'}`
+                }
+              >
+                <FolderIcon />
+                {editingId === g.id ? (
+                  <NameInput initial={g.name} onCommit={v => onRenameGroup(g.id, v)} onCancel={onCancelRename} />
+                ) : (
+                  <span
+                    className="text-text min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                    onDoubleClick={e => {
+                      e.stopPropagation()
+                      onStartRename(g.id)
+                    }}
+                  >
+                    {g.name}
+                  </span>
+                )}
+                <span className="text-muted-2 tabular-nums" aria-label={`${count} members`}>
+                  {count}
+                </span>
+                <button
+                  type="button"
+                  className="text-muted hover:text-accent border-transparent bg-transparent px-1 py-px"
+                  title="Delete group (members keep their layers)"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onRemoveGroup(g.id)
+                  }}
+                >
+                  ×
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+function GroupChip({ name, onRemove }: { name: string; onRemove: (e: MouseEvent<HTMLButtonElement>) => void }) {
+  return (
+    <span
+      className="border-line text-muted bg-bg-3 inline-flex shrink-0 items-center gap-0.5 border px-1 py-px text-[10px] tracking-normal normal-case"
+      title={`Member of "${name}" — click × to remove from group`}
+    >
+      <span className="max-w-[80px] overflow-hidden text-ellipsis whitespace-nowrap">{name}</span>
+      <button
+        type="button"
+        className="hover:text-accent border-transparent bg-transparent px-0.5 leading-none"
+        onClick={onRemove}
+        aria-label="Remove from group"
+      >
+        ×
+      </button>
+    </span>
+  )
+}
+
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        d="M1.5 4.5h4l1 1.5h8v6.5a1 1 0 01-1 1H2.5a1 1 0 01-1-1v-8z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

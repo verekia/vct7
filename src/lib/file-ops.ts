@@ -24,9 +24,9 @@ export async function openFile(): Promise<void> {
   const file = await pickAndOpenFile()
   if (!file) return
   try {
-    const { settings, shapes } = parseProject(file.text)
+    const { settings, shapes, groups } = parseProject(file.text)
     const store = useStore.getState()
-    store.setProject(settings, shapes)
+    store.setProject(settings, shapes, groups)
     store.setFileMeta(file.name, file.handle)
   } catch (e) {
     alert(`Open failed: ${(e as Error).message}`)
@@ -37,9 +37,9 @@ export async function openDroppedFile(file: File, handle: FileHandle | null = nu
   if (!confirmDiscard()) return
   try {
     const text = await file.text()
-    const { settings, shapes } = parseProject(text)
+    const { settings, shapes, groups } = parseProject(text)
     const store = useStore.getState()
-    store.setProject(settings, shapes)
+    store.setProject(settings, shapes, groups)
     store.setFileMeta(file.name, handle)
   } catch (e) {
     alert(`Open failed: ${(e as Error).message}`)
@@ -49,7 +49,7 @@ export async function openDroppedFile(file: File, handle: FileHandle | null = nu
 export async function saveFile(): Promise<void> {
   const store = useStore.getState()
   const handle = store.fileHandle as FileHandle | null
-  const text = serializeProject(store.settings, store.shapes)
+  const text = serializeProject(store.settings, store.shapes, store.groups)
   if (handle) {
     try {
       await writeToHandle(handle, text)
@@ -68,7 +68,7 @@ export async function saveFileAs(): Promise<void> {
   const suggested = initial.fileName || 'vct7.svg'
   if (!supportsFsApi()) {
     // No async dialog — capture and write the current state.
-    downloadText(suggested, serializeProject(initial.settings, initial.shapes))
+    downloadText(suggested, serializeProject(initial.settings, initial.shapes, initial.groups))
     initial.clearDirty()
     return
   }
@@ -78,7 +78,7 @@ export async function saveFileAs(): Promise<void> {
   // open are written, not the stale snapshot.
   const fresh = useStore.getState()
   try {
-    await writeToHandle(handle, serializeProject(fresh.settings, fresh.shapes))
+    await writeToHandle(handle, serializeProject(fresh.settings, fresh.shapes, fresh.groups))
     fresh.setFileMeta(handle.name, handle)
     fresh.clearDirty()
   } catch (e) {

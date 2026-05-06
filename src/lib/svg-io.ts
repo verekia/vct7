@@ -10,6 +10,7 @@ import type {
   BlendMode,
   Easing,
   GlyphData,
+  Group,
   MirrorAxis,
   PaletteColor,
   Point,
@@ -199,6 +200,34 @@ const serializePalette = (palette: PaletteColor[]): string =>
 
 const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/
 
+/**
+ * Encode the group list as `id1:Display Name 1;id2:Display Name 2`. Names use
+ * the same character class as palette names (per `PALETTE_NAME_RE`) so the
+ * decoder can split safely on `:` and `;` without escaping.
+ */
+const serializeGroups = (groups: Group[]): string =>
+  groups
+    .filter(g => g.id && g.name)
+    .map(g => `${g.id}:${g.name}`)
+    .join(';')
+
+const parseGroups = (raw: string | null): Group[] => {
+  if (!raw) return []
+  const out: Group[] = []
+  const seen = new Set<string>()
+  for (const entry of raw.split(';')) {
+    const idx = entry.indexOf(':')
+    if (idx <= 0) continue
+    const id = entry.slice(0, idx).trim()
+    const name = entry.slice(idx + 1).trim()
+    if (!id || seen.has(id) || !name) continue
+    if (!PALETTE_NAME_RE.test(name)) continue
+    seen.add(id)
+    out.push({ id, name })
+  }
+  return out
+}
+
 const parsePalette = (raw: string | null): PaletteColor[] => {
   if (!raw) return []
   const out: PaletteColor[] = []
@@ -309,7 +338,7 @@ export const resetIds = (n = 1): void => {
   nextId = n
 }
 
-export function serializeProject(settings: ProjectSettings, shapes: Shape[]): string {
+export function serializeProject(settings: ProjectSettings, shapes: Shape[], groups: Group[] = []): string {
   const lines: string[] = []
   lines.push('<?xml version="1.0" encoding="UTF-8"?>')
   const vbX = settings.viewBoxX
@@ -325,6 +354,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       (settings.bg === null ? ` data-v7-no-bg="true"` : ` data-v7-bg="${escapeAttr(settings.bg)}"`) +
       (settings.bgRef ? ` data-v7-bg-ref="${escapeAttr(settings.bgRef)}"` : '') +
       (settings.palette.length > 0 ? ` data-v7-palette="${escapeAttr(serializePalette(settings.palette))}"` : '') +
+      (groups.length > 0 ? ` data-v7-groups="${escapeAttr(serializeGroups(groups))}"` : '') +
       ` data-v7-grid-size="${fmt(settings.gridSize)}"` +
       ` data-v7-grid-visible="${settings.gridVisible}"` +
       ` data-v7-grid-snap="${settings.gridSnap}"` +
@@ -420,6 +450,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.name) baseAttrs.push(`data-v7-name="${escapeAttr(shape.name)}"`)
     if (shape.fillRef) baseAttrs.push(`data-v7-fill-ref="${escapeAttr(shape.fillRef)}"`)
     if (shape.strokeRef) baseAttrs.push(`data-v7-stroke-ref="${escapeAttr(shape.strokeRef)}"`)
+    if (shape.groupId) baseAttrs.push(`data-v7-group-id="${escapeAttr(shape.groupId)}"`)
     if (shape.blendMode && shape.blendMode !== 'normal') {
       // Both: data-v7-blend for round-trip, inline style so external browser
       // viewers honor the blending without our editor metadata.
@@ -519,6 +550,8 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
 export interface ParsedProject {
   settings: ProjectSettings
   shapes: Shape[]
+  /** Project-level groups, including empty ones (preserved as drop targets). */
+  groups: Group[]
 }
 
 export function parseProject(text: string): ParsedProject {
@@ -588,6 +621,8 @@ export function parseProject(text: string): ParsedProject {
   }
 
   settings.palette = parsePalette(svg.getAttribute('data-v7-palette'))
+  const groups = parseGroups(svg.getAttribute('data-v7-groups'))
+  const groupIdSet = new Set(groups.map(g => g.id))
   const bgRef = svg.getAttribute('data-v7-bg-ref')
   if (bgRef) settings.bgRef = bgRef
 
@@ -694,6 +729,12 @@ export function parseProject(text: string): ParsedProject {
     const paintOrder: 'stroke' | undefined = paintOrderAttr.startsWith('stroke') ? 'stroke' : undefined
     const fillRef = el.getAttribute('data-v7-fill-ref') ?? undefined
     const strokeRef = el.getAttribute('data-v7-stroke-ref') ?? undefined
+    // Drop a stale group-id reference that doesn't match any record on the
+    // root — keeps the in-memory state self-consistent. Hand-edited SVGs
+    // may also list groups without registering them; the parser carries
+    // those forward into `groups` further down so the membership survives.
+    const groupIdAttr = el.getAttribute('data-v7-group-id') ?? undefined
+    const groupId = groupIdAttr ? groupIdAttr : undefined
     shapes.push({
       id: makeId(),
       ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
@@ -721,8 +762,19 @@ export function parseProject(text: string): ParsedProject {
       ...(scale !== undefined ? { scale } : {}),
       ...(animation ? { animation } : {}),
       ...(mirror ? { mirror } : {}),
+      ...(groupId ? { groupId } : {}),
     })
   }
 
-  return { settings, shapes }
+  // Backfill `groups` for any shape-referenced ids that weren't declared on
+  // the root (older files, hand-edits). Generated names match the in-app
+  // default scheme so the layer panel stays usable.
+  for (const sh of shapes) {
+    if (!sh.groupId) continue
+    if (groupIdSet.has(sh.groupId)) continue
+    groupIdSet.add(sh.groupId)
+    groups.push({ id: sh.groupId, name: `Group ${groups.length + 1}` })
+  }
+
+  return { settings, shapes, groups }
 }
