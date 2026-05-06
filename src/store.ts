@@ -6,7 +6,9 @@ import {
   applyTransformToPoint,
   defaultMirrorAxis,
   hasTransform,
+  isPointOnAxis,
   pairBBoxCenter,
+  reflectPoint,
   reflectShape,
   shapeBBoxCenter,
   shapeRotation,
@@ -286,6 +288,17 @@ export interface AppState {
    * when the source has no mirror.
    */
   ejectMirror: (id: string) => string | null
+  /**
+   * Stitch the source's geometry into the mirror's so the pair becomes one
+   * continuous path. Only applicable when the source's points actually meet
+   * the axis: a line needs at least one endpoint on the axis (lines with both
+   * endpoints on the axis become a closed polygon); a polygon needs exactly
+   * two vertices on the axis. Source rotation/scale (which pivots at the
+   * combined pair center while a mirror is attached) is baked into the merged
+   * points so the result stays at the same visual pose. Returns true on a
+   * successful merge, false when the topology doesn't qualify.
+   */
+  mergeMirror: (id: string) => boolean
   /**
    * Add a new palette entry. The name must be unique and non-empty; if either
    * condition fails the call is a no-op so callers don't have to guard.
@@ -1050,6 +1063,113 @@ export const useStore = create<AppState>(set => ({
       }
     })
     return newId
+  },
+  mergeMirror: id => {
+    let merged = false
+    set(s => {
+      const idx = s.shapes.findIndex(sh => sh.id === id)
+      if (idx === -1) return s
+      const source = s.shapes[idx]
+      if (!source.mirror) return s
+      // Circles + glyphs are out of scope: there's no clean "axis touches
+      // boundary at point P" semantics for those kinds.
+      if (source.kind === 'circle' || source.kind === 'glyphs') return s
+      const axis = source.mirror.axis
+      const onAxis = source.points.map(p => isPointOnAxis(p, axis))
+      const onAxisCount = onAxis.filter(Boolean).length
+      const reflected = source.points.map(p => reflectPoint(p, axis))
+
+      let nextPoints: Point[]
+      let nextClosed = source.closed
+      if (source.closed) {
+        // Polygon merge: need exactly two axis-touching vertices. The two
+        // axis points split the polygon into two arcs; the one we keep is
+        // the "outward" arc — the one with real interior vertices off the
+        // axis. The other arc is what would collapse onto the axis line
+        // (typically empty between adjacent axis points), so picking by
+        // forward index alone fails when the user drew the polygon with
+        // its body on the wrap-around side.
+        if (onAxisCount !== 2) return s
+        const indices = onAxis.map((b, k) => (b ? k : -1)).filter(k => k >= 0)
+        const i = indices[0]
+        const j = indices[1]
+        const n = source.points.length
+        const arcForward: Point[] = []
+        for (let k = i; k <= j; k++) arcForward.push(source.points[k])
+        const arcWrap: Point[] = []
+        for (let k = j; k < n; k++) arcWrap.push(source.points[k])
+        for (let k = 0; k <= i; k++) arcWrap.push(source.points[k])
+        const interiorOffAxis = (arc: Point[]): number => {
+          let c = 0
+          for (let k = 1; k < arc.length - 1; k++) if (!isPointOnAxis(arc[k], axis)) c++
+          return c
+        }
+        const useArc = interiorOffAxis(arcForward) >= interiorOffAxis(arcWrap) ? arcForward : arcWrap
+        const tail: Point[] = []
+        for (let k = useArc.length - 2; k > 0; k--) tail.push(reflectPoint(useArc[k], axis))
+        nextPoints = [...useArc, ...tail]
+      } else {
+        // Line merge: at least one endpoint must be on the axis.
+        const firstOn = onAxis[0]
+        const lastOn = onAxis[onAxis.length - 1]
+        if (!firstOn && !lastOn) return s
+        if (firstOn && lastOn) {
+          // Both endpoints on the axis → the merged shape topologically
+          // closes into a polygon. Emit it that way.
+          // Walk: source forward (P0..Pn), then mirror in reverse skipping
+          // the duplicated endpoints (M(P_{n-1})..M(P_1)).
+          nextPoints = [...source.points]
+          for (let k = source.points.length - 2; k > 0; k--) nextPoints.push(reflected[k])
+          nextClosed = true
+        } else if (lastOn) {
+          // Source ends on axis: source forward, then mirror in reverse from
+          // the *second-to-last* (skip the duplicated axis point).
+          nextPoints = [...source.points]
+          for (let k = source.points.length - 2; k >= 0; k--) nextPoints.push(reflected[k])
+        } else {
+          // Source starts on axis: mirror from the end backwards (skip the
+          // duplicated axis point at index 0), then the source forward.
+          nextPoints = []
+          for (let k = source.points.length - 1; k > 0; k--) nextPoints.push(reflected[k])
+          nextPoints.push(...source.points)
+        }
+      }
+
+      // Bake any group rotation/scale (pair-center pivot) into the merged
+      // points so the resulting standalone shape stays at the same visual
+      // pose. Without this it would jump to its own-bbox-pivoted transform.
+      const rot = shapeRotation(source)
+      const scl = shapeScale(source)
+      let bakedPoints = nextPoints
+      let bakedArc = source.arc
+      if (rot !== 0 || scl !== 1) {
+        const [cx, cy] = pairBBoxCenter(source)
+        bakedPoints = transformPointsAround(nextPoints, rot, scl, cx, cy)
+        if (rot !== 0 && source.arc)
+          bakedArc = { ...source.arc, start: source.arc.start + rot, end: source.arc.end + rot }
+      }
+
+      const next = s.shapes.slice()
+      next[idx] = {
+        ...source,
+        points: bakedPoints,
+        closed: nextClosed,
+        rotation: undefined,
+        scale: undefined,
+        mirror: undefined,
+        // pointBezierOverrides indices no longer line up with the new point
+        // list — drop them rather than try to rebuild a guess.
+        pointBezierOverrides: undefined,
+        ...(bakedArc ? { arc: bakedArc } : {}),
+      }
+      merged = true
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        dirty: true,
+      }
+    })
+    return merged
   },
   addPaletteColor: (name, color) =>
     set(s => {

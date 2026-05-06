@@ -985,4 +985,190 @@ describe('store: live mirror', () => {
     expect(useStore.getState().ejectMirror('a')).toBeNull()
     expect(useStore.getState().shapes).toHaveLength(1)
   })
+
+  const expectPointsClose = (actual: readonly (readonly [number, number])[], expected: number[][]) => {
+    expect(actual).toHaveLength(expected.length)
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i][0]).toBeCloseTo(expected[i][0])
+      expect(actual[i][1]).toBeCloseTo(expected[i][1])
+    }
+  }
+
+  it('mergeMirror stitches a line whose last point sits on the axis', () => {
+    // Source line: (0,0) → (5,0) → (10,0). Mirror across vertical line x=10.
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [5, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          mirror: { axis: { x: 10, y: 0, angle: 90 } },
+        },
+      ],
+    })
+    expect(useStore.getState().mergeMirror('a')).toBe(true)
+    const shapes = useStore.getState().shapes
+    expect(shapes).toHaveLength(1)
+    expect(shapes[0].mirror).toBeUndefined()
+    expect(shapes[0].closed).toBe(false)
+    // Walk: source forward (0,0), (5,0), (10,0), then mirror in reverse from
+    // (5,0)' = (15,0) and (0,0)' = (20,0). The duplicated axis point at (10,0)
+    // appears once.
+    expectPointsClose(shapes[0].points as readonly (readonly [number, number])[], [
+      [0, 0],
+      [5, 0],
+      [10, 0],
+      [15, 0],
+      [20, 0],
+    ])
+  })
+
+  it('mergeMirror promotes a both-endpoints-on-axis line to a closed polygon', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [5, 5],
+            [0, 10],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          mirror: { axis: { x: 0, y: 0, angle: 0 } }, // horizontal axis through origin
+        },
+      ],
+    })
+    // Both (0,0) and (0,10) lie on the horizontal axis y=0? No — wait:
+    // Axis at angle 0° through (0,0) is the x-axis (line y=0). Point (0,0)
+    // is on it; (0,10) is not. Switch to a vertical axis (90°) at x=0 so
+    // both endpoints (0,0) and (0,10) qualify.
+    useStore.getState().updateMirrorAxis('a', { angle: 90 })
+    expect(useStore.getState().mergeMirror('a')).toBe(true)
+    const shape = useStore.getState().shapes[0]
+    expect(shape.closed).toBe(true)
+    expectPointsClose(shape.points as readonly (readonly [number, number])[], [
+      [0, 0],
+      [5, 5],
+      [0, 10],
+      [-5, 5],
+    ])
+  })
+
+  it('mergeMirror combines a polygon along two axis-touching vertices', () => {
+    // D-shape: source has 5 points, indices 0 and 4 on the axis (x=0).
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [1, 0],
+            [2, 1],
+            [1, 2],
+            [0, 2],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          mirror: { axis: { x: 0, y: 0, angle: 90 } },
+        },
+      ],
+    })
+    expect(useStore.getState().mergeMirror('a')).toBe(true)
+    const shape = useStore.getState().shapes[0]
+    expect(shape.closed).toBe(true)
+    expect(shape.mirror).toBeUndefined()
+    expectPointsClose(shape.points as readonly (readonly [number, number])[], [
+      [0, 0],
+      [1, 0],
+      [2, 1],
+      [1, 2],
+      [0, 2],
+      [-1, 2],
+      [-2, 1],
+      [-1, 0],
+    ])
+  })
+
+  it('mergeMirror picks the off-axis arc when the polygon was drawn winding the other way', () => {
+    // Same D-shape geometry as the previous test, but the user drew it
+    // starting from the body and ending on the axis pair — so the two axis
+    // vertices are at indices 4 and 0 (adjacent in the wrap), and the
+    // forward arc 0..4 is the empty/degenerate one. The merge must still
+    // pick the wrap-around arc with the real content rather than collapse.
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 2], // index 0 — on axis
+            [-1, 2],
+            [-2, 1],
+            [-1, 0],
+            [0, 0], // index 4 — on axis
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          mirror: { axis: { x: 0, y: 0, angle: 90 } },
+        },
+      ],
+    })
+    expect(useStore.getState().mergeMirror('a')).toBe(true)
+    const shape = useStore.getState().shapes[0]
+    expect(shape.points.length).toBeGreaterThan(2)
+    // Body vertices were on negative-x; their reflection adds positive-x
+    // vertices. After merge we expect both sides represented.
+    const xs = shape.points.map(p => p[0])
+    expect(xs.some(x => x > 0)).toBe(true)
+    expect(xs.some(x => x < 0)).toBe(true)
+  })
+
+  it('mergeMirror is a no-op when topology does not qualify', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [5, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          mirror: { axis: { x: 100, y: 0, angle: 90 } }, // axis far away — no endpoint touches
+        },
+      ],
+    })
+    expect(useStore.getState().mergeMirror('a')).toBe(false)
+    expect(useStore.getState().shapes[0].mirror).toBeDefined()
+  })
 })

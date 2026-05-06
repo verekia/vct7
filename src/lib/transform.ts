@@ -108,6 +108,21 @@ export const reflectPoint = (p: Point, axis: MirrorAxis): Point => {
 }
 
 /**
+ * Tolerance for "is this point on the axis" checks. Loose enough that a snap
+ * pulled the user onto the axis line, tight enough that a vertex an editor
+ * pixel away at typical zoom doesn't accidentally count.
+ */
+const AXIS_TOLERANCE = 1e-3
+
+/** True when reflecting `p` across `axis` leaves it within tolerance of itself. */
+export const isPointOnAxis = (p: Point, axis: MirrorAxis, tol = AXIS_TOLERANCE): boolean => {
+  const reflected = reflectPoint(p, axis)
+  const dx = reflected[0] - p[0]
+  const dy = reflected[1] - p[1]
+  return dx * dx + dy * dy < tol * tol
+}
+
+/**
  * Default axis for a freshly-enabled mirror, anchored at the supplied center
  * point. Angle defaults to 90° (vertical line → horizontal/left-right
  * reflection); pass 0° for a horizontal line / vertical/top-bottom reflection.

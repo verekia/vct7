@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { dist, isPartialArc } from '../lib/geometry'
-import { hasTransform, shapeRotation, shapeScale } from '../lib/transform'
+import { hasTransform, isPointOnAxis, shapeRotation, shapeScale } from '../lib/transform'
 import { useStore } from '../store'
 import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
 import { PaletteRefSelect } from './ProjectPanel'
@@ -124,6 +124,7 @@ export function ShapePanel() {
   const updateMirrorAxis = useStore(s => s.updateMirrorAxis)
   const toggleMirrorAxisVisibility = useStore(s => s.toggleMirrorAxisVisibility)
   const ejectMirror = useStore(s => s.ejectMirror)
+  const mergeMirror = useStore(s => s.mergeMirror)
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds)
@@ -166,6 +167,7 @@ export function ShapePanel() {
         updateMirrorAxis={updateMirrorAxis}
         toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
         ejectMirror={ejectMirror}
+        mergeMirror={mergeMirror}
       />
     )
   }
@@ -343,6 +345,7 @@ function ShapePanelInner({
   updateMirrorAxis,
   toggleMirrorAxisVisibility,
   ejectMirror,
+  mergeMirror,
 }: {
   shape: Shape
   selectedVertexIndices: number[]
@@ -363,6 +366,7 @@ function ShapePanelInner({
   updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
   toggleMirrorAxisVisibility: (id: string) => void
   ejectMirror: (id: string) => string | null
+  mergeMirror: (id: string) => boolean
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
   const [fillText, setFillText] = useState(shape.fill)
@@ -610,6 +614,7 @@ function ShapePanelInner({
           updateMirrorAxis={updateMirrorAxis}
           toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
           ejectMirror={ejectMirror}
+          mergeMirror={mergeMirror}
         />
       )}
 
@@ -1241,6 +1246,7 @@ function MirrorControls({
   updateMirrorAxis,
   toggleMirrorAxisVisibility,
   ejectMirror,
+  mergeMirror,
 }: {
   shape: Shape
   enableMirror: (id: string, axis: 'horizontal' | 'vertical') => void
@@ -1248,6 +1254,7 @@ function MirrorControls({
   updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
   toggleMirrorAxisVisibility: (id: string) => void
   ejectMirror: (id: string) => string | null
+  mergeMirror: (id: string) => boolean
 }) {
   const mirror = shape.mirror
   if (!mirror) {
@@ -1345,10 +1352,46 @@ function MirrorControls({
         >
           Eject
         </button>
+        {canMergeMirror(shape) && (
+          <button
+            type="button"
+            className={APPLY_BTN}
+            onClick={() => mergeMirror(shape.id)}
+            title={mergeMirrorHint(shape)}
+          >
+            Merge
+          </button>
+        )}
       </div>
     </section>
   )
 }
+
+/**
+ * Mirror-merge eligibility. Lines need at least one endpoint on the axis;
+ * polygons need exactly two axis-touching vertices. Circles and glyphs are
+ * out of scope (no clean topology for "axis touches the boundary"). The
+ * caller already excludes glyphs at the panel level — the circle guard here
+ * keeps the helper safe to reuse from other contexts.
+ */
+const canMergeMirror = (shape: Shape): boolean => {
+  if (!shape.mirror) return false
+  if (shape.kind === 'circle' || shape.kind === 'glyphs') return false
+  const axis = shape.mirror.axis
+  if (shape.closed) {
+    let count = 0
+    for (const p of shape.points) if (isPointOnAxis(p, axis)) count++
+    return count === 2
+  }
+  const n = shape.points.length
+  if (n < 2) return false
+  return isPointOnAxis(shape.points[0], axis) || isPointOnAxis(shape.points[n - 1], axis)
+}
+
+const mergeMirrorHint = (shape: Shape): string =>
+  shape.closed
+    ? 'Combine source and reflection into one polygon along the two axis-touching vertices.'
+    : 'Stitch source and reflection into one continuous line at the axis-touching endpoint.'
 
 /**
  * Multi-shape inspector. All edits dispatch updateShape per id, so each shape
