@@ -1,7 +1,15 @@
 import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
 import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation'
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry'
-import { composeTransformString, pairBBoxCenter, reflectShape, shapeRotation, shapeScale } from './transform'
+import {
+  composeTransformString,
+  groupBBoxCenter,
+  pairBBoxCenter,
+  reflectShape,
+  shapeRotation,
+  shapeScale,
+  transformAroundString,
+} from './transform'
 
 import type {
   AnimationFromState,
@@ -10,6 +18,7 @@ import type {
   BlendMode,
   Easing,
   GlyphData,
+  Group,
   MirrorAxis,
   PaletteColor,
   Point,
@@ -199,6 +208,84 @@ const serializePalette = (palette: PaletteColor[]): string =>
 
 const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/
 
+/**
+ * Encode the group list. Plain `id:name;id2:name2` is used when no group has
+ * a transform or animation (keeps legacy files diff-clean); JSON is used as
+ * soon as any group carries extra state. The parser sniffs the leading
+ * character to pick the right decoder, so older files round-trip unchanged.
+ */
+const serializeGroups = (groups: Group[]): string => {
+  const valid = groups.filter(g => g.id && g.name)
+  const needsJson = valid.some(g => g.rotation !== undefined || g.scale !== undefined || g.animation !== undefined)
+  if (!needsJson) {
+    return valid.map(g => `${g.id}:${g.name}`).join(';')
+  }
+  const payload = valid.map(g => {
+    const entry: Record<string, unknown> = { id: g.id, name: g.name }
+    if (g.rotation !== undefined && g.rotation !== 0) entry.rotation = g.rotation
+    if (g.scale !== undefined && g.scale !== 1) entry.scale = g.scale
+    if (g.animation) entry.animation = g.animation
+    return entry
+  })
+  return JSON.stringify(payload)
+}
+
+const parseGroups = (raw: string | null): Group[] => {
+  if (!raw) return []
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('[')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      return []
+    }
+    if (!Array.isArray(parsed)) return []
+    const out: Group[] = []
+    const seen = new Set<string>()
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const obj = item as Record<string, unknown>
+      const id = typeof obj.id === 'string' ? obj.id.trim() : ''
+      const name = typeof obj.name === 'string' ? obj.name.trim() : ''
+      if (!id || !name || seen.has(id)) continue
+      if (!PALETTE_NAME_RE.test(name)) continue
+      seen.add(id)
+      const g: Group = { id, name }
+      if (typeof obj.rotation === 'number' && Number.isFinite(obj.rotation) && obj.rotation !== 0) {
+        g.rotation = obj.rotation
+      }
+      if (typeof obj.scale === 'number' && Number.isFinite(obj.scale) && obj.scale !== 1) {
+        g.scale = obj.scale
+      }
+      // Animation reuses the per-shape parser via JSON.stringify round-trip,
+      // since JSON.parse already decoded the inner object — re-encode and
+      // hand it off so all the field validation lives in one place.
+      if (obj.animation && typeof obj.animation === 'object') {
+        const anim = parseAnimationAttr(JSON.stringify(obj.animation))
+        if (anim) g.animation = anim
+      }
+      out.push(g)
+    }
+    return out
+  }
+  // Legacy `id:name;id2:name2` form — preserved so files saved before
+  // transforms/animations were added round-trip without diff churn.
+  const out: Group[] = []
+  const seen = new Set<string>()
+  for (const entry of trimmed.split(';')) {
+    const idx = entry.indexOf(':')
+    if (idx <= 0) continue
+    const id = entry.slice(0, idx).trim()
+    const name = entry.slice(idx + 1).trim()
+    if (!id || seen.has(id) || !name) continue
+    if (!PALETTE_NAME_RE.test(name)) continue
+    seen.add(id)
+    out.push({ id, name })
+  }
+  return out
+}
+
 const parsePalette = (raw: string | null): PaletteColor[] => {
   if (!raw) return []
   const out: PaletteColor[] = []
@@ -309,7 +396,7 @@ export const resetIds = (n = 1): void => {
   nextId = n
 }
 
-export function serializeProject(settings: ProjectSettings, shapes: Shape[]): string {
+export function serializeProject(settings: ProjectSettings, shapes: Shape[], groups: Group[] = []): string {
   const lines: string[] = []
   lines.push('<?xml version="1.0" encoding="UTF-8"?>')
   const vbX = settings.viewBoxX
@@ -325,6 +412,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       (settings.bg === null ? ` data-v7-no-bg="true"` : ` data-v7-bg="${escapeAttr(settings.bg)}"`) +
       (settings.bgRef ? ` data-v7-bg-ref="${escapeAttr(settings.bgRef)}"` : '') +
       (settings.palette.length > 0 ? ` data-v7-palette="${escapeAttr(serializePalette(settings.palette))}"` : '') +
+      (groups.length > 0 ? ` data-v7-groups="${escapeAttr(serializeGroups(groups))}"` : '') +
       ` data-v7-grid-size="${fmt(settings.gridSize)}"` +
       ` data-v7-grid-visible="${settings.gridVisible}"` +
       ` data-v7-grid-snap="${settings.gridSnap}"` +
@@ -337,7 +425,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
   // off removes every animation byte from the saved file, matching the
   // "nothing animation related" requirement.
   if (settings.animationEnabled) {
-    const style = buildKeyframesStyle(shapes)
+    const style = buildKeyframesStyle(shapes, groups)
     if (style) {
       lines.push(`  <style>${style}</style>`)
     }
@@ -357,7 +445,39 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     )
     lines.push(`  <g clip-path="url(#vh-artboard-clip)">`)
   }
+  // Track the currently-open group wrapper so contiguous members of the same
+  // group end up inside one `<g>` element. The wrapper carries the static
+  // group transform (rotation/scale around the bbox center) and, when an
+  // entrance animation is set, the matching `vh-anim-group-*` class so the
+  // CSS keyframe rule binds to it.
+  const groupById = new Map<string, Group>()
+  for (const g of groups) groupById.set(g.id, g)
+  let openGroupId: string | undefined
+  const closeOpenGroup = () => {
+    if (openGroupId !== undefined) {
+      lines.push(`  </g>`)
+      openGroupId = undefined
+    }
+  }
+  const openGroup = (groupId: string) => {
+    const g = groupById.get(groupId)
+    const members = shapes.filter(sh => sh.groupId === groupId)
+    const [cx, cy] = members.length > 0 ? groupBBoxCenter(members) : [0, 0]
+    const rot = g?.rotation ?? 0
+    const scl = g?.scale ?? 1
+    const tStr = transformAroundString(rot, scl, cx, cy)
+    const transformAttr = tStr ? ` transform="${tStr}"` : ''
+    const animClass = settings.animationEnabled && g?.animation ? ` vh-anim-group-${groupId}` : ''
+    lines.push(
+      `  <g class="vh-group-${escapeAttr(groupId)}${animClass}"${transformAttr} data-v7-group-id="${escapeAttr(groupId)}">`,
+    )
+    openGroupId = groupId
+  }
   for (const shape of shapes) {
+    if (shape.groupId !== openGroupId) {
+      closeOpenGroup()
+      if (shape.groupId !== undefined && groupById.has(shape.groupId)) openGroup(shape.groupId)
+    }
     const isGlyphs = shape.kind === 'glyphs' && !!shape.glyphs && shape.points.length >= 2
     const isCircle = !isGlyphs && shape.kind === 'circle' && shape.points.length >= 2
     const partialArc = isCircle && isPartialArc(shape.arc) ? shape.arc : undefined
@@ -420,6 +540,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
     if (shape.name) baseAttrs.push(`data-v7-name="${escapeAttr(shape.name)}"`)
     if (shape.fillRef) baseAttrs.push(`data-v7-fill-ref="${escapeAttr(shape.fillRef)}"`)
     if (shape.strokeRef) baseAttrs.push(`data-v7-stroke-ref="${escapeAttr(shape.strokeRef)}"`)
+    if (shape.groupId) baseAttrs.push(`data-v7-group-id="${escapeAttr(shape.groupId)}"`)
     if (shape.blendMode && shape.blendMode !== 'normal') {
       // Both: data-v7-blend for round-trip, inline style so external browser
       // viewers honor the blending without our editor metadata.
@@ -511,6 +632,7 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
       if (mirrorElement) lines.push(`  ${mirrorElement}`)
     }
   }
+  closeOpenGroup()
   if (settings.clip) lines.push('  </g>')
   lines.push('</svg>')
   return lines.join('\n')
@@ -519,6 +641,8 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[]): st
 export interface ParsedProject {
   settings: ProjectSettings
   shapes: Shape[]
+  /** Project-level groups, including empty ones (preserved as drop targets). */
+  groups: Group[]
 }
 
 export function parseProject(text: string): ParsedProject {
@@ -588,6 +712,8 @@ export function parseProject(text: string): ParsedProject {
   }
 
   settings.palette = parsePalette(svg.getAttribute('data-v7-palette'))
+  const groups = parseGroups(svg.getAttribute('data-v7-groups'))
+  const groupIdSet = new Set(groups.map(g => g.id))
   const bgRef = svg.getAttribute('data-v7-bg-ref')
   if (bgRef) settings.bgRef = bgRef
 
@@ -694,6 +820,12 @@ export function parseProject(text: string): ParsedProject {
     const paintOrder: 'stroke' | undefined = paintOrderAttr.startsWith('stroke') ? 'stroke' : undefined
     const fillRef = el.getAttribute('data-v7-fill-ref') ?? undefined
     const strokeRef = el.getAttribute('data-v7-stroke-ref') ?? undefined
+    // Drop a stale group-id reference that doesn't match any record on the
+    // root — keeps the in-memory state self-consistent. Hand-edited SVGs
+    // may also list groups without registering them; the parser carries
+    // those forward into `groups` further down so the membership survives.
+    const groupIdAttr = el.getAttribute('data-v7-group-id') ?? undefined
+    const groupId = groupIdAttr ? groupIdAttr : undefined
     shapes.push({
       id: makeId(),
       ...(isGlyphs ? { kind: 'glyphs' as const } : isCircle ? { kind: 'circle' as const } : {}),
@@ -721,8 +853,19 @@ export function parseProject(text: string): ParsedProject {
       ...(scale !== undefined ? { scale } : {}),
       ...(animation ? { animation } : {}),
       ...(mirror ? { mirror } : {}),
+      ...(groupId ? { groupId } : {}),
     })
   }
 
-  return { settings, shapes }
+  // Backfill `groups` for any shape-referenced ids that weren't declared on
+  // the root (older files, hand-edits). Generated names match the in-app
+  // default scheme so the layer panel stays usable.
+  for (const sh of shapes) {
+    if (!sh.groupId) continue
+    if (groupIdSet.has(sh.groupId)) continue
+    groupIdSet.add(sh.groupId)
+    groups.push({ id: sh.groupId, name: `Group ${groups.length + 1}` })
+  }
+
+  return { settings, shapes, groups }
 }

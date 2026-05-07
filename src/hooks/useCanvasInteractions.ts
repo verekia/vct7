@@ -453,9 +453,10 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
 
       // Pending click that may now be becoming a drag.
       if (pendingSelect && !pendingSelect.becameDrag) {
-        const moved = Math.hypot(e.clientX - pendingSelect.startScreenX, e.clientY - pendingSelect.startScreenY)
+        const ps = pendingSelect
+        const moved = Math.hypot(e.clientX - ps.startScreenX, e.clientY - ps.startScreenY)
         if (moved < DRAG_THRESHOLD_PX) return
-        pendingSelect.becameDrag = true
+        ps.becameDrag = true
 
         const state = useStore.getState()
         // Alt-drag duplicates the shape(s) and drags the duplicates so the
@@ -464,8 +465,8 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
         // the gesture matches the visible click target. duplicateShapes
         // already pushes a history snapshot — moveShapes won't push, so the
         // whole alt-drag collapses to one undo step.
-        if (pendingSelect.alt && pendingSelect.shapeId) {
-          const sourceIds = pendingSelect.hitSelected ? state.selectedShapeIds.slice() : [pendingSelect.shapeId]
+        if (ps.alt && ps.shapeId) {
+          const sourceIds = ps.hitSelected ? state.selectedShapeIds.slice() : [ps.shapeId]
           const newIds = state.duplicateShapes(sourceIds)
           if (newIds.length > 0) {
             const idSet = new Set(newIds)
@@ -480,14 +481,14 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
             }
             draggingShapes = {
               ids: newIds,
-              startCursor: pendingSelect.startCanvas,
+              startCursor: ps.startCanvas,
               startPoints,
             }
             pendingSelect = null
             return
           }
         }
-        if (pendingSelect.hitSelected && !pendingSelect.shift && !pendingSelect.meta) {
+        if (ps.hitSelected && !ps.shift && !ps.meta) {
           // Drag-move the entire current selection together.
           const ids = state.selectedShapeIds.slice()
           const startPoints = new Map<string, Point[]>()
@@ -500,13 +501,43 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
           }
           draggingShapes = {
             ids,
-            startCursor: pendingSelect.startCanvas,
+            startCursor: ps.startCanvas,
             startPoints,
           }
           // One undo entry for the whole translate gesture.
           state.pushHistory()
           pendingSelect = null
           return
+        }
+
+        // Group cohesion: clicking-and-dragging an unselected grouped shape
+        // selects the whole group up front and drags every member, so the
+        // pair behaves as a unit even before the user has had a chance to
+        // click-then-drag in two steps.
+        if (ps.shapeId && !ps.shift && !ps.meta) {
+          const target = state.shapes.find(sh => sh.id === ps.shapeId)
+          if (target?.groupId) {
+            const memberIds = state.shapes.filter(sh => sh.groupId === target.groupId).map(sh => sh.id)
+            if (memberIds.length > 0) {
+              state.selectShapes(memberIds)
+              const startPoints = new Map<string, Point[]>()
+              for (const sh of state.shapes) {
+                if (!memberIds.includes(sh.id)) continue
+                startPoints.set(
+                  sh.id,
+                  sh.points.map(p => [p[0], p[1]] as Point),
+                )
+              }
+              draggingShapes = {
+                ids: memberIds,
+                startCursor: ps.startCanvas,
+                startPoints,
+              }
+              state.pushHistory()
+              pendingSelect = null
+              return
+            }
+          }
         }
 
         // Otherwise upgrade to a marquee. With shift/meta, the marquee adds
@@ -521,14 +552,14 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
           state.selectedShapeIds.length === 1 ? state.shapes.find(sh => sh.id === state.selectedShapeIds[0]) : null
         if (onlyShape && onlyShape.kind !== 'glyphs') {
           marquee = {
-            start: pendingSelect.startCanvas,
+            start: ps.startCanvas,
             mode: 'vertex',
             shapeId: onlyShape.id,
           }
         } else {
-          marquee = { start: pendingSelect.startCanvas, mode: 'shape' }
+          marquee = { start: ps.startCanvas, mode: 'shape' }
         }
-        state.setBoxSelect({ start: pendingSelect.startCanvas, end: raw })
+        state.setBoxSelect({ start: ps.startCanvas, end: raw })
         return
       }
     }
@@ -591,15 +622,35 @@ export function useCanvasInteractions(svgRef: RefObject<SVGSVGElement | null>) {
       } else if (pendingSelect && !pendingSelect.becameDrag) {
         // Pure click — apply selection now.
         const state = useStore.getState()
-        if (pendingSelect.shapeId) {
-          if (pendingSelect.shift) {
-            state.selectShapeRange(pendingSelect.shapeId)
-          } else if (pendingSelect.meta) {
-            state.toggleShapeSelection(pendingSelect.shapeId)
+        const ps = pendingSelect
+        if (ps.shapeId) {
+          if (ps.shift) {
+            state.selectShapeRange(ps.shapeId)
+          } else if (ps.meta) {
+            state.toggleShapeSelection(ps.shapeId)
           } else {
-            state.selectShape(pendingSelect.shapeId)
+            // Group click cycling: a plain click on a grouped shape alternates
+            // between selecting the whole group and selecting just the
+            // clicked member. The cycle is computed against the *current*
+            // selection — when it already matches the group exactly, the
+            // next click drills down to the child; otherwise it expands to
+            // the group. Repeated clicks therefore swing back and forth.
+            const target = state.shapes.find(sh => sh.id === ps.shapeId)
+            if (target?.groupId) {
+              const memberIds = state.shapes.filter(sh => sh.groupId === target.groupId).map(sh => sh.id)
+              const sel = state.selectedShapeIds
+              const groupIsSelected =
+                memberIds.length > 0 && sel.length === memberIds.length && memberIds.every(id => sel.includes(id))
+              if (groupIsSelected) {
+                state.selectShape(target.id)
+              } else {
+                state.selectShapes(memberIds)
+              }
+            } else {
+              state.selectShape(ps.shapeId)
+            }
           }
-        } else if (!pendingSelect.shift && !pendingSelect.meta) {
+        } else if (!ps.shift && !ps.meta) {
           // Clicking empty canvas without a modifier clears the selection.
           state.selectShape(null)
         }

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { beforeEach, describe, expect, it } from 'bun:test'
 
-import { parseProject, resetIds, serializeProject } from './svg-io'
+import { DEFAULT_SETTINGS, parseProject, resetIds, serializeProject } from './svg-io'
 
 import type { ProjectSettings, Shape } from '../types'
 
@@ -542,5 +542,74 @@ describe('mirror round-trip', () => {
     expect(parsed.shapes[0].mirror).toBeDefined()
     expect(parsed.shapes[0].mirror?.axis).toEqual({ x: 20, y: 0, angle: 90 })
     expect(parsed.shapes[0].mirror?.showAxis).toBe(true)
+  })
+})
+
+describe('groups round-trip', () => {
+  beforeEach(() => resetIds(1))
+
+  it('preserves an empty group through serialize -> parse', () => {
+    const settings: ProjectSettings = { ...DEFAULT_SETTINGS }
+    const text = serializeProject(settings, [], [{ id: 'g1', name: 'Empty' }])
+    const parsed = parseProject(text)
+    expect(parsed.groups).toHaveLength(1)
+    expect(parsed.groups[0].name).toBe('Empty')
+  })
+
+  it('round-trips group rotation, scale, and animation', () => {
+    const settings: ProjectSettings = { ...DEFAULT_SETTINGS, animationEnabled: true }
+    const groups = [
+      {
+        id: 'g1',
+        name: 'Spinner',
+        rotation: 30,
+        scale: 1.5,
+        animation: {
+          duration: 800,
+          delay: 100,
+          easing: 'ease-out' as const,
+          from: { opacity: 0, scale: 0.5 },
+        },
+      },
+    ]
+    const shapes: Shape[] = [
+      {
+        id: 's1',
+        points: [
+          [0, 0],
+          [10, 0],
+          [5, 5],
+        ],
+        closed: true,
+        fill: '#ff0000',
+        stroke: 'none',
+        strokeWidth: 0,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+        groupId: 'g1',
+      },
+    ]
+    const text = serializeProject(settings, shapes, groups)
+    const parsed = parseProject(text)
+    expect(parsed.groups).toHaveLength(1)
+    const g = parsed.groups[0]
+    expect(g.rotation).toBe(30)
+    expect(g.scale).toBe(1.5)
+    expect(g.animation?.duration).toBe(800)
+    expect(g.animation?.delay).toBe(100)
+    expect(g.animation?.from.opacity).toBe(0)
+    expect(g.animation?.from.scale).toBe(0.5)
+    expect(parsed.shapes[0].groupId).toBe('g1')
+  })
+
+  it('still parses the legacy `id:name` group encoding', () => {
+    const text = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" data-v7-groups="g1:Walls;g2:Floor"></svg>`
+    const parsed = parseProject(text)
+    expect(parsed.groups).toEqual([
+      { id: 'g1', name: 'Walls' },
+      { id: 'g2', name: 'Floor' },
+    ])
   })
 })

@@ -199,6 +199,45 @@ export const pairBBoxCenter = (shape: Shape): Point => {
  */
 export const shapePivot = (shape: Shape): Point => (shape.mirror ? pairBBoxCenter(shape) : shapeBBoxCenter(shape))
 
+/**
+ * Combined visual bbox center for a group's members. Used as the pivot for
+ * the group's `<g transform>` and as the rotation/scale center when baking
+ * a group transform into its children. Aggregates each member's
+ * {@link visualBBox} so a member's own per-shape rotation/scale is already
+ * folded in — the group transform pivots at the visual center the user
+ * sees on screen, not the raw points center.
+ */
+export const groupBBoxCenter = (members: Shape[]): Point => {
+  if (members.length === 0) return [0, 0]
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const sh of members) {
+    const b = visualBBox(sh)
+    if (b.x < minX) minX = b.x
+    if (b.y < minY) minY = b.y
+    if (b.x + b.w > maxX) maxX = b.x + b.w
+    if (b.y + b.h > maxY) maxY = b.y + b.h
+  }
+  return [(minX + maxX) / 2, (minY + maxY) / 2]
+}
+
+/**
+ * Compose `translate(pivot) rotate(rot) scale(sc) translate(-pivot)` — the
+ * shared form used by the group `<g>` wrapper, the per-shape composer, and
+ * the mirror sibling renderer. Returns `''` when the transform is identity
+ * so callers can omit the attribute entirely.
+ */
+export const transformAroundString = (rot: number, scl: number, cx: number, cy: number): string => {
+  if (rot === 0 && scl === 1) return ''
+  return (
+    `translate(${fmt(cx)} ${fmt(cy)}) ` +
+    `rotate(${fmt(rot)}) scale(${fmt(scl)}) ` +
+    `translate(${fmt(-cx)} ${fmt(-cy)})`
+  )
+}
+
 /** AABB of the rotated+scaled bbox. Used by marquee selection so a rotated shape still hits. */
 export const visualBBox = (shape: Shape): { x: number; y: number; w: number; h: number } => {
   const b = untransformedBBox(shape)

@@ -127,6 +127,39 @@ export interface Shape {
    * second independent shape.
    */
   mirror?: MirrorSpec
+  /**
+   * Optional group membership — when set, the shape is a member of the
+   * project-level group with this id. Group is purely a logical/selection
+   * concept (no nesting, no transform inheritance); members keep their own
+   * z-position in the shapes array.
+   */
+  groupId?: string
+}
+
+/**
+ * Project-level group — a flat, named container shapes can opt into via
+ * `groupId`. Click-cycling on the canvas alternates between selecting the
+ * whole group and the clicked individual member; a group's members are
+ * kept contiguous in the shapes array so the renderer can wrap them in a
+ * single `<g>` element.
+ *
+ * `rotation` / `scale` are applied around the group's combined bbox center
+ * via the wrapping `<g>`'s `transform` attribute, so the whole group rotates
+ * and scales as a rigid body — the SVG-native equivalent of a group
+ * transform in Figma/Illustrator. Members keep their own per-shape
+ * transforms; the two compose visually. `animation` runs on the wrapping
+ * `<g>` too, so an entire group can be animated as one unit independent of
+ * its members' individual animations.
+ */
+export interface Group {
+  id: string
+  name: string
+  /** Rotation in degrees, applied around the group's combined bbox center. */
+  rotation?: number
+  /** Uniform scale factor, applied around the group's combined bbox center. */
+  scale?: number
+  /** Group-level entrance animation, runs on the `<g>` wrapping the members. */
+  animation?: AnimationSpec
 }
 
 /**
