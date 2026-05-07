@@ -34,6 +34,21 @@ const reset = () => {
 
 afterEach(reset)
 
+const edgeKey = (p: readonly [number, number], q: readonly [number, number]): string => {
+  // Order-independent so an edge matches regardless of traversal direction.
+  const a = `${p[0]},${p[1]}`
+  const b = `${q[0]},${q[1]}`
+  return a < b ? `${a}|${b}` : `${b}|${a}`
+}
+
+const makeEdgeSet = (pts: readonly (readonly [number, number])[]): Set<string> => {
+  const out = new Set<string>()
+  for (let i = 0; i < pts.length; i++) {
+    out.add(edgeKey(pts[i], pts[(i + 1) % pts.length]))
+  }
+  return out
+}
+
 describe('store: commitDrawing', () => {
   // Regression: a polygon committed with only 2 points must NOT serialize as
   // closed (`Z`), otherwise the file ends up with a degenerate polygon that
@@ -1311,6 +1326,82 @@ describe('store: mergeShapes', () => {
     expect(shapes).toHaveLength(1)
     expect(shapes[0].closed).toBe(true)
     expect(shapes[0].points).toHaveLength(4)
+  })
+
+  it('does not twist when polygon point arrays orient the seam differently', () => {
+    // Regression: with both polygons having multiple interior vertices on the
+    // outward arc, a naive splice walks one arc in the wrong direction and
+    // produces edges that cross at the seam (a "bow-tie" shape). The merged
+    // polygon must use only edges that actually exist in either source — so
+    // every consecutive pair (and the closing pair) is a real seam or arc edge.
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          // V1=(0,0), V2=(20,0). Two interior verts on the outward arc.
+          points: [
+            [0, 0],
+            [5, -5],
+            [15, -5],
+            [20, 0],
+            [10, -8],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          // V2=(20,0) at index 0, V1=(0,0) at index 3. Two interior verts on
+          // the outward (forward) arc — the seam direction in B's array is
+          // opposite of A's, so a naive splice walks one arc backward.
+          points: [
+            [20, 0],
+            [15, 5],
+            [5, 5],
+            [0, 0],
+            [10, 8],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    expect(useStore.getState().mergeShapes('a', 'b')).toBe(true)
+    const merged = useStore.getState().shapes[0]
+    expect(merged.closed).toBe(true)
+    // Every edge of the merged polygon (including the closing edge) must be
+    // an edge of A or B — no jumps that skip over an intermediate vertex.
+    const aEdges = makeEdgeSet([
+      [0, 0],
+      [5, -5],
+      [15, -5],
+      [20, 0],
+      [10, -8],
+    ])
+    const bEdges = makeEdgeSet([
+      [20, 0],
+      [15, 5],
+      [5, 5],
+      [0, 0],
+      [10, 8],
+    ])
+    const allowed = new Set<string>([...aEdges, ...bEdges])
+    for (let k = 0; k < merged.points.length; k++) {
+      const p = merged.points[k]
+      const q = merged.points[(k + 1) % merged.points.length]
+      const key = edgeKey(p, q)
+      expect(allowed.has(key)).toBe(true)
+    }
   })
 
   it('refuses to merge mismatched kinds (open vs closed)', () => {

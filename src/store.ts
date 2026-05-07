@@ -1360,18 +1360,24 @@ export const useStore = create<AppState>(set => ({
           }
         }
         if (shared.length !== 2) return s
-        const arcA = longerArc(aPoints, shared[0].i, shared[1].i)
-        const arcB = longerArc(bPoints, shared[0].j, shared[1].j)
-        // arcA already includes both seam endpoints; arcB's interior is what we
-        // splice in. Walk arcB in reverse so the orientation lines up — this
-        // mirrors the polygon-merge stitch in mergeMirror.
-        const interiorB: Point[] = []
-        for (let k = arcB.length - 2; k > 0; k--) interiorB.push(arcB[k])
-        // Either shared endpoint of arcA might be at a different position in
-        // arcB; ensure the splice closes back onto arcA's start. The two
-        // endpoints of arcA correspond to the two seam vertices (shared[0],
-        // shared[1]); arcB ends at shared[1] and starts at shared[0] (or vice
-        // versa). With the reverse walk above, interiorB joins arcA seamlessly.
+        // Both arcs span the seam from one shared vertex to the other, but
+        // longerArc may return them in either direction. Normalize so arcA
+        // runs v1 → A_interior → v2 and arcB runs v2 → B_interior → v1; that
+        // way arcB walked forward continues straight from arcA's terminus,
+        // and the polygon's implicit close edge lands back on v1. Without the
+        // normalization, mismatched orientations splice in an interior reversed
+        // and produce a crossed/twisted polygon.
+        const v1 = aPoints[shared[0].i]
+        const v2 = aPoints[shared[1].i]
+        let arcA = longerArc(aPoints, shared[0].i, shared[1].i)
+        let arcB = longerArc(bPoints, shared[0].j, shared[1].j)
+        if (!pointsClose(arcA[0], v1)) arcA = arcA.toReversed()
+        if (!pointsClose(arcB[0], v2)) arcB = arcB.toReversed()
+        // arcB's leading v2 already sits at arcA's tail; arcB's trailing v1
+        // is the polygon's first vertex (closes implicitly). Splice the
+        // interior in arcB's natural forward order so every connecting edge
+        // is an actual edge of B.
+        const interiorB = arcB.slice(1, arcB.length - 1)
         nextPoints = [...arcA, ...interiorB]
       } else {
         // Polyline merge: need at least one endpoint of `a` to coincide with
