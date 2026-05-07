@@ -8,6 +8,7 @@ import {
   pairBBoxCenter,
   radialCloneAngles,
   reflectShape,
+  reflectionMatrixString,
   shapeRotation,
   shapeScale,
   transformAroundString,
@@ -227,7 +228,14 @@ const PALETTE_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/
  */
 const serializeGroups = (groups: Group[]): string => {
   const valid = groups.filter(g => g.id && g.name)
-  const needsJson = valid.some(g => g.rotation !== undefined || g.scale !== undefined || g.animation !== undefined)
+  const needsJson = valid.some(
+    g =>
+      g.rotation !== undefined ||
+      g.scale !== undefined ||
+      g.animation !== undefined ||
+      g.mirror !== undefined ||
+      g.radial !== undefined,
+  )
   if (!needsJson) {
     return valid.map(g => `${g.id}:${g.name}`).join(';')
   }
@@ -236,6 +244,17 @@ const serializeGroups = (groups: Group[]): string => {
     if (g.rotation !== undefined && g.rotation !== 0) entry.rotation = g.rotation
     if (g.scale !== undefined && g.scale !== 1) entry.scale = g.scale
     if (g.animation) entry.animation = g.animation
+    if (g.mirror) {
+      const ax = g.mirror.axis
+      const m: Record<string, unknown> = { x: ax.x, y: ax.y, angle: ax.angle }
+      if (g.mirror.showAxis) m.showAxis = true
+      entry.mirror = m
+    }
+    if (g.radial) {
+      const r: Record<string, unknown> = { cx: g.radial.cx, cy: g.radial.cy, angle: g.radial.angle }
+      if (g.radial.showCenter) r.showCenter = true
+      entry.radial = r
+    }
     return entry
   })
   return JSON.stringify(payload)
@@ -275,6 +294,24 @@ const parseGroups = (raw: string | null): Group[] => {
       if (obj.animation && typeof obj.animation === 'object') {
         const anim = parseAnimationAttr(JSON.stringify(obj.animation))
         if (anim) g.animation = anim
+      }
+      if (obj.mirror && typeof obj.mirror === 'object') {
+        const m = obj.mirror as Record<string, unknown>
+        const x = typeof m.x === 'number' ? m.x : NaN
+        const y = typeof m.y === 'number' ? m.y : NaN
+        const angle = typeof m.angle === 'number' ? m.angle : NaN
+        if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(angle)) {
+          g.mirror = { axis: { x, y, angle }, ...(m.showAxis ? { showAxis: true } : {}) }
+        }
+      }
+      if (obj.radial && typeof obj.radial === 'object') {
+        const r = obj.radial as Record<string, unknown>
+        const cx = typeof r.cx === 'number' ? r.cx : NaN
+        const cy = typeof r.cy === 'number' ? r.cy : NaN
+        const angle = typeof r.angle === 'number' ? r.angle : NaN
+        if (Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(angle) && angle > 0) {
+          g.radial = { cx, cy, angle, ...(r.showCenter ? { showCenter: true } : {}) }
+        }
       }
       out.push(g)
     }
@@ -473,6 +510,79 @@ const buildRadialSiblings = (source: Shape, settings: ProjectSettings, emitsPain
   return out
 }
 
+/**
+ * Render-only `<path>` / `<circle>` for a single shape, no `data-v7-*`
+ * metadata. Used inside group mirror / radial sibling wrappers so external
+ * viewers see the cloned geometry but the parser doesn't ingest them as new
+ * shapes (the wrapping `<g>` carries `data-v7-group-mirror-of` /
+ * `data-v7-group-radial-of`, which the loader treats as a non-rendered
+ * ancestor).
+ */
+const buildGroupMemberClone = (shape: Shape, settings: ProjectSettings): string => {
+  const isGlyphs = shape.kind === 'glyphs' && !!shape.glyphs && shape.points.length >= 1
+  const isCircle = !isGlyphs && shape.kind === 'circle' && shape.points.length >= 2
+  const partialArc = isCircle && isPartialArc(shape.arc) ? shape.arc : undefined
+  const filled = partialArc ? partialArc.style !== 'open' : shape.closed
+  const hasStroke = shape.stroke !== 'none'
+
+  const attrs: string[] = []
+  attrs.push(`fill="${escapeAttr(filled || isGlyphs ? shape.fill : 'none')}"`)
+  if (hasStroke) {
+    attrs.push(`stroke="${escapeAttr(shape.stroke)}"`, `stroke-width="${fmt(shape.strokeWidth)}"`)
+    const isPathElement = !isCircle || !!partialArc
+    if (isPathElement) {
+      const linejoin = shape.strokeLinejoin ?? 'round'
+      const linecap = shape.strokeLinecap ?? 'round'
+      attrs.push(`stroke-linejoin="${linejoin}"`, `stroke-linecap="${linecap}"`)
+    }
+    const dash = shape.strokeDasharray?.trim()
+    if (dash) attrs.push(`stroke-dasharray="${escapeAttr(dash)}"`)
+    if (shape.paintOrder === 'stroke') attrs.push(`paint-order="stroke"`)
+  }
+  if (shape.hidden) attrs.push(`visibility="hidden"`)
+  if (shape.blendMode && shape.blendMode !== 'normal') {
+    attrs.push(`style="mix-blend-mode:${shape.blendMode}"`)
+  }
+  if (shape.opacity !== undefined && shape.opacity < 1) {
+    attrs.push(`opacity="${fmt(Math.max(0, shape.opacity))}"`)
+  }
+
+  const composed = composeTransformString(shape)
+  const transformAttr = composed ? ` transform="${composed}"` : ''
+
+  if (isGlyphs && shape.glyphs) {
+    return `<path d="${shape.glyphs.d}" transform="${composed}" ${attrs.join(' ')}/>`
+  }
+  if (isCircle && !partialArc) {
+    const [cx, cy] = shape.points[0]
+    const r = dist(shape.points[0], shape.points[1])
+    return `<circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(r)}"${transformAttr} ${attrs.join(' ')}/>`
+  }
+  if (isCircle && partialArc) {
+    const [cx, cy] = shape.points[0]
+    const r = dist(shape.points[0], shape.points[1])
+    const d = arcToPath(cx, cy, r, partialArc)
+    return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
+  }
+  const bz = shape.bezierOverride ?? settings.bezier
+  const d = pointsToPath(shape.points, shape.closed, bz, shape.pointBezierOverrides)
+  return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
+}
+
+/**
+ * Walk up from `el` toward `root`, returning true when an ancestor carries
+ * `data-v7-group-mirror-of` or `data-v7-group-radial-of` — the markers we
+ * place on render-only group sibling wrappers.
+ */
+const isInsideGroupSiblingWrapper = (el: Element, root: Element): boolean => {
+  let cur: Element | null = el.parentElement
+  while (cur && cur !== root) {
+    if (cur.hasAttribute('data-v7-group-mirror-of') || cur.hasAttribute('data-v7-group-radial-of')) return true
+    cur = cur.parentElement
+  }
+  return false
+}
+
 let nextId = 1
 export const makeId = (): string => `s${nextId++}`
 export const resetIds = (n = 1): void => {
@@ -546,6 +656,32 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
   let openGroupId: string | undefined
   const closeOpenGroup = () => {
     if (openGroupId !== undefined) {
+      // Emit render-only mirror / radial sibling wrappers right before the
+      // closing `</g>` so external viewers see the full effect. Each wrapper
+      // is marked with `data-v7-group-mirror-of` / `data-v7-group-radial-of`
+      // so the parser treats it as a non-rendered ancestor and never reads
+      // the duplicated geometry as new shapes.
+      const g = groupById.get(openGroupId)
+      const members = shapes.filter(sh => sh.groupId === openGroupId)
+      if (g?.mirror && members.length > 0) {
+        const matrix = reflectionMatrixString(g.mirror.axis)
+        lines.push(
+          `    <g transform="${matrix}" data-v7-group-mirror-of="${escapeAttr(openGroupId)}" pointer-events="none">`,
+        )
+        for (const m of members) lines.push(`      ${buildGroupMemberClone(m, settings)}`)
+        lines.push(`    </g>`)
+      }
+      if (g?.radial && members.length > 0) {
+        const angles = radialCloneAngles(g.radial)
+        const { cx, cy } = g.radial
+        for (const a of angles) {
+          lines.push(
+            `    <g transform="rotate(${fmt(a)} ${fmt(cx)} ${fmt(cy)})" data-v7-group-radial-of="${escapeAttr(openGroupId)}" pointer-events="none">`,
+          )
+          for (const m of members) lines.push(`      ${buildGroupMemberClone(m, settings)}`)
+          lines.push(`    </g>`)
+        }
+      }
       lines.push(`  </g>`)
       openGroupId = undefined
     }
@@ -881,6 +1017,10 @@ export function parseProject(text: string): ParsedProject {
     // Same for radial-clone siblings: derived from the source's
     // `data-v7-radial-spec`, never round-tripped as separate shapes.
     if (el.hasAttribute('data-v7-radial-of')) continue
+    // Group-level mirror / radial wrappers contain duplicates of every member
+    // for external-viewer rendering only — the editor reconstructs them from
+    // the group's `data-v7-groups` JSON, so skip everything inside them.
+    if (isInsideGroupSiblingWrapper(el, svg)) continue
     if (isInsideNonRenderedAncestor(el, svg)) continue
     if (el === bgRectEl) continue
     const ptsAttr = el.getAttribute('data-v7-points')

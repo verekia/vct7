@@ -18,6 +18,7 @@ import {
   pairBBoxCenter,
   radialCloneAngles,
   reflectShape,
+  reflectionMatrixString,
   shapeRotation,
   shapeScale,
   transformAroundString,
@@ -550,6 +551,28 @@ function GroupNode({
   const ghostOffsets = onionActive && animActive && group.animation ? lerpOffsets(group.animation.from, 0) : null
   const ghostTransform = ghostOffsets ? groupOffsetsToTransform(ghostOffsets, cx, cy) : ''
   const className = `vh-group-${group.id}${animActive ? ` vh-anim-group-${group.id}` : ''}`
+  // The mirror copy renders the same children inside a reflection transform —
+  // since members own their geometry, no per-shape work is needed; the SVG
+  // matrix flips the whole rendered subtree across the axis.
+  const mirrorTransform = group.mirror ? reflectionMatrixString(group.mirror.axis) : null
+  const radial = group.radial
+  const radialClones = radial
+    ? radialCloneAngles(radial).map(a => ({ a, transform: `rotate(${fmt(a)} ${fmt(radial.cx)} ${fmt(radial.cy)})` }))
+    : []
+  // Each replica wraps `children` again — React treats every reuse as its own
+  // subtree (children keys live inside their wrapper's child list, so duplicate
+  // member ids across wrappers don't clash).
+  const renderContent = () => (
+    <>
+      {children}
+      {mirrorTransform && <g transform={mirrorTransform}>{children}</g>}
+      {radialClones.map(({ a, transform }) => (
+        <g key={a} transform={transform}>
+          {children}
+        </g>
+      ))}
+    </>
+  )
   // The static transform always wraps; the animation transform layers on top
   // (so a slider-driven group rotation composes with a timeline-driven
   // entrance offset). When neither is set, the wrapper still emits its
@@ -563,11 +586,11 @@ function GroupNode({
           pointerEvents="none"
           opacity={(ghostOffsets.opacityMul ?? 1) * 0.25}
         >
-          <g transform={ghostTransform || undefined}>{children}</g>
+          <g transform={ghostTransform || undefined}>{renderContent()}</g>
         </g>
       )}
       <g className={className} transform={staticTransform || undefined} opacity={opacity}>
-        {animTransform ? <g transform={animTransform}>{children}</g> : children}
+        {animTransform ? <g transform={animTransform}>{renderContent()}</g> : renderContent()}
       </g>
     </>
   )

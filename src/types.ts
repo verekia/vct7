@@ -167,6 +167,21 @@ export interface Group {
   scale?: number
   /** Group-level entrance animation, runs on the `<g>` wrapping the members. */
   animation?: AnimationSpec
+  /**
+   * Live mirror modifier on the whole group — adds a reflected copy of every
+   * member across `axis`. The axis is in canvas coordinates and is independent
+   * of the group's own rotation/scale (the entire transformed group is what
+   * gets reflected). `convertGroupMirror` bakes the reflection into new shape
+   * members of this same group.
+   */
+  mirror?: MirrorSpec
+  /**
+   * Live radial repeat on the whole group — clones the entire group rotated
+   * around `(cx, cy)` by `angle`, `2·angle`, … up to one full turn. Mutually
+   * exclusive with `mirror` at the UI level. `convertGroupRadial` bakes every
+   * clone into new shape members of this same group.
+   */
+  radial?: RadialSpec
 }
 
 /**
