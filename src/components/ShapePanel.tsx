@@ -1454,7 +1454,7 @@ function MirrorControls({
   )
 }
 
-const RADIAL_PRESETS: readonly number[] = [15, 30, 45, 90, 180]
+const RADIAL_PRESETS: readonly number[] = [15, 30, 45, 90, 120, 180]
 
 /**
  * Live radial-repeat modifier section. When off, exposes the three preset
