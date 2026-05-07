@@ -1,22 +1,31 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
 import { useCanvasInteractions } from '../hooks/useCanvasInteractions'
-import { IDENTITY_OFFSETS, lerpOffsets, offsetsToTransform, sampleAnimation } from '../lib/animation'
+import {
+  IDENTITY_OFFSETS,
+  groupOffsetsToTransform,
+  lerpOffsets,
+  offsetsToTransform,
+  sampleAnimation,
+  sampleAnimationSpec,
+} from '../lib/animation'
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from '../lib/geometry'
 import {
   composeTransformString,
+  groupBBoxCenter,
   hasTransform,
   pairBBoxCenter,
   reflectShape,
   shapeRotation,
   shapeScale,
+  transformAroundString,
 } from '../lib/transform'
 import { useStore } from '../store'
 import { effectiveBezier } from '../store'
 
 import type { BoxSelect } from '../store'
-import type { Drawing, Point, ProjectSettings, Shape } from '../types'
+import type { Drawing, Group, Point, ProjectSettings, Shape } from '../types'
 
 interface ContainerSize {
   w: number
@@ -82,6 +91,7 @@ export function Canvas() {
   const view = useStore(s => s.view)
   const cursor = useStore(s => s.cursor)
   const shapes = useStore(s => s.shapes)
+  const groups = useStore(s => s.groups)
   const drawing = useStore(s => s.drawing)
   const selectedShapeIds = useStore(s => s.selectedShapeIds)
   const selectedVertices = useStore(s => s.selectedVertices)
@@ -103,6 +113,11 @@ export function Canvas() {
   const selectedSet = useMemo(() => new Set(selectedShapeIds), [selectedShapeIds])
   const selectedShapes = shapes.filter(s => selectedSet.has(s.id))
   const singleSelected = selectedShapes.length === 1 ? selectedShapes[0] : null
+  const groupById = useMemo(() => {
+    const map = new Map<string, Group>()
+    for (const g of groups) map.set(g.id, g)
+    return map
+  }, [groups])
   const transform = `translate(${fmt(view.x)} ${fmt(view.y)}) scale(${fmt(view.scale)})`
 
   const cls = [
@@ -163,29 +178,17 @@ export function Canvas() {
             </defs>
           )}
           <g clipPath={settings.clip ? 'url(#vh-artboard-clip)' : undefined}>
-            {shapes.map(shape =>
-              shape.hidden ? null : (
-                <AnimatedShape
-                  key={shape.id}
-                  shape={shape}
-                  bezier={effectiveBezier(shape, settings)}
-                  sceneT={sceneT}
-                  onionSkin={onionActive}
-                />
-              ),
-            )}
+            <ShapeStack shapes={shapes} groups={groups} settings={settings} sceneT={sceneT} onionActive={onionActive} />
           </g>
 
           {selectedShapes.map(shape => (
-            <SelectionLayer
+            <SelectionForShape
               key={shape.id}
               shape={shape}
-              // Vertex handles are only meaningful when a single shape is
-              // selected — multi-select shows outlines only.
-              selectedIndices={
-                singleSelected ? selectedVertices.filter(v => v.shapeId === shape.id).map(v => v.index) : []
-              }
-              showVertices={!!singleSelected}
+              shapes={shapes}
+              groupById={groupById}
+              selectedVertices={selectedVertices}
+              singleSelected={!!singleSelected}
               scale={view.scale}
             />
           ))}
@@ -405,6 +408,158 @@ function AnimatedShape({
       <g transform={transform || undefined} opacity={opacity}>
         <ShapeNode shape={shape} bezier={bezier} fillOverride={offsets.fill} strokeOverride={offsets.stroke} />
         {renderMirror(offsets.fill, offsets.stroke)}
+      </g>
+    </>
+  )
+}
+
+/**
+ * Render the shape stack with contiguous group runs wrapped in a single
+ * `<g class="vh-group-${id}">`. The wrapper carries the group's rotation /
+ * scale (around the combined bbox center) and, when an entrance animation
+ * is set, the matching `vh-anim-group-${id}` class so a single keyframe
+ * rule drives every member at once.
+ *
+ * Iteration is one pass through `shapes` (z-order). Each time the running
+ * `groupId` changes we close the open group's children list and start a
+ * new one. Hidden shapes are filtered inside the run because filtering
+ * upstream would split groups apart.
+ */
+function ShapeStack({
+  shapes,
+  groups,
+  settings,
+  sceneT,
+  onionActive,
+}: {
+  shapes: Shape[]
+  groups: Group[]
+  settings: ProjectSettings
+  sceneT: number | null
+  onionActive: boolean
+}) {
+  const groupById = useMemo(() => {
+    const map = new Map<string, Group>()
+    for (const g of groups) map.set(g.id, g)
+    return map
+  }, [groups])
+  const runs = useMemo(() => buildShapeRuns(shapes, groupById), [shapes, groupById])
+  return (
+    <>
+      {runs.map(run => {
+        // Each run is keyed by its first shape's id — stable across edits and
+        // unique even if the same group reappears later in the array (which
+        // shouldn't happen given contiguity, but the key stays well-formed
+        // for non-grouped runs that share no group identity).
+        const runKey = run.shapes[0]?.id ?? 'empty'
+        const renderedChildren = run.shapes
+          .filter(sh => !sh.hidden)
+          .map(sh => (
+            <AnimatedShape
+              key={sh.id}
+              shape={sh}
+              bezier={effectiveBezier(sh, settings)}
+              sceneT={sceneT}
+              onionSkin={onionActive}
+            />
+          ))
+        if (run.group === null) {
+          return <Fragment key={`run-${runKey}`}>{renderedChildren}</Fragment>
+        }
+        return (
+          <GroupNode
+            key={`group-${run.group.id}-${runKey}`}
+            group={run.group}
+            members={run.shapes}
+            animationActive={settings.animationEnabled}
+            sceneT={sceneT}
+            onionActive={onionActive}
+          >
+            {renderedChildren}
+          </GroupNode>
+        )
+      })}
+    </>
+  )
+}
+
+interface ShapeRun {
+  group: Group | null
+  shapes: Shape[]
+}
+
+const buildShapeRuns = (shapes: Shape[], groupById: Map<string, Group>): ShapeRun[] => {
+  const out: ShapeRun[] = []
+  let current: ShapeRun | null = null
+  for (const sh of shapes) {
+    const groupId = sh.groupId
+    const group = groupId ? (groupById.get(groupId) ?? null) : null
+    if (current && current.group?.id === group?.id) {
+      current.shapes.push(sh)
+      continue
+    }
+    current = { group, shapes: [sh] }
+    out.push(current)
+  }
+  return out
+}
+
+/**
+ * Wrapping `<g>` for a contiguous run of group members. Carries the group's
+ * static transform (around the live combined bbox center, so the pivot
+ * tracks members as they edit) and — when the project's animation switch
+ * is on and the group has an animation — the timeline preview transform /
+ * opacity sampled from the same scene scrubber that drives shape-level
+ * animations. Hidden members are excluded from the bbox so a hidden child
+ * doesn't drag the pivot off-screen.
+ */
+function GroupNode({
+  group,
+  members,
+  animationActive,
+  sceneT,
+  onionActive,
+  children,
+}: {
+  group: Group
+  members: Shape[]
+  animationActive: boolean
+  sceneT: number | null
+  onionActive: boolean
+  children: ReactNode
+}) {
+  const visibleMembers = members.filter(sh => !sh.hidden)
+  const pivotMembers = visibleMembers.length > 0 ? visibleMembers : members
+  const [cx, cy] = groupBBoxCenter(pivotMembers)
+  const rot = group.rotation ?? 0
+  const scl = group.scale ?? 1
+  const staticTransform = transformAroundString(rot, scl, cx, cy)
+  const animActive = animationActive && !!group.animation
+  const animOffsets =
+    animActive && sceneT !== null && group.animation ? sampleAnimationSpec(group.animation, sceneT) : null
+  const animTransform = animOffsets ? groupOffsetsToTransform(animOffsets, cx, cy) : ''
+  const opacity = animOffsets && animOffsets.opacityMul < 1 ? animOffsets.opacityMul : undefined
+  const ghostOffsets = onionActive && animActive && group.animation ? lerpOffsets(group.animation.from, 0) : null
+  const ghostTransform = ghostOffsets ? groupOffsetsToTransform(ghostOffsets, cx, cy) : ''
+  const className = `vh-group-${group.id}${animActive ? ` vh-anim-group-${group.id}` : ''}`
+  // The static transform always wraps; the animation transform layers on top
+  // (so a slider-driven group rotation composes with a timeline-driven
+  // entrance offset). When neither is set, the wrapper still emits its
+  // group class so external SVG viewers receive the same DOM shape.
+  return (
+    <>
+      {ghostOffsets && (
+        <g
+          className={`vh-group-${group.id}`}
+          transform={staticTransform || undefined}
+          pointerEvents="none"
+          opacity={(ghostOffsets.opacityMul ?? 1) * 0.25}
+        >
+          <g transform={ghostTransform || undefined}>{children}</g>
+        </g>
+      )}
+      <g className={className} transform={staticTransform || undefined} opacity={opacity}>
+        {animTransform ? <g transform={animTransform}>{children}</g> : children}
       </g>
     </>
   )
@@ -683,6 +838,51 @@ function SelectionLayer({
  * source-outline branches (path / circle / partial-arc) but using the
  * reflected shape's points so the user sees both halves selected.
  */
+/**
+ * SelectionLayer wrapper that re-applies the shape's group transform when its
+ * group has a non-identity rotation/scale. Without this the dashed outline
+ * would render at the un-rotated point positions while the actual shape sits
+ * at the rotated position, drifting visibly apart. The pivot matches
+ * `GroupNode` so the outline stays glued to the rendered shape regardless of
+ * which group transform is active.
+ */
+function SelectionForShape({
+  shape,
+  shapes,
+  groupById,
+  selectedVertices,
+  singleSelected,
+  scale,
+}: {
+  shape: Shape
+  shapes: Shape[]
+  groupById: Map<string, Group>
+  selectedVertices: { shapeId: string; index: number }[]
+  singleSelected: boolean
+  scale: number
+}) {
+  const group = shape.groupId ? groupById.get(shape.groupId) : undefined
+  const groupHasTransform = !!group && ((group.rotation ?? 0) !== 0 || (group.scale ?? 1) !== 1)
+  let groupTransform = ''
+  if (groupHasTransform && group) {
+    const visible = shapes.filter(sh => sh.groupId === shape.groupId && !sh.hidden)
+    const fallback = shapes.filter(sh => sh.groupId === shape.groupId)
+    const pivotMembers = visible.length > 0 ? visible : fallback
+    const [cx, cy] = groupBBoxCenter(pivotMembers)
+    groupTransform = transformAroundString(group.rotation ?? 0, group.scale ?? 1, cx, cy)
+  }
+  const inner = (
+    <SelectionLayer
+      shape={shape}
+      selectedIndices={singleSelected ? selectedVertices.filter(v => v.shapeId === shape.id).map(v => v.index) : []}
+      showVertices={singleSelected}
+      scale={scale}
+    />
+  )
+  if (!groupTransform) return inner
+  return <g transform={groupTransform}>{inner}</g>
+}
+
 const mirrorSelectionOutline = (shape: Shape) => {
   if (!shape.mirror) return null
   const r = reflectShape(shape, shape.mirror.axis)

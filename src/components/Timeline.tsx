@@ -36,6 +36,7 @@ export function Timeline() {
   const animationEnabled = useStore(s => s.settings.animationEnabled)
   const setSettings = useStore(s => s.setSettings)
   const shapes = useStore(s => s.shapes)
+  const groups = useStore(s => s.groups)
   const previewT = useStore(s => s.previewT)
   const previewPlaying = useStore(s => s.previewPlaying)
   const onionSkin = useStore(s => s.onionSkin)
@@ -46,7 +47,7 @@ export function Timeline() {
   const updateShape = useStore(s => s.updateShape)
   const selectedShapeIds = useStore(s => s.selectedShapeIds)
 
-  const total = sceneTotal(shapes)
+  const total = sceneTotal(shapes, groups)
   const hasAnimated = total > 0
   const animatedShapes = shapes.filter(s => s.animation)
   // Slider value: when no scrub is active and we're not playing, sit at total

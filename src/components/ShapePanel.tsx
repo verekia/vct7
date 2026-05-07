@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { dist, isPartialArc } from '../lib/geometry'
 import { applyTransformToPoint, hasTransform, isPointOnAxis, shapeRotation, shapeScale } from '../lib/transform'
@@ -12,6 +12,7 @@ import type {
   ArcRange,
   BlendMode,
   Easing,
+  Group,
   MirrorAxis,
   PaletteColor,
   Point,
@@ -128,11 +129,31 @@ export function ShapePanel() {
   const mergeMirror = useStore(s => s.mergeMirror)
   const mergeShapes = useStore(s => s.mergeShapes)
   const insertPointBetween = useStore(s => s.insertPointBetween)
+  const groups = useStore(s => s.groups)
+  const setGroupTransform = useStore(s => s.setGroupTransform)
+  const applyGroupTransform = useStore(s => s.applyGroupTransform)
+  const setGroupAnimation = useStore(s => s.setGroupAnimation)
+  const renameGroup = useStore(s => s.renameGroup)
+  const removeGroup = useStore(s => s.removeGroup)
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds)
     return shapes.filter(sh => ids.has(sh.id))
   }, [shapes, selectedShapeIds])
+
+  // "Group selected" = the selection is exactly the full membership of one
+  // group. This is the cycle-up state of the click-cycling behavior — every
+  // group click lands here, and the inspector swaps to group-level controls
+  // (rotation/scale on the wrapping `<g>`, group entrance animation).
+  const fullySelectedGroup = useMemo(() => {
+    if (selectedShapes.length < 1) return null
+    const gid = selectedShapes[0].groupId
+    if (!gid) return null
+    if (!selectedShapes.every(sh => sh.groupId === gid)) return null
+    const members = shapes.filter(sh => sh.groupId === gid)
+    if (members.length !== selectedShapes.length) return null
+    return groups.find(g => g.id === gid) ?? null
+  }, [shapes, groups, selectedShapes])
 
   if (selectedShapes.length === 0) {
     return (
@@ -143,6 +164,23 @@ export function ShapePanel() {
           Pick one from the layers panel or use the Select tool (V) on the canvas.
         </p>
       </section>
+    )
+  }
+
+  if (fullySelectedGroup) {
+    return (
+      <GroupPanel
+        group={fullySelectedGroup}
+        memberCount={selectedShapes.length}
+        animationEnabled={animationEnabled}
+        snapAngles={snapAngles}
+        snapDisabled={snapDisabled}
+        setGroupTransform={setGroupTransform}
+        applyGroupTransform={applyGroupTransform}
+        setGroupAnimation={setGroupAnimation}
+        renameGroup={renameGroup}
+        removeGroup={removeGroup}
+      />
     )
   }
 
@@ -1915,5 +1953,273 @@ function MultiPaletteRefSelect({
         </option>
       ))}
     </select>
+  )
+}
+
+/**
+ * Inspector for a fully-selected group — rotation / scale on the group's
+ * `<g transform>` (live, no baking required), the group-level entrance
+ * animation (drives the same wrapper via `vh-anim-group-{id}`), plus rename
+ * and ungroup buttons. Per-member fill / stroke / vertex editing falls
+ * through to the click-cycling path: clicking a child a second time selects
+ * the individual layer and surfaces the regular shape inspector.
+ */
+function GroupPanel({
+  group,
+  memberCount,
+  animationEnabled,
+  snapAngles,
+  snapDisabled,
+  setGroupTransform,
+  applyGroupTransform,
+  setGroupAnimation,
+  renameGroup,
+  removeGroup,
+}: {
+  group: Group
+  memberCount: number
+  animationEnabled: boolean
+  snapAngles: number[]
+  snapDisabled: boolean
+  setGroupTransform: (groupId: string, patch: { rotation?: number; scale?: number }) => void
+  applyGroupTransform: (groupId: string) => void
+  setGroupAnimation: (groupId: string, animation: AnimationSpec | undefined) => void
+  renameGroup: (id: string, name: string) => void
+  removeGroup: (id: string) => void
+}) {
+  const [editingName, setEditingName] = useState(false)
+  const rotation = group.rotation ?? 0
+  const scale = group.scale ?? 1
+  const canBake = rotation !== 0 || scale !== 1
+
+  return (
+    <section className="border-line relative border-b px-3.5 py-3 last:border-b-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Group</span>
+        {editingName ? (
+          <NameInput
+            initial={group.name}
+            onCommit={v => {
+              renameGroup(group.id, v)
+              setEditingName(false)
+            }}
+            onCancel={() => setEditingName(false)}
+          />
+        ) : (
+          <span className="text-text text-xs" onDoubleClick={() => setEditingName(true)} title="Double-click to rename">
+            {group.name}
+          </span>
+        )}
+        <span className="text-muted-2 ml-auto text-[10px] tracking-normal normal-case">
+          {memberCount} member{memberCount === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      <TransformControls
+        rotation={rotation}
+        scale={scale}
+        rotationMixed={false}
+        scaleMixed={false}
+        snapAngles={snapAngles}
+        snapDisabled={snapDisabled}
+        canBake={canBake}
+        isGlyphs={false}
+        onRotation={r => setGroupTransform(group.id, { rotation: r })}
+        onScale={sc => setGroupTransform(group.id, { scale: sc })}
+        onReset={() => setGroupTransform(group.id, { rotation: 0, scale: 1 })}
+        onApply={() => applyGroupTransform(group.id)}
+      />
+
+      <GroupAnimationControls
+        animation={group.animation}
+        animationEnabled={animationEnabled}
+        onChange={anim => setGroupAnimation(group.id, anim)}
+      />
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          className="text-accent hover:bg-accent hover:border-accent hover:text-white"
+          onClick={() => removeGroup(group.id)}
+          title="Delete group (members keep their layers)."
+        >
+          Ungroup all
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Group animation panel. Same shape as the per-shape AnimationControls but
+ * without the color-channel and spin sub-rows that don't apply at the
+ * group level — fill / stroke live on individual children and would be
+ * ambiguous to animate at the wrapper. Spin is also omitted for the same
+ * reason: per-child spin is already a thing and a group spin would
+ * compose unpredictably with it.
+ */
+function GroupAnimationControls({
+  animation,
+  animationEnabled,
+  onChange,
+}: {
+  animation: AnimationSpec | undefined
+  animationEnabled: boolean
+  onChange: (next: AnimationSpec | undefined) => void
+}) {
+  const updateFrom = (patch: Partial<AnimationFromState>) => {
+    if (!animation) return
+    onChange({ ...animation, from: { ...animation.from, ...patch } })
+  }
+  const setSpec = (next: AnimationSpec | undefined) => onChange(next)
+
+  return (
+    <section className="border-line mt-2.5 border-t pt-2.5" style={{ opacity: animationEnabled ? 1 : 0.55 }}>
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-muted flex-1 text-[11px] tracking-[0.5px] uppercase">Group animation</span>
+        <input
+          type="checkbox"
+          checked={!!animation}
+          onChange={e =>
+            setSpec(
+              e.target.checked
+                ? { duration: DEFAULT_ANIMATION.duration, delay: 0, easing: 'ease-out', from: {} }
+                : undefined,
+            )
+          }
+        />
+      </div>
+      {!animationEnabled && animation && (
+        <p className="text-muted-2 mb-2 text-[10px] leading-snug tracking-normal normal-case">
+          Project animations are off — toggle in Project panel to preview.
+        </p>
+      )}
+      {animation && (
+        <>
+          <label>
+            <span>Duration (ms)</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={animation.duration}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                if (Number.isFinite(v) && v >= 0) setSpec({ ...animation, duration: v })
+              }}
+            />
+          </label>
+          <label>
+            <span>Delay (ms)</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={animation.delay}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                if (Number.isFinite(v) && v >= 0) setSpec({ ...animation, delay: v })
+              }}
+            />
+          </label>
+          <label>
+            <span>Easing</span>
+            <select
+              value={animation.easing}
+              onChange={e => setSpec({ ...animation, easing: e.target.value as Easing })}
+            >
+              {EASINGS.map(e => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="text-muted mt-2 mb-1 text-[10px] tracking-[0.5px] uppercase">From state</div>
+          <label>
+            <span>Opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={animation.from.opacity ?? 1}
+              onChange={e => {
+                const v = parseFloat(e.target.value)
+                updateFrom({ opacity: v >= 1 ? undefined : v })
+              }}
+            />
+            <span className="text-text tabular-nums">{(animation.from.opacity ?? 1).toFixed(2)}</span>
+          </label>
+          <label>
+            <span>Rotation offset (°)</span>
+            <NumField value={animation.from.rotation} placeholder={0} onChange={v => updateFrom({ rotation: v })} />
+          </label>
+          <label>
+            <span>Scale factor</span>
+            <NumField
+              value={animation.from.scale}
+              placeholder={1}
+              step={0.05}
+              onChange={v => updateFrom({ scale: v })}
+            />
+          </label>
+          <label>
+            <span>Translate X / Y</span>
+            <div className="flex items-center gap-1.5">
+              <NumField
+                value={animation.from.translateX}
+                placeholder={0}
+                onChange={v => updateFrom({ translateX: v })}
+              />
+              <NumField
+                value={animation.from.translateY}
+                placeholder={0}
+                onChange={v => updateFrom({ translateY: v })}
+              />
+            </div>
+          </label>
+        </>
+      )}
+    </section>
+  )
+}
+
+function NameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string
+  onCommit: (v: string) => void
+  onCancel: () => void
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  const [value, setValue] = useState(initial)
+  useEffect(() => {
+    ref.current?.focus()
+    ref.current?.select()
+  }, [])
+  return (
+    <input
+      ref={ref}
+      className="bg-bg-1 border-accent text-text min-w-0 flex-1 border px-1 py-px text-[11px] tracking-[0.4px] outline-none"
+      value={value}
+      onChange={e => setValue(e.target.value)}
+      onBlur={() => onCommit(value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          onCommit(value)
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          onCancel()
+        }
+        e.stopPropagation()
+      }}
+      onClick={e => e.stopPropagation()}
+      onDoubleClick={e => e.stopPropagation()}
+    />
   )
 }

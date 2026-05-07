@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, makeId } from './lib/svg-io'
 import {
   applyTransformToPoint,
   defaultMirrorAxis,
+  groupBBoxCenter,
   hasTransform,
   isPointOnAxis,
   pairBBoxCenter,
@@ -17,6 +18,7 @@ import {
 } from './lib/transform'
 
 import type {
+  AnimationSpec,
   Drawing,
   GlyphData,
   Group,
@@ -406,10 +408,29 @@ export interface AppState {
   renameGroup: (id: string, name: string) => void
   /**
    * Set or clear a shape's group membership. Pass `undefined` to ungroup.
-   * Group membership is independent of z-order — the shape stays at its
-   * current position in the array.
+   * Assigning to a group with existing members reorders the shape next to
+   * them so members stay contiguous in the array (lets the renderer wrap
+   * each group in one `<g>` element); ungrouping leaves the shape's
+   * position untouched.
    */
   setShapeGroup: (shapeId: string, groupId: string | undefined) => void
+  /**
+   * Patch a group's rotation / scale. The values are applied around the
+   * group's combined bbox center via the wrapping `<g transform>`, so
+   * sliding live previews without baking. Pass `0` for rotation or `1` for
+   * scale to reset the channel.
+   */
+  setGroupTransform: (groupId: string, patch: { rotation?: number; scale?: number }) => void
+  /**
+   * Bake the group's rotation/scale into each member's points (around the
+   * group's bbox center) and reset the group transform back to identity.
+   * Required before editing a member's vertices on a transformed group.
+   * Glyph members are unsupported (no path-data baking); the call is a
+   * no-op if any member is a glyph.
+   */
+  applyGroupTransform: (groupId: string) => void
+  /** Set or clear the group's entrance animation. */
+  setGroupAnimation: (groupId: string, animation: AnimationSpec | undefined) => void
   /**
    * Replace the selection with every shape that belongs to `groupId`. Empty
    * groups produce an empty selection (clears any current selection).
@@ -1481,16 +1502,96 @@ export const useStore = create<AppState>(set => ({
     }),
   setShapeGroup: (shapeId, groupId) =>
     set(s => {
-      const shape = s.shapes.find(sh => sh.id === shapeId)
-      if (!shape) return s
+      const fromIdx = s.shapes.findIndex(sh => sh.id === shapeId)
+      if (fromIdx === -1) return s
+      const shape = s.shapes[fromIdx]
       // No-op when nothing changes — don't pollute the undo stack.
       if (shape.groupId === groupId) return s
       // Reject unknown group ids so a stale ref can't sneak through; passing
       // undefined to ungroup is always allowed.
       if (groupId !== undefined && !s.groups.some(g => g.id === groupId)) return s
+      // Reassign the membership pointer in place first.
+      let nextShapes = s.shapes.map(sh => (sh.id === shapeId ? { ...sh, groupId } : sh))
+      // Group members must stay contiguous in the array so the renderer can
+      // wrap them in a single `<g>` and the layer panel can show them under
+      // one header. When assigning to a group with existing members, slide
+      // the shape next to them (keeps z-order stable for everyone else
+      // because the splice is a single shift). When ungrouping or joining
+      // an empty group, leave the position untouched.
+      if (groupId !== undefined) {
+        const lastMemberIdx = nextShapes.reduce((acc, sh, i) => (sh.groupId === groupId && i !== fromIdx ? i : acc), -1)
+        if (lastMemberIdx !== -1) {
+          const moved = nextShapes[fromIdx]
+          nextShapes = nextShapes.slice()
+          nextShapes.splice(fromIdx, 1)
+          // The target index shifts left when fromIdx was earlier than it.
+          const insertAt = lastMemberIdx > fromIdx ? lastMemberIdx : lastMemberIdx + 1
+          nextShapes.splice(insertAt, 0, moved)
+        }
+      }
       return {
         ...pushSnapshot(s),
-        shapes: s.shapes.map(sh => (sh.id === shapeId ? { ...sh, groupId } : sh)),
+        shapes: nextShapes,
+        dirty: true,
+      }
+    }),
+  setGroupTransform: (groupId, patch) =>
+    set(s => {
+      if (!s.groups.some(g => g.id === groupId)) return s
+      const cleaned: { rotation?: number; scale?: number } = {}
+      if ('rotation' in patch) cleaned.rotation = patch.rotation === 0 ? undefined : patch.rotation
+      if ('scale' in patch) cleaned.scale = patch.scale === 1 ? undefined : patch.scale
+      return {
+        // Coalesce so a slider drag is one undo entry, like updateMirrorAxis.
+        ...pushSnapshot(s, `groupTransform:${groupId}:${Object.keys(cleaned).toSorted().join(',')}`),
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, ...cleaned } : g)),
+        dirty: true,
+      }
+    }),
+  applyGroupTransform: groupId =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group) return s
+      const rot = group.rotation ?? 0
+      const scl = group.scale ?? 1
+      if (rot === 0 && scl === 1) return s
+      const members = s.shapes.filter(sh => sh.groupId === groupId)
+      if (members.length === 0) return s
+      // Glyphs can't bake a rotation/scale into their path data (same caveat
+      // as per-shape applyTransform), so refuse the bake outright rather than
+      // leaving the group half-baked.
+      if (members.some(sh => sh.kind === 'glyphs')) return s
+      const [cx, cy] = groupBBoxCenter(members)
+      // For each member, fold the group rotation/scale into its visible
+      // position by transforming the member's already-instance-transformed
+      // points around the group center, then resetting the member's own
+      // transform back to identity so the bake is total. Arc angles in
+      // canvas-frame degrees shift by the combined rotation; mirrors the
+      // logic in applyTransform / ejectMirror for orientation continuity.
+      const totalRotForArc = rot
+      const nextShapes = s.shapes.map(sh => {
+        if (sh.groupId !== groupId) return sh
+        const transformedPoints = sh.points.map(p => applyTransformToPoint(sh, p))
+        const baked = transformPointsAround(transformedPoints, rot, scl, cx, cy)
+        const patch: Partial<Shape> = { points: baked, rotation: undefined, scale: undefined }
+        if (sh.kind === 'circle' && sh.arc && totalRotForArc !== 0) {
+          patch.arc = { ...sh.arc, start: sh.arc.start + totalRotForArc, end: sh.arc.end + totalRotForArc }
+        }
+        return { ...sh, ...patch }
+      })
+      return {
+        ...pushSnapshot(s),
+        shapes: nextShapes,
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, rotation: undefined, scale: undefined } : g)),
+        dirty: true,
+      }
+    }),
+  setGroupAnimation: (groupId, animation) =>
+    set(s => {
+      if (!s.groups.some(g => g.id === groupId)) return s
+      return {
+        ...pushSnapshot(s, `groupAnimation:${groupId}`),
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, animation } : g)),
         dirty: true,
       }
     }),

@@ -1567,6 +1567,176 @@ describe('store: groups', () => {
     expect(useStore.getState().shapes[0].groupId).toBeUndefined()
   })
 
+  it('setShapeGroup keeps members contiguous in the array', () => {
+    // Initial z-order: a, b (ungrouped), c (ungrouped). After grouping a + c
+    // into the same group, c must move next to a so the group's `<g>`
+    // wrapper can render them as one contiguous block. b shifts to absorb
+    // the move.
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [1, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [2, 0],
+            [3, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'c',
+          points: [
+            [4, 0],
+            [5, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('a', gid)
+    useStore.getState().setShapeGroup('c', gid)
+    const ids = useStore.getState().shapes.map(sh => sh.id)
+    // a and c must end up adjacent regardless of which order they were
+    // assigned; b sits outside the group block.
+    const aIdx = ids.indexOf('a')
+    const cIdx = ids.indexOf('c')
+    expect(Math.abs(aIdx - cIdx)).toBe(1)
+  })
+
+  it('setGroupTransform updates the group rotation/scale (no per-shape mutation)', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'm1',
+          points: [
+            [0, 0],
+            [10, 0],
+            [5, 5],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('m1', gid)
+    useStore.getState().setGroupTransform(gid, { rotation: 30, scale: 1.5 })
+    const g = useStore.getState().groups.find(x => x.id === gid)!
+    expect(g.rotation).toBe(30)
+    expect(g.scale).toBe(1.5)
+    // Crucially, the member's own rotation/scale stay at identity — the
+    // group transform is applied at render time on the wrapping `<g>`.
+    const m = useStore.getState().shapes.find(sh => sh.id === 'm1')!
+    expect(m.rotation).toBeUndefined()
+    expect(m.scale).toBeUndefined()
+  })
+
+  it('applyGroupTransform bakes the group rotation/scale into member points', () => {
+    // 90° rotation around (0,0) sends (10,0) -> (0,10). With members at
+    // (10,0) and a 90° group rotation, baking should set the points to the
+    // rotated positions and clear the group transform.
+    useStore.setState({
+      shapes: [
+        {
+          id: 'm1',
+          points: [
+            [10, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('m1', gid)
+    // Pivot is the group's bbox center == (10, 0) for the single point at
+    // (10,0). A rotation around its own location is a no-op for that point;
+    // exercise a center we control by adding a second member at the origin
+    // so the bbox center sits at (5, 0).
+    useStore.setState(s => ({
+      shapes: [
+        ...s.shapes,
+        {
+          id: 'm2',
+          points: [
+            [0, 0],
+            [0, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          groupId: gid,
+        },
+      ],
+    }))
+    useStore.getState().setGroupTransform(gid, { rotation: 90 })
+    useStore.getState().applyGroupTransform(gid)
+    const g = useStore.getState().groups.find(x => x.id === gid)!
+    expect(g.rotation).toBeUndefined()
+    // Both members' points were rotated 90° around the bbox center (5, 0).
+    // Point (10, 0) -> (5, 5); point (0, 0) -> (5, -5). Allow tiny float drift.
+    const m1 = useStore.getState().shapes.find(sh => sh.id === 'm1')!
+    expect(m1.points[0][0]).toBeCloseTo(5, 3)
+    expect(m1.points[0][1]).toBeCloseTo(5, 3)
+    const m2 = useStore.getState().shapes.find(sh => sh.id === 'm2')!
+    expect(m2.points[0][0]).toBeCloseTo(5, 3)
+    expect(m2.points[0][1]).toBeCloseTo(-5, 3)
+  })
+
+  it('setGroupAnimation stores and clears the group entrance animation', () => {
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setGroupAnimation(gid, {
+      duration: 600,
+      delay: 0,
+      easing: 'ease-out',
+      from: { opacity: 0, scale: 0.5 },
+    })
+    expect(useStore.getState().groups.find(g => g.id === gid)?.animation?.duration).toBe(600)
+    useStore.getState().setGroupAnimation(gid, undefined)
+    expect(useStore.getState().groups.find(g => g.id === gid)?.animation).toBeUndefined()
+  })
+
   it('selectGroup replaces selection with every member of the group', () => {
     useStore.setState({
       shapes: [

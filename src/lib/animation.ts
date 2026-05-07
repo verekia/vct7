@@ -2,7 +2,7 @@ import { parseHex, toHex } from './blend'
 import { fmt } from './geometry'
 import { shapePivot } from './transform'
 
-import type { AnimationFromState, AnimationSpec, Easing, Shape } from '../types'
+import type { AnimationFromState, AnimationSpec, Easing, Group, Point, Shape } from '../types'
 import type { RGB } from './blend'
 
 /** Cubic bezier value sampled at parameter t for control points (a, b) on [0,1]. */
@@ -169,6 +169,19 @@ export const sampleAnimation = (shape: Shape, sceneT: number): AnimationOffsets 
   return applySpin(offsets, shape.animation, sceneT)
 }
 
+/**
+ * Shape-agnostic version of {@link sampleAnimation}. Group animations don't
+ * carry a fill / stroke (the members do), so the color channels are left
+ * null and the timeline produces purely geometric offsets the wrapping
+ * `<g transform>` can apply.
+ */
+export const sampleAnimationSpec = (spec: AnimationSpec, sceneT: number): AnimationOffsets => {
+  const raw = shapeProgress(spec, sceneT)
+  const eased = easeFn(spec.easing)(raw)
+  const offsets = lerpOffsets(spec.from, eased)
+  return applySpin(offsets, spec, sceneT)
+}
+
 /** Spin start time (ms) relative to scene zero. Negative if startOffset extends past 0. */
 export const spinStartT = (anim: AnimationSpec): number => anim.delay + anim.duration + (anim.spin?.startOffset ?? 0)
 
@@ -189,6 +202,29 @@ const applySpin = (offsets: AnimationOffsets, anim: AnimationSpec, sceneT: numbe
  *
  * Returns `''` when offsets equal identity — caller can omit the attribute.
  */
+/**
+ * Build the SVG `transform` attribute for a group's animation wrapper. Same
+ * shape as {@link offsetsToTransform} but with an explicit pivot — the
+ * group's combined bbox center, supplied by the caller (so it tracks the
+ * live members rather than re-computing per call).
+ */
+export const groupOffsetsToTransform = (o: AnimationOffsets, cx: number, cy: number): string => {
+  if (o.rotation === 0 && o.scale === 1 && o.translateX === 0 && o.translateY === 0) return ''
+  const parts: string[] = []
+  if (o.translateX !== 0 || o.translateY !== 0) {
+    parts.push(`translate(${fmt(o.translateX)} ${fmt(o.translateY)})`)
+  }
+  if (o.rotation !== 0 || o.scale !== 1) {
+    parts.push(
+      `translate(${fmt(cx)} ${fmt(cy)})`,
+      `rotate(${fmt(o.rotation)})`,
+      `scale(${fmt(o.scale)})`,
+      `translate(${fmt(-cx)} ${fmt(-cy)})`,
+    )
+  }
+  return parts.join(' ')
+}
+
 export const offsetsToTransform = (shape: Shape, o: AnimationOffsets): string => {
   if (o.rotation === 0 && o.scale === 1 && o.translateX === 0 && o.translateY === 0) return ''
   // Mirror-attached shapes pivot at the combined pair center so the source
@@ -223,15 +259,17 @@ export const SPIN_PREVIEW_MS = 3000
  * plus a fixed tail when any shape spins so the scrubber has somewhere to go
  * after the entrance lands.
  */
-export const sceneTotal = (shapes: Shape[]): number => {
+export const sceneTotal = (shapes: Shape[], groups: Group[] = []): number => {
   let total = 0
   let hasSpin = false
-  for (const sh of shapes) {
-    if (!sh.animation) continue
-    const end = sh.animation.delay + sh.animation.duration
+  const consider = (anim: AnimationSpec | undefined) => {
+    if (!anim) return
+    const end = anim.delay + anim.duration
     if (end > total) total = end
-    if (sh.animation.spin && sh.animation.spin.speed !== 0) hasSpin = true
+    if (anim.spin && anim.spin.speed !== 0) hasSpin = true
   }
+  for (const sh of shapes) consider(sh.animation)
+  for (const g of groups) consider(g.animation)
   return hasSpin ? total + SPIN_PREVIEW_MS : total
 }
 
@@ -270,12 +308,12 @@ export const animationHasSpin = (shape: Shape): boolean => !!shape.animation?.sp
  * has historically had inconsistent behavior across browsers on SVG `<g>`. Baked
  * pivot is fully explicit and renders identically everywhere.
  */
-export const buildKeyframesStyle = (shapes: Shape[]): string => {
+export const buildKeyframesStyle = (shapes: Shape[], groups: Group[] = []): string => {
   const blocks: string[] = []
   for (const sh of shapes) {
     if (!sh.animation) continue
     const startOffsets = lerpOffsets(sh.animation.from, 0, sh.fill, sh.stroke)
-    const { from: startTransform, to: restTransform } = cssTransformPair(sh, startOffsets)
+    const { from: startTransform, to: restTransform } = cssTransformPair(shapePivot(sh), startOffsets)
     const opacityRule = startOffsets.opacityMul === 1 ? '' : `    opacity: ${fmt(startOffsets.opacityMul)};\n`
     const fromTransformRule = startTransform === 'none' ? '' : `    transform: ${startTransform};\n`
     const toTransformPart = restTransform === 'none' ? 'none' : restTransform
@@ -312,23 +350,81 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
     // transform animation isn't shadowed. Pivot is the shape's bbox center,
     // baked into the keyframe values for cross-browser consistency.
     if (sh.animation.spin && sh.animation.spin.speed !== 0) {
-      const spin = sh.animation.spin
-      const period = Math.abs(360 / spin.speed) * 1000 // ms per revolution
-      const direction = spin.speed >= 0 ? 360 : -360
-      const [cx, cy] = shapePivot(sh)
-      const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`
-      const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`
-      const start = `${pivotIn} rotate(0deg) ${pivotOut}`
-      const end = `${pivotIn} rotate(${direction}deg) ${pivotOut}`
-      const spinId = `${id}-spin`
-      const spinDelay = fmt(spinStartT(sh.animation))
-      blocks.push(
-        `@keyframes ${spinId} {\n  from { transform: ${start}; }\n  to { transform: ${end}; }\n}`,
-        `.${spinId} {\n  animation: ${spinId} ${fmt(period)}ms linear ${spinDelay}ms infinite;\n}`,
-      )
+      blocks.push(...spinKeyframeBlocks(id, sh.animation, shapePivot(sh)))
+    }
+  }
+  // Group-level animations get the same shape-agnostic treatment: pivot is
+  // the group's combined bbox center, supplied by the caller (computed from
+  // the project's current shape positions). Paint channels are unsupported
+  // at the group level — fill / stroke live on individual children — so we
+  // only emit the geometric / opacity rule.
+  for (const g of groups) {
+    if (!g.animation) continue
+    const center = groups.length > 0 ? findGroupCenter(g.id, shapes) : ([0, 0] as Point)
+    const startOffsets = lerpOffsets(g.animation.from, 0)
+    const { from: startTransform, to: restTransform } = cssTransformPair(center, startOffsets)
+    const opacityRule = startOffsets.opacityMul === 1 ? '' : `    opacity: ${fmt(startOffsets.opacityMul)};\n`
+    const fromTransformRule = startTransform === 'none' ? '' : `    transform: ${startTransform};\n`
+    const toTransformPart = restTransform === 'none' ? 'none' : restTransform
+    const id = `vh-anim-group-${g.id}`
+    const timing = `${fmt(g.animation.duration)}ms ${easingToCss(g.animation.easing)} ${fmt(g.animation.delay)}ms both`
+    blocks.push(
+      `@keyframes ${id} {\n  from {\n${opacityRule}${fromTransformRule}  }\n  to { opacity: 1; transform: ${toTransformPart}; }\n}`,
+      `.${id} {\n  animation: ${id} ${timing};\n}`,
+    )
+    if (g.animation.spin && g.animation.spin.speed !== 0) {
+      blocks.push(...spinKeyframeBlocks(id, g.animation, center))
     }
   }
   return blocks.length === 0 ? '' : blocks.join('\n')
+}
+
+/**
+ * Aggregate visible-bbox center for the members of a group. Falls back to
+ * (0, 0) when the group has no members (an empty group still gets keyframes
+ * so toggling members in later doesn't require resave).
+ */
+const findGroupCenter = (groupId: string, shapes: Shape[]): Point => {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let any = false
+  for (const sh of shapes) {
+    if (sh.groupId !== groupId) continue
+    any = true
+    // Match the runtime helper without pulling in transform.ts here.
+    // Polygon points cover the typical case; circles / glyphs are folded in
+    // by the runtime visualBBox at render time but the CSS keyframe needs a
+    // single static pivot, so the polygon-points bbox is a close-enough
+    // proxy at export time.
+    for (const [x, y] of sh.points) {
+      if (x < minX) minX = x
+      if (y < minY) minY = y
+      if (x > maxX) maxX = x
+      if (y > maxY) maxY = y
+    }
+  }
+  if (!any) return [0, 0]
+  return [(minX + maxX) / 2, (minY + maxY) / 2]
+}
+
+const spinKeyframeBlocks = (animId: string, anim: AnimationSpec, center: Point): string[] => {
+  if (!anim.spin || anim.spin.speed === 0) return []
+  const spin = anim.spin
+  const period = Math.abs(360 / spin.speed) * 1000
+  const direction = spin.speed >= 0 ? 360 : -360
+  const [cx, cy] = center
+  const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`
+  const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`
+  const start = `${pivotIn} rotate(0deg) ${pivotOut}`
+  const end = `${pivotIn} rotate(${direction}deg) ${pivotOut}`
+  const spinId = `${animId}-spin`
+  const spinDelay = fmt(spinStartT(anim))
+  return [
+    `@keyframes ${spinId} {\n  from { transform: ${start}; }\n  to { transform: ${end}; }\n}`,
+    `.${spinId} {\n  animation: ${spinId} ${fmt(period)}ms linear ${spinDelay}ms infinite;\n}`,
+  ]
 }
 
 /**
@@ -340,7 +436,7 @@ export const buildKeyframesStyle = (shapes: Shape[]): string => {
  * from-matrix degenerate. Using identity values for the rest pose keeps the
  * lists structurally aligned without changing the at-rest visual.
  */
-const cssTransformPair = (shape: Shape, o: AnimationOffsets): { from: string; to: string } => {
+const cssTransformPair = (pivot: Point, o: AnimationOffsets): { from: string; to: string } => {
   const fromParts: string[] = []
   const toParts: string[] = []
   if (o.translateX !== 0 || o.translateY !== 0) {
@@ -348,7 +444,7 @@ const cssTransformPair = (shape: Shape, o: AnimationOffsets): { from: string; to
     toParts.push(`translate(0px, 0px)`)
   }
   if (o.rotation !== 0 || o.scale !== 1) {
-    const [cx, cy] = shapePivot(shape)
+    const [cx, cy] = pivot
     const pivotIn = `translate(${fmt(cx)}px, ${fmt(cy)}px)`
     const pivotOut = `translate(${fmt(-cx)}px, ${fmt(-cy)}px)`
     fromParts.push(pivotIn)
