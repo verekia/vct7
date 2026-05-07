@@ -126,12 +126,13 @@ export function ShapePanel() {
   const disableMirror = useStore(s => s.disableMirror)
   const updateMirrorAxis = useStore(s => s.updateMirrorAxis)
   const toggleMirrorAxisVisibility = useStore(s => s.toggleMirrorAxisVisibility)
-  const ejectMirror = useStore(s => s.ejectMirror)
+  const convertMirrorToGroup = useStore(s => s.convertMirrorToGroup)
   const mergeMirror = useStore(s => s.mergeMirror)
   const enableRadial = useStore(s => s.enableRadial)
   const disableRadial = useStore(s => s.disableRadial)
   const updateRadial = useStore(s => s.updateRadial)
   const toggleRadialCenterVisibility = useStore(s => s.toggleRadialCenterVisibility)
+  const convertRadialToGroup = useStore(s => s.convertRadialToGroup)
   const mergeShapes = useStore(s => s.mergeShapes)
   const insertPointBetween = useStore(s => s.insertPointBetween)
   const groups = useStore(s => s.groups)
@@ -212,12 +213,13 @@ export function ShapePanel() {
         disableMirror={disableMirror}
         updateMirrorAxis={updateMirrorAxis}
         toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
-        ejectMirror={ejectMirror}
+        convertMirrorToGroup={convertMirrorToGroup}
         mergeMirror={mergeMirror}
         enableRadial={enableRadial}
         disableRadial={disableRadial}
         updateRadial={updateRadial}
         toggleRadialCenterVisibility={toggleRadialCenterVisibility}
+        convertRadialToGroup={convertRadialToGroup}
         insertPointBetween={insertPointBetween}
       />
     )
@@ -396,12 +398,13 @@ function ShapePanelInner({
   disableMirror,
   updateMirrorAxis,
   toggleMirrorAxisVisibility,
-  ejectMirror,
+  convertMirrorToGroup,
   mergeMirror,
   enableRadial,
   disableRadial,
   updateRadial,
   toggleRadialCenterVisibility,
+  convertRadialToGroup,
   insertPointBetween,
 }: {
   shape: Shape
@@ -422,12 +425,13 @@ function ShapePanelInner({
   disableMirror: (id: string) => void
   updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
   toggleMirrorAxisVisibility: (id: string) => void
-  ejectMirror: (id: string) => string | null
+  convertMirrorToGroup: (id: string) => string | null
   mergeMirror: (id: string) => boolean
   enableRadial: (id: string, angle: number) => void
   disableRadial: (id: string) => void
   updateRadial: (id: string, patch: Partial<RadialSpec>) => void
   toggleRadialCenterVisibility: (id: string) => void
+  convertRadialToGroup: (id: string) => string | null
   insertPointBetween: (shapeId: string, i: number, j: number) => void
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
@@ -675,7 +679,7 @@ function ShapePanelInner({
           disableMirror={disableMirror}
           updateMirrorAxis={updateMirrorAxis}
           toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
-          ejectMirror={ejectMirror}
+          convertMirrorToGroup={convertMirrorToGroup}
           mergeMirror={mergeMirror}
         />
       )}
@@ -687,6 +691,7 @@ function ShapePanelInner({
           disableRadial={disableRadial}
           updateRadial={updateRadial}
           toggleRadialCenterVisibility={toggleRadialCenterVisibility}
+          convertRadialToGroup={convertRadialToGroup}
         />
       )}
 
@@ -1332,7 +1337,7 @@ function MirrorControls({
   disableMirror,
   updateMirrorAxis,
   toggleMirrorAxisVisibility,
-  ejectMirror,
+  convertMirrorToGroup,
   mergeMirror,
 }: {
   shape: Shape
@@ -1340,7 +1345,7 @@ function MirrorControls({
   disableMirror: (id: string) => void
   updateMirrorAxis: (id: string, patch: Partial<MirrorAxis>) => void
   toggleMirrorAxisVisibility: (id: string) => void
-  ejectMirror: (id: string) => string | null
+  convertMirrorToGroup: (id: string) => string | null
   mergeMirror: (id: string) => boolean
 }) {
   const mirror = shape.mirror
@@ -1434,10 +1439,10 @@ function MirrorControls({
         <button
           type="button"
           className={APPLY_BTN}
-          onClick={() => ejectMirror(shape.id)}
-          title="Bake the reflection into an independent shape so source and copy can be edited separately."
+          onClick={() => convertMirrorToGroup(shape.id)}
+          title="Bake the reflection into an independent shape and place both halves in a fresh group."
         >
-          Eject
+          Convert to group
         </button>
         {canMergeMirror(shape) && (
           <button
@@ -1468,12 +1473,14 @@ function RadialControls({
   disableRadial,
   updateRadial,
   toggleRadialCenterVisibility,
+  convertRadialToGroup,
 }: {
   shape: Shape
   enableRadial: (id: string, angle: number) => void
   disableRadial: (id: string) => void
   updateRadial: (id: string, patch: Partial<RadialSpec>) => void
   toggleRadialCenterVisibility: (id: string) => void
+  convertRadialToGroup: (id: string) => string | null
 }) {
   const radial = shape.radial
   if (!radial) {
@@ -1567,6 +1574,16 @@ function RadialControls({
             {a}°
           </button>
         ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          className={APPLY_BTN}
+          onClick={() => convertRadialToGroup(shape.id)}
+          title="Bake every radial clone into an independent shape and place all copies in a fresh group."
+        >
+          Convert to group
+        </button>
       </div>
     </section>
   )

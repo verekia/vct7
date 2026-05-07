@@ -10,6 +10,7 @@ import {
   hasTransform,
   isPointOnAxis,
   pairBBoxCenter,
+  radialCloneAngles,
   reflectPoint,
   reflectShape,
   shapeBBoxCenter,
@@ -375,6 +376,14 @@ export interface AppState {
   updateRadial: (id: string, patch: Partial<RadialSpec>) => void
   /** Toggle the orange center-dot indicator on canvas. Doesn't change geometry. */
   toggleRadialCenterVisibility: (id: string) => void
+  /**
+   * Bake every radial clone into an independent shape, place all copies plus
+   * the source into a fresh group, and insert the clones right after the
+   * source in z-order. The source's per-shape rotation/scale is baked so
+   * every member sits at its visual rest pose; `radial` is cleared. Returns
+   * the new group's id, or null when the source has no radial.
+   */
+  convertRadialToGroup: (id: string) => string | null
   /** Drop the live mirror without baking the reflection. */
   disableMirror: (id: string) => void
   /** Patch one or more axis fields. Coalesces with continuous axis drags so a slider/handle drag is one undo. */
@@ -382,12 +391,13 @@ export interface AppState {
   /** Toggle visibility of the bright-green axis line + handles on canvas. Doesn't change geometry. */
   toggleMirrorAxisVisibility: (id: string) => void
   /**
-   * Bake the live mirror into a separate, independent shape inserted right
-   * after the source in z-order. Source shape keeps its geometry (and its own
-   * rotation), but `mirror` is cleared. Returns the new shape's id, or null
-   * when the source has no mirror.
+   * Bake the live mirror into an independent shape inserted right after the
+   * source in z-order, then place both halves in a fresh group so they read
+   * as a single unit in the layer panel. Source keeps its geometry; `mirror`
+   * is cleared. Returns the new group's id, or null when the source has no
+   * mirror.
    */
-  ejectMirror: (id: string) => string | null
+  convertMirrorToGroup: (id: string) => string | null
   /**
    * Stitch the source's geometry into the mirror's so the pair becomes one
    * continuous path. Only applicable when the source's points actually meet
@@ -1202,6 +1212,77 @@ export const useStore = create<AppState>(set => ({
         ),
       }
     }),
+  convertRadialToGroup: id => {
+    let newGroupId: string | null = null
+    set(s => {
+      const idx = s.shapes.findIndex(sh => sh.id === id)
+      if (idx === -1) return s
+      const source = s.shapes[idx]
+      if (!source.radial) return s
+      const angles = radialCloneAngles(source.radial)
+      const groupId = makeId()
+      newGroupId = groupId
+      const newGroup: Group = { id: groupId, name: defaultGroupName(s.groups) }
+      if (angles.length === 0) {
+        // Single-copy spec — drop the modifier, group the source alone.
+        return {
+          ...pushSnapshot(s),
+          shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, radial: undefined, groupId } : sh)),
+          groups: [...s.groups, newGroup],
+          dirty: true,
+        }
+      }
+      const rot = shapeRotation(source)
+      const scl = shapeScale(source)
+      const [bbcx, bbcy] = shapeBBoxCenter(source)
+      // Bake the source's per-shape rotation/scale (which pivots at its own
+      // bbox center) into the points, so each ejected clone can apply its
+      // single radial rotation around (cx, cy) without further composition.
+      const bakedSourcePoints =
+        rot === 0 && scl === 1 ? source.points : transformPointsAround(source.points, rot, scl, bbcx, bbcy)
+      const bakedSourceArc =
+        source.arc && rot !== 0
+          ? { ...source.arc, start: source.arc.start + rot, end: source.arc.end + rot }
+          : source.arc
+      const { cx, cy } = source.radial
+      const clones: Shape[] = angles.map(a => {
+        const clonePoints = transformPointsAround(bakedSourcePoints, a, 1, cx, cy)
+        const cloneArc = bakedSourceArc
+          ? { ...bakedSourceArc, start: bakedSourceArc.start + a, end: bakedSourceArc.end + a }
+          : undefined
+        const clone: Shape = {
+          ...source,
+          id: makeId(),
+          points: clonePoints,
+          rotation: undefined,
+          scale: undefined,
+          radial: undefined,
+          mirror: undefined,
+          groupId,
+          ...(cloneArc ? { arc: cloneArc } : {}),
+        }
+        return clone
+      })
+      const next = s.shapes.slice()
+      next[idx] = {
+        ...source,
+        points: bakedSourcePoints,
+        rotation: undefined,
+        scale: undefined,
+        radial: undefined,
+        groupId,
+        ...(bakedSourceArc ? { arc: bakedSourceArc } : {}),
+      }
+      next.splice(idx + 1, 0, ...clones)
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        groups: [...s.groups, newGroup],
+        dirty: true,
+      }
+    })
+    return newGroupId
+  },
   disableMirror: id =>
     set(s => {
       const target = s.shapes.find(sh => sh.id === id)
@@ -1238,8 +1319,8 @@ export const useStore = create<AppState>(set => ({
         ),
       }
     }),
-  ejectMirror: id => {
-    let newId: string | null = null
+  convertMirrorToGroup: id => {
+    let newGroupId: string | null = null
     set(s => {
       const idx = s.shapes.findIndex(sh => sh.id === id)
       if (idx === -1) return s
@@ -1254,7 +1335,10 @@ export const useStore = create<AppState>(set => ({
       const scl = shapeScale(source)
       const [cx, cy] = pairBBoxCenter(source)
       const reflected = reflectShape(source, source.mirror.axis)
-      newId = makeId()
+      const groupId = makeId()
+      newGroupId = groupId
+      const newGroup: Group = { id: groupId, name: defaultGroupName(s.groups) }
+      const ejectedId = makeId()
       let bakedSourcePoints = source.points
       let bakedSourceArc = source.arc
       let bakedMirrorPoints = reflected.points
@@ -1278,14 +1362,16 @@ export const useStore = create<AppState>(set => ({
         rotation: undefined,
         scale: undefined,
         mirror: undefined,
+        groupId,
         ...(bakedSourceArc ? { arc: bakedSourceArc } : {}),
       }
       const ejected: Shape = {
         ...reflected,
-        id: newId,
+        id: ejectedId,
         points: bakedMirrorPoints,
         rotation: undefined,
         scale: undefined,
+        groupId,
         ...(bakedMirrorArc ? { arc: bakedMirrorArc } : {}),
       }
       // Insert the ejected copy immediately after the source so it sits one
@@ -1294,10 +1380,11 @@ export const useStore = create<AppState>(set => ({
       return {
         ...pushSnapshot(s),
         shapes: next,
+        groups: [...s.groups, newGroup],
         dirty: true,
       }
     })
-    return newId
+    return newGroupId
   },
   mergeMirror: id => {
     let merged = false
@@ -1631,7 +1718,7 @@ export const useStore = create<AppState>(set => ({
       // points around the group center, then resetting the member's own
       // transform back to identity so the bake is total. Arc angles in
       // canvas-frame degrees shift by the combined rotation; mirrors the
-      // logic in applyTransform / ejectMirror for orientation continuity.
+      // logic in applyTransform / convertMirrorToGroup for orientation continuity.
       const totalRotForArc = rot
       const nextShapes = s.shapes.map(sh => {
         if (sh.groupId !== groupId) return sh
