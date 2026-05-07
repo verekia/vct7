@@ -1792,4 +1792,181 @@ describe('store: groups', () => {
     useStore.getState().selectGroup(gid)
     expect(useStore.getState().selectedShapeIds).toEqual(['s1', 's3'])
   })
+
+  it('enableGroupMirror sets a default axis and is mutually exclusive with radial', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'm1',
+          points: [
+            [10, 0],
+            [20, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('m1', gid)
+    useStore.getState().enableGroupRadial(gid, 90)
+    expect(useStore.getState().groups.find(g => g.id === gid)?.radial?.angle).toBe(90)
+    // Enabling mirror clears radial.
+    useStore.getState().enableGroupMirror(gid, 'horizontal')
+    const g = useStore.getState().groups.find(x => x.id === gid)
+    expect(g?.mirror?.axis).toBeDefined()
+    expect(g?.radial).toBeUndefined()
+  })
+
+  it('convertGroupMirror inserts a reflected sibling for every member into the same group', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [10, 0],
+            [20, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: 'b',
+          points: [
+            [30, 0],
+            [40, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('a', gid)
+    useStore.getState().setShapeGroup('b', gid)
+    // Vertical line at x=0 → reflection across the y-axis.
+    useStore.getState().updateGroupMirrorAxis(gid, { x: 0, y: 0, angle: 90 })
+    // Wait — we have to enable mirror first before updateGroupMirrorAxis takes effect.
+    useStore.getState().enableGroupMirror(gid, 'horizontal')
+    useStore.getState().updateGroupMirrorAxis(gid, { x: 0, y: 0, angle: 90 })
+    const ok = useStore.getState().convertGroupMirror(gid)
+    expect(ok).toBe(true)
+    const state = useStore.getState()
+    expect(state.groups.find(g => g.id === gid)?.mirror).toBeUndefined()
+    // Each original member now has a reflected sibling immediately after it.
+    const memberIds = state.shapes.filter(sh => sh.groupId === gid).map(sh => sh.id)
+    expect(memberIds.length).toBe(4)
+    // Reflection of (10,0)/(20,0) across x=0 is (-10,0)/(-20,0).
+    const ejectedAfterA = state.shapes[1]
+    expect(ejectedAfterA.points[0][0]).toBeCloseTo(-10, 3)
+    expect(ejectedAfterA.points[1][0]).toBeCloseTo(-20, 3)
+    expect(ejectedAfterA.groupId).toBe(gid)
+  })
+
+  it('convertGroupRadial duplicates each member around the radial center', () => {
+    useStore.setState({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [10, 0],
+            [10, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+        },
+      ],
+    })
+    const gid = useStore.getState().addGroup()
+    useStore.getState().setShapeGroup('a', gid)
+    useStore.getState().enableGroupRadial(gid, 90)
+    useStore.getState().updateGroupRadial(gid, { cx: 0, cy: 0, angle: 90 })
+    const ok = useStore.getState().convertGroupRadial(gid)
+    expect(ok).toBe(true)
+    const state = useStore.getState()
+    expect(state.groups.find(g => g.id === gid)?.radial).toBeUndefined()
+    // 90° increment around origin: 4 copies (source + 3 clones).
+    const members = state.shapes.filter(sh => sh.groupId === gid)
+    expect(members.length).toBe(4)
+    // Source unchanged; clone at 90° rotates (10,0) → (0, 10).
+    expect(members[1].points[0][0]).toBeCloseTo(0, 3)
+    expect(members[1].points[0][1]).toBeCloseTo(10, 3)
+  })
+
+  it('disableGroupMirror clears the modifier without changing shapes', () => {
+    const gid = useStore.getState().addGroup()
+    useStore.setState(s => ({
+      shapes: [
+        {
+          id: 'a',
+          points: [
+            [0, 0],
+            [1, 0],
+          ],
+          closed: false,
+          fill: 'none',
+          stroke: '#000',
+          strokeWidth: 1,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          groupId: gid,
+        },
+      ],
+      groups: s.groups,
+    }))
+    useStore.getState().enableGroupMirror(gid, 'horizontal')
+    expect(useStore.getState().groups.find(g => g.id === gid)?.mirror).toBeDefined()
+    useStore.getState().disableGroupMirror(gid)
+    expect(useStore.getState().groups.find(g => g.id === gid)?.mirror).toBeUndefined()
+    expect(useStore.getState().shapes).toHaveLength(1)
+  })
+
+  it('group mirror is rejected when any member is a glyph', () => {
+    const gid = useStore.getState().addGroup()
+    useStore.setState(s => ({
+      shapes: [
+        {
+          id: 'g1',
+          kind: 'glyphs',
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+          closed: true,
+          fill: '#000',
+          stroke: 'none',
+          strokeWidth: 0,
+          bezierOverride: null,
+          hidden: false,
+          locked: false,
+          glyphs: { text: 'A', fontFamily: 'X', fontSize: 10, d: 'M0,0', width: 10, height: 10 },
+          groupId: gid,
+        },
+      ],
+      groups: s.groups,
+    }))
+    useStore.getState().enableGroupMirror(gid, 'horizontal')
+    expect(useStore.getState().groups.find(g => g.id === gid)?.mirror).toBeUndefined()
+  })
 })

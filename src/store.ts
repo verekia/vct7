@@ -456,6 +456,41 @@ export interface AppState {
   /** Set or clear the group's entrance animation. */
   setGroupAnimation: (groupId: string, animation: AnimationSpec | undefined) => void
   /**
+   * Enable a live mirror on the group, anchored at the artboard center. Clears
+   * any existing live radial first (mutually exclusive at the UI level). The
+   * call is a no-op if any member is a glyph (same caveat as per-shape mirror).
+   */
+  enableGroupMirror: (groupId: string, axis: 'horizontal' | 'vertical') => void
+  /** Drop the group's live mirror without baking the reflection. */
+  disableGroupMirror: (groupId: string) => void
+  /** Patch one or more mirror-axis fields. Coalesces with continuous slider drags. */
+  updateGroupMirrorAxis: (groupId: string, patch: Partial<MirrorAxis>) => void
+  /** Toggle the on-canvas axis line + handles for the group's mirror. */
+  toggleGroupMirrorAxisVisibility: (groupId: string) => void
+  /**
+   * Bake the group's live mirror into independent shape members of the same
+   * group. Each existing member gets a reflected sibling inserted right after
+   * it; the group's `mirror` field is cleared. Returns true on success.
+   */
+  convertGroupMirror: (groupId: string) => boolean
+  /**
+   * Enable a live radial repeat on the group, centered on the artboard with
+   * the given angular increment. Clears any existing live mirror first.
+   */
+  enableGroupRadial: (groupId: string, angle: number) => void
+  /** Drop the group's live radial repeat. */
+  disableGroupRadial: (groupId: string) => void
+  /** Patch one or more radial-spec fields. Coalesces with continuous slider drags. */
+  updateGroupRadial: (groupId: string, patch: Partial<RadialSpec>) => void
+  /** Toggle the on-canvas radial-center marker for the group. */
+  toggleGroupRadialCenterVisibility: (groupId: string) => void
+  /**
+   * Bake every radial clone of every member into independent shape members of
+   * the same group, place all copies right after their source in z-order, and
+   * clear the group's `radial` field. Returns true on success.
+   */
+  convertGroupRadial: (groupId: string) => boolean
+  /**
    * Replace the selection with every shape that belongs to `groupId`. Empty
    * groups produce an empty selection (clears any current selection).
    */
@@ -1746,6 +1781,229 @@ export const useStore = create<AppState>(set => ({
         dirty: true,
       }
     }),
+  enableGroupMirror: (groupId, axis) =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group) return s
+      if (group.mirror) return s
+      const members = s.shapes.filter(sh => sh.groupId === groupId)
+      // Glyphs can't be flipped (no separable scale-x/y in the glyph model);
+      // matches per-shape `enableMirror` semantics.
+      if (members.some(sh => sh.kind === 'glyphs')) return s
+      const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2
+      const cy = s.settings.viewBoxY + s.settings.viewBoxHeight / 2
+      const angle = axis === 'vertical' ? 0 : 90
+      const axisSpec = defaultMirrorAxis(cx, cy, angle)
+      return {
+        ...pushSnapshot(s),
+        // Mirror and radial are mutually exclusive at the UI level.
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, mirror: { axis: axisSpec }, radial: undefined } : g)),
+        dirty: true,
+      }
+    }),
+  disableGroupMirror: groupId =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.mirror) return s
+      return {
+        ...pushSnapshot(s),
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, mirror: undefined } : g)),
+        dirty: true,
+      }
+    }),
+  updateGroupMirrorAxis: (groupId, patch) =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.mirror) return s
+      const nextAxis: MirrorAxis = { ...group.mirror.axis, ...patch }
+      return {
+        ...pushSnapshot(s, `groupMirrorAxis:${groupId}`),
+        groups: s.groups.map(g =>
+          g.id === groupId && g.mirror ? { ...g, mirror: { ...g.mirror, axis: nextAxis } } : g,
+        ),
+        dirty: true,
+      }
+    }),
+  toggleGroupMirrorAxisVisibility: groupId =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.mirror) return s
+      const next = !group.mirror.showAxis
+      return {
+        groups: s.groups.map(g =>
+          g.id === groupId && g.mirror ? { ...g, mirror: { ...g.mirror, showAxis: next || undefined } } : g,
+        ),
+      }
+    }),
+  convertGroupMirror: groupId => {
+    let ok = false
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.mirror) return s
+      const memberIndices = s.shapes.map((sh, i) => (sh.groupId === groupId ? i : -1)).filter(i => i >= 0)
+      if (memberIndices.length === 0) {
+        // No members — just drop the modifier.
+        ok = true
+        return {
+          ...pushSnapshot(s),
+          groups: s.groups.map(g => (g.id === groupId ? { ...g, mirror: undefined } : g)),
+          dirty: true,
+        }
+      }
+      const axis = group.mirror.axis
+      const next = s.shapes.slice()
+      // Walk the indices in reverse so each splice doesn't shift later
+      // positions we still need to find.
+      for (let k = memberIndices.length - 1; k >= 0; k--) {
+        const idx = memberIndices[k]
+        const source = next[idx]
+        const reflected = reflectShape(source, axis)
+        const ejected: Shape = {
+          ...reflected,
+          id: makeId(),
+          groupId,
+          // Per-shape mirror/radial on the reflected copy is meaningless after
+          // baking the group mirror — drop them so the new member is plain.
+          mirror: undefined,
+          radial: undefined,
+        }
+        next.splice(idx + 1, 0, ejected)
+      }
+      ok = true
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, mirror: undefined } : g)),
+        dirty: true,
+      }
+    })
+    return ok
+  },
+  enableGroupRadial: (groupId, angle) =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group) return s
+      if (!Number.isFinite(angle) || angle <= 0) return s
+      const members = s.shapes.filter(sh => sh.groupId === groupId)
+      if (members.some(sh => sh.kind === 'glyphs')) return s
+      const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2
+      const cy = s.settings.viewBoxY + s.settings.viewBoxHeight / 2
+      const spec = defaultRadialSpec(cx, cy, angle)
+      return {
+        ...pushSnapshot(s),
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, radial: spec, mirror: undefined } : g)),
+        dirty: true,
+      }
+    }),
+  disableGroupRadial: groupId =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.radial) return s
+      return {
+        ...pushSnapshot(s),
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, radial: undefined } : g)),
+        dirty: true,
+      }
+    }),
+  updateGroupRadial: (groupId, patch) =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.radial) return s
+      const nextSpec: RadialSpec = { ...group.radial, ...patch }
+      if (!Number.isFinite(nextSpec.angle) || nextSpec.angle <= 0) return s
+      return {
+        ...pushSnapshot(s, `groupRadial:${groupId}`),
+        groups: s.groups.map(g => (g.id === groupId && g.radial ? { ...g, radial: nextSpec } : g)),
+        dirty: true,
+      }
+    }),
+  toggleGroupRadialCenterVisibility: groupId =>
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.radial) return s
+      const next = !group.radial.showCenter
+      return {
+        groups: s.groups.map(g =>
+          g.id === groupId && g.radial ? { ...g, radial: { ...g.radial, showCenter: next || undefined } } : g,
+        ),
+      }
+    }),
+  convertGroupRadial: groupId => {
+    let ok = false
+    set(s => {
+      const group = s.groups.find(g => g.id === groupId)
+      if (!group?.radial) return s
+      const angles = radialCloneAngles(group.radial)
+      if (angles.length === 0) {
+        // Single-copy spec — drop the modifier with no shape changes.
+        ok = true
+        return {
+          ...pushSnapshot(s),
+          groups: s.groups.map(g => (g.id === groupId ? { ...g, radial: undefined } : g)),
+          dirty: true,
+        }
+      }
+      const memberIndices = s.shapes.map((sh, i) => (sh.groupId === groupId ? i : -1)).filter(i => i >= 0)
+      if (memberIndices.length === 0) {
+        ok = true
+        return {
+          ...pushSnapshot(s),
+          groups: s.groups.map(g => (g.id === groupId ? { ...g, radial: undefined } : g)),
+          dirty: true,
+        }
+      }
+      const { cx, cy } = group.radial
+      const next = s.shapes.slice()
+      // Walk in reverse so prior splices don't shift indices we still need.
+      for (let k = memberIndices.length - 1; k >= 0; k--) {
+        const idx = memberIndices[k]
+        const source = next[idx]
+        // Bake the source's own rotation/scale into points so the radial
+        // rotation can be applied as a single rotate around (cx, cy) without
+        // further composition. Mirrors per-shape `convertRadialToGroup`.
+        const rot = shapeRotation(source)
+        const scl = shapeScale(source)
+        const [bbcx, bbcy] = shapeBBoxCenter(source)
+        const bakedPoints =
+          rot === 0 && scl === 1 ? source.points : transformPointsAround(source.points, rot, scl, bbcx, bbcy)
+        const bakedArc =
+          source.arc && rot !== 0
+            ? { ...source.arc, start: source.arc.start + rot, end: source.arc.end + rot }
+            : source.arc
+        next[idx] = {
+          ...source,
+          points: bakedPoints,
+          rotation: undefined,
+          scale: undefined,
+          ...(bakedArc ? { arc: bakedArc } : {}),
+        }
+        const clones: Shape[] = angles.map(a => {
+          const clonePoints = transformPointsAround(bakedPoints, a, 1, cx, cy)
+          const cloneArc = bakedArc ? { ...bakedArc, start: bakedArc.start + a, end: bakedArc.end + a } : undefined
+          return {
+            ...source,
+            id: makeId(),
+            points: clonePoints,
+            rotation: undefined,
+            scale: undefined,
+            mirror: undefined,
+            radial: undefined,
+            groupId,
+            ...(cloneArc ? { arc: cloneArc } : {}),
+          }
+        })
+        next.splice(idx + 1, 0, ...clones)
+      }
+      ok = true
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        groups: s.groups.map(g => (g.id === groupId ? { ...g, radial: undefined } : g)),
+        dirty: true,
+      }
+    })
+    return ok
+  },
   selectGroup: groupId =>
     set(s => {
       const ids = s.shapes.filter(sh => sh.groupId === groupId).map(sh => sh.id)

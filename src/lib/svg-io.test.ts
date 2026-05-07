@@ -923,4 +923,61 @@ describe('groups round-trip', () => {
       { id: 'g2', name: 'Floor' },
     ])
   })
+
+  it('round-trips group mirror and radial modifiers', () => {
+    const settings: ProjectSettings = { ...DEFAULT_SETTINGS }
+    const groups = [
+      {
+        id: 'gm',
+        name: 'Mirrored',
+        mirror: { axis: { x: 0, y: 0, angle: 90 }, showAxis: true },
+      },
+      {
+        id: 'gr',
+        name: 'Radial',
+        radial: { cx: 50, cy: 50, angle: 45, showCenter: true },
+      },
+    ]
+    const shapes: Shape[] = [
+      {
+        id: 's1',
+        points: [
+          [10, 0],
+          [20, 0],
+        ],
+        closed: false,
+        fill: 'none',
+        stroke: '#000',
+        strokeWidth: 1,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+        groupId: 'gm',
+      },
+      {
+        id: 's2',
+        points: [
+          [30, 0],
+          [40, 0],
+        ],
+        closed: false,
+        fill: 'none',
+        stroke: '#000',
+        strokeWidth: 1,
+        bezierOverride: null,
+        hidden: false,
+        locked: false,
+        groupId: 'gr',
+      },
+    ]
+    const text = serializeProject(settings, shapes, groups)
+    const parsed = parseProject(text)
+    const gm = parsed.groups.find(g => g.id === 'gm')
+    const gr = parsed.groups.find(g => g.id === 'gr')
+    expect(gm?.mirror?.axis).toEqual({ x: 0, y: 0, angle: 90 })
+    expect(gm?.mirror?.showAxis).toBe(true)
+    expect(gr?.radial).toEqual({ cx: 50, cy: 50, angle: 45, showCenter: true })
+    // Render-only sibling wrappers must not be ingested as new shapes.
+    expect(parsed.shapes).toHaveLength(2)
+  })
 })

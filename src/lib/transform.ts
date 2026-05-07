@@ -248,6 +248,26 @@ export const transformAroundString = (rot: number, scl: number, cx: number, cy: 
 }
 
 /**
+ * SVG `matrix(a b c d e f)` string for a reflection across the line through
+ * `(axis.x, axis.y)` at `axis.angle` degrees. Used to mirror a whole group's
+ * children in one wrapper transform — the group's members keep their
+ * untouched geometry and the wrapping `<g>` flips the rendered result.
+ *
+ * Closed form: M = T(x, y) · R(θ) · diag(1,-1) · R(-θ) · T(-x, -y), expanded
+ * to the SVG matrix coefficients (a=cos2θ, b=sin2θ, c=sin2θ, d=-cos2θ).
+ */
+export const reflectionMatrixString = (axis: MirrorAxis): string => {
+  const rad = (axis.angle * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const c2 = cos * cos - sin * sin
+  const s2 = 2 * sin * cos
+  const e = axis.x - axis.x * c2 - axis.y * s2
+  const f = axis.y - axis.x * s2 + axis.y * c2
+  return `matrix(${fmt(c2)} ${fmt(s2)} ${fmt(s2)} ${fmt(-c2)} ${fmt(e)} ${fmt(f)})`
+}
+
+/**
  * Default radial spec for a freshly-enabled radial repeat: centered on the
  * supplied point with the given angular increment.
  */

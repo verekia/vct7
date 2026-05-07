@@ -141,6 +141,16 @@ export function ShapePanel() {
   const setGroupAnimation = useStore(s => s.setGroupAnimation)
   const renameGroup = useStore(s => s.renameGroup)
   const removeGroup = useStore(s => s.removeGroup)
+  const enableGroupMirror = useStore(s => s.enableGroupMirror)
+  const disableGroupMirror = useStore(s => s.disableGroupMirror)
+  const updateGroupMirrorAxis = useStore(s => s.updateGroupMirrorAxis)
+  const toggleGroupMirrorAxisVisibility = useStore(s => s.toggleGroupMirrorAxisVisibility)
+  const convertGroupMirror = useStore(s => s.convertGroupMirror)
+  const enableGroupRadial = useStore(s => s.enableGroupRadial)
+  const disableGroupRadial = useStore(s => s.disableGroupRadial)
+  const updateGroupRadial = useStore(s => s.updateGroupRadial)
+  const toggleGroupRadialCenterVisibility = useStore(s => s.toggleGroupRadialCenterVisibility)
+  const convertGroupRadial = useStore(s => s.convertGroupRadial)
 
   const selectedShapes = useMemo(() => {
     const ids = new Set(selectedShapeIds)
@@ -174,10 +184,12 @@ export function ShapePanel() {
   }
 
   if (fullySelectedGroup) {
+    const hasGlyphMember = selectedShapes.some(sh => sh.kind === 'glyphs')
     return (
       <GroupPanel
         group={fullySelectedGroup}
         memberCount={selectedShapes.length}
+        hasGlyphMember={hasGlyphMember}
         animationEnabled={animationEnabled}
         snapAngles={snapAngles}
         snapDisabled={snapDisabled}
@@ -186,6 +198,16 @@ export function ShapePanel() {
         setGroupAnimation={setGroupAnimation}
         renameGroup={renameGroup}
         removeGroup={removeGroup}
+        enableGroupMirror={enableGroupMirror}
+        disableGroupMirror={disableGroupMirror}
+        updateGroupMirrorAxis={updateGroupMirrorAxis}
+        toggleGroupMirrorAxisVisibility={toggleGroupMirrorAxisVisibility}
+        convertGroupMirror={convertGroupMirror}
+        enableGroupRadial={enableGroupRadial}
+        disableGroupRadial={disableGroupRadial}
+        updateGroupRadial={updateGroupRadial}
+        toggleGroupRadialCenterVisibility={toggleGroupRadialCenterVisibility}
+        convertGroupRadial={convertGroupRadial}
       />
     )
   }
@@ -2129,6 +2151,7 @@ function MultiPaletteRefSelect({
 function GroupPanel({
   group,
   memberCount,
+  hasGlyphMember,
   animationEnabled,
   snapAngles,
   snapDisabled,
@@ -2137,9 +2160,20 @@ function GroupPanel({
   setGroupAnimation,
   renameGroup,
   removeGroup,
+  enableGroupMirror,
+  disableGroupMirror,
+  updateGroupMirrorAxis,
+  toggleGroupMirrorAxisVisibility,
+  convertGroupMirror,
+  enableGroupRadial,
+  disableGroupRadial,
+  updateGroupRadial,
+  toggleGroupRadialCenterVisibility,
+  convertGroupRadial,
 }: {
   group: Group
   memberCount: number
+  hasGlyphMember: boolean
   animationEnabled: boolean
   snapAngles: number[]
   snapDisabled: boolean
@@ -2148,6 +2182,16 @@ function GroupPanel({
   setGroupAnimation: (groupId: string, animation: AnimationSpec | undefined) => void
   renameGroup: (id: string, name: string) => void
   removeGroup: (id: string) => void
+  enableGroupMirror: (groupId: string, axis: 'horizontal' | 'vertical') => void
+  disableGroupMirror: (groupId: string) => void
+  updateGroupMirrorAxis: (groupId: string, patch: Partial<MirrorAxis>) => void
+  toggleGroupMirrorAxisVisibility: (groupId: string) => void
+  convertGroupMirror: (groupId: string) => boolean
+  enableGroupRadial: (groupId: string, angle: number) => void
+  disableGroupRadial: (groupId: string) => void
+  updateGroupRadial: (groupId: string, patch: Partial<RadialSpec>) => void
+  toggleGroupRadialCenterVisibility: (groupId: string) => void
+  convertGroupRadial: (groupId: string) => boolean
 }) {
   const [editingName, setEditingName] = useState(false)
   const rotation = group.rotation ?? 0
@@ -2198,6 +2242,30 @@ function GroupPanel({
         onChange={anim => setGroupAnimation(group.id, anim)}
       />
 
+      {!group.radial && (
+        <GroupMirrorControls
+          group={group}
+          hasGlyphMember={hasGlyphMember}
+          enableGroupMirror={enableGroupMirror}
+          disableGroupMirror={disableGroupMirror}
+          updateGroupMirrorAxis={updateGroupMirrorAxis}
+          toggleGroupMirrorAxisVisibility={toggleGroupMirrorAxisVisibility}
+          convertGroupMirror={convertGroupMirror}
+        />
+      )}
+
+      {!group.mirror && (
+        <GroupRadialControls
+          group={group}
+          hasGlyphMember={hasGlyphMember}
+          enableGroupRadial={enableGroupRadial}
+          disableGroupRadial={disableGroupRadial}
+          updateGroupRadial={updateGroupRadial}
+          toggleGroupRadialCenterVisibility={toggleGroupRadialCenterVisibility}
+          convertGroupRadial={convertGroupRadial}
+        />
+      )}
+
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
@@ -2206,6 +2274,283 @@ function GroupPanel({
           title="Delete group (members keep their layers)."
         >
           Ungroup all
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Group-level mirror modifier controls. Off state surfaces "Horizontal" /
+ * "Vertical" buttons mirroring the per-shape MirrorControls. On state exposes
+ * axis x/y/angle inputs, the on-canvas axis toggle, and a "Convert to layers"
+ * button that bakes the reflection into individual member shapes within this
+ * same group.
+ */
+function GroupMirrorControls({
+  group,
+  hasGlyphMember,
+  enableGroupMirror,
+  disableGroupMirror,
+  updateGroupMirrorAxis,
+  toggleGroupMirrorAxisVisibility,
+  convertGroupMirror,
+}: {
+  group: Group
+  hasGlyphMember: boolean
+  enableGroupMirror: (groupId: string, axis: 'horizontal' | 'vertical') => void
+  disableGroupMirror: (groupId: string) => void
+  updateGroupMirrorAxis: (groupId: string, patch: Partial<MirrorAxis>) => void
+  toggleGroupMirrorAxisVisibility: (groupId: string) => void
+  convertGroupMirror: (groupId: string) => boolean
+}) {
+  const mirror = group.mirror
+  if (!mirror) {
+    if (hasGlyphMember) {
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Mirror</span>
+          <span className="text-muted-2 text-[10px] tracking-normal normal-case">
+            unavailable — group contains text
+          </span>
+        </div>
+      )
+    }
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Mirror</span>
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={() => enableGroupMirror(group.id, 'horizontal')}
+          title="Mirror the whole group across a vertical axis through the canvas center (left ↔ right)."
+        >
+          Horizontal
+        </button>
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={() => enableGroupMirror(group.id, 'vertical')}
+          title="Mirror the whole group across a horizontal axis through the canvas center (top ↔ bottom)."
+        >
+          Vertical
+        </button>
+      </div>
+    )
+  }
+  const ax = mirror.axis
+  return (
+    <section className="border-line mt-2.5 border-t pt-2.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-muted flex-1 text-[11px] tracking-[0.5px] uppercase">Mirror</span>
+        <button type="button" className="px-[7px] py-[2px] text-[11px]" onClick={() => disableGroupMirror(group.id)}>
+          Remove
+        </button>
+      </div>
+      <label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span style={{ flex: 1 }}>Show axis on canvas</span>
+          <input
+            type="checkbox"
+            checked={!!mirror.showAxis}
+            onChange={() => toggleGroupMirrorAxisVisibility(group.id)}
+          />
+        </span>
+      </label>
+      <label>
+        <span>Axis X / Y</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            step={1}
+            value={ax.x}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateGroupMirrorAxis(group.id, { x: v })
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={ax.y}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateGroupMirrorAxis(group.id, { y: v })
+            }}
+          />
+        </div>
+      </label>
+      <label>
+        <span>Axis angle (°)</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={1}
+            value={ax.angle}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateGroupMirrorAxis(group.id, { angle: v })
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={ax.angle}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateGroupMirrorAxis(group.id, { angle: v })
+            }}
+          />
+        </div>
+      </label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          className={APPLY_BTN}
+          onClick={() => convertGroupMirror(group.id)}
+          title="Bake the mirror reflection into independent shape layers within this same group."
+        >
+          Convert to layers
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Group-level radial repeat controls. Mirrors `RadialControls` but operates
+ * on the group as a whole — every member is rotated together for each clone.
+ */
+function GroupRadialControls({
+  group,
+  hasGlyphMember,
+  enableGroupRadial,
+  disableGroupRadial,
+  updateGroupRadial,
+  toggleGroupRadialCenterVisibility,
+  convertGroupRadial,
+}: {
+  group: Group
+  hasGlyphMember: boolean
+  enableGroupRadial: (groupId: string, angle: number) => void
+  disableGroupRadial: (groupId: string) => void
+  updateGroupRadial: (groupId: string, patch: Partial<RadialSpec>) => void
+  toggleGroupRadialCenterVisibility: (groupId: string) => void
+  convertGroupRadial: (groupId: string) => boolean
+}) {
+  const radial = group.radial
+  if (!radial) {
+    if (hasGlyphMember) {
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Radial</span>
+          <span className="text-muted-2 text-[10px] tracking-normal normal-case">
+            unavailable — group contains text
+          </span>
+        </div>
+      )
+    }
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Radial</span>
+        {RADIAL_PRESETS.map(a => (
+          <button
+            key={a}
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() => enableGroupRadial(group.id, a)}
+            title={`Add a radial repeat of the whole group at ${a}° increments (${Math.floor(360 / a)} copies total) around the canvas center.`}
+          >
+            {a}°
+          </button>
+        ))}
+      </div>
+    )
+  }
+  const copies = Math.max(1, Math.floor((360 - 1e-3) / radial.angle) + 1)
+  return (
+    <section className="border-line mt-2.5 border-t pt-2.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-muted flex-1 text-[11px] tracking-[0.5px] uppercase">Radial</span>
+        <button type="button" className="px-[7px] py-[2px] text-[11px]" onClick={() => disableGroupRadial(group.id)}>
+          Remove
+        </button>
+      </div>
+      <label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span style={{ flex: 1 }}>Show center on canvas</span>
+          <input
+            type="checkbox"
+            checked={!!radial.showCenter}
+            onChange={() => toggleGroupRadialCenterVisibility(group.id)}
+          />
+        </span>
+      </label>
+      <label>
+        <span>Center X / Y</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            step={1}
+            value={radial.cx}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateGroupRadial(group.id, { cx: v })
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={radial.cy}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateGroupRadial(group.id, { cy: v })
+            }}
+          />
+        </div>
+      </label>
+      <label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span style={{ flex: 1 }}>Angle (°)</span>
+          <span className="text-muted text-[11px]">{copies} copies</span>
+        </span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            step={1}
+            min={1}
+            max={360}
+            value={radial.angle}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v) && v > 0) updateGroupRadial(group.id, { angle: v })
+            }}
+          />
+        </div>
+      </label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {RADIAL_PRESETS.map(a => (
+          <button
+            key={a}
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() => updateGroupRadial(group.id, { angle: a })}
+            title={`Set the increment to ${a}°.`}
+          >
+            {a}°
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          className={APPLY_BTN}
+          onClick={() => convertGroupRadial(group.id)}
+          title="Bake every radial clone into independent shape layers within this same group."
+        >
+          Convert to layers
         </button>
       </div>
     </section>
