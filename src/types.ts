@@ -128,6 +128,13 @@ export interface Shape {
    */
   mirror?: MirrorSpec
   /**
+   * Live radial repeat modifier — clones the shape rotated around `(cx, cy)`
+   * by `angle`, `2·angle`, … up to one full turn. Mutually exclusive with
+   * `mirror` at the UI level. The rotation/scale pivot stays the source's own
+   * bbox center; only the rendered clones rotate around the radial center.
+   */
+  radial?: RadialSpec
+  /**
    * Optional group membership — when set, the shape is a member of the
    * project-level group with this id. Group is purely a logical/selection
    * concept (no nesting, no transform inheritance); members keep their own
@@ -178,6 +185,21 @@ export interface MirrorSpec {
   axis: MirrorAxis
   /** Render the bright-green axis line + its drag handles on canvas. Default false. */
   showAxis?: boolean
+}
+
+/**
+ * Radial repetition spec. Clones of the shape are rendered at every angle
+ * `k · angle` for `k = 1 .. floor((360 - eps)/angle)` around `(cx, cy)`. The
+ * source itself sits at `k = 0`. Angle is in degrees and must be > 0.
+ */
+export interface RadialSpec {
+  /** Rotation center in canvas coords. */
+  cx: number
+  cy: number
+  /** Angular increment between consecutive copies, in degrees. */
+  angle: number
+  /** Render the orange center dot on canvas. Default false. */
+  showCenter?: boolean
 }
 
 /**

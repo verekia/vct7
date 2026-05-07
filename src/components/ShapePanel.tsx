@@ -16,6 +16,7 @@ import type {
   MirrorAxis,
   PaletteColor,
   Point,
+  RadialSpec,
   Shape,
   SpinSpec,
   StrokeLinecap,
@@ -127,6 +128,10 @@ export function ShapePanel() {
   const toggleMirrorAxisVisibility = useStore(s => s.toggleMirrorAxisVisibility)
   const ejectMirror = useStore(s => s.ejectMirror)
   const mergeMirror = useStore(s => s.mergeMirror)
+  const enableRadial = useStore(s => s.enableRadial)
+  const disableRadial = useStore(s => s.disableRadial)
+  const updateRadial = useStore(s => s.updateRadial)
+  const toggleRadialCenterVisibility = useStore(s => s.toggleRadialCenterVisibility)
   const mergeShapes = useStore(s => s.mergeShapes)
   const insertPointBetween = useStore(s => s.insertPointBetween)
   const groups = useStore(s => s.groups)
@@ -209,6 +214,10 @@ export function ShapePanel() {
         toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
         ejectMirror={ejectMirror}
         mergeMirror={mergeMirror}
+        enableRadial={enableRadial}
+        disableRadial={disableRadial}
+        updateRadial={updateRadial}
+        toggleRadialCenterVisibility={toggleRadialCenterVisibility}
         insertPointBetween={insertPointBetween}
       />
     )
@@ -389,6 +398,10 @@ function ShapePanelInner({
   toggleMirrorAxisVisibility,
   ejectMirror,
   mergeMirror,
+  enableRadial,
+  disableRadial,
+  updateRadial,
+  toggleRadialCenterVisibility,
   insertPointBetween,
 }: {
   shape: Shape
@@ -411,6 +424,10 @@ function ShapePanelInner({
   toggleMirrorAxisVisibility: (id: string) => void
   ejectMirror: (id: string) => string | null
   mergeMirror: (id: string) => boolean
+  enableRadial: (id: string, angle: number) => void
+  disableRadial: (id: string) => void
+  updateRadial: (id: string, patch: Partial<RadialSpec>) => void
+  toggleRadialCenterVisibility: (id: string) => void
   insertPointBetween: (shapeId: string, i: number, j: number) => void
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
@@ -651,7 +668,7 @@ function ShapePanelInner({
         </div>
       )}
 
-      {!isGlyphs && (
+      {!isGlyphs && !shape.radial && (
         <MirrorControls
           shape={shape}
           enableMirror={enableMirror}
@@ -660,6 +677,16 @@ function ShapePanelInner({
           toggleMirrorAxisVisibility={toggleMirrorAxisVisibility}
           ejectMirror={ejectMirror}
           mergeMirror={mergeMirror}
+        />
+      )}
+
+      {!isGlyphs && !shape.mirror && (
+        <RadialControls
+          shape={shape}
+          enableRadial={enableRadial}
+          disableRadial={disableRadial}
+          updateRadial={updateRadial}
+          toggleRadialCenterVisibility={toggleRadialCenterVisibility}
         />
       )}
 
@@ -1422,6 +1449,124 @@ function MirrorControls({
             Merge
           </button>
         )}
+      </div>
+    </section>
+  )
+}
+
+const RADIAL_PRESETS: readonly number[] = [15, 30, 45, 90, 120, 180]
+
+/**
+ * Live radial-repeat modifier section. When off, exposes the three preset
+ * angle buttons (45 / 90 / 180). When on, lets the user customize the angle
+ * (preset chips + free numeric input) and the rotation center, plus toggle
+ * the on-canvas center indicator.
+ */
+function RadialControls({
+  shape,
+  enableRadial,
+  disableRadial,
+  updateRadial,
+  toggleRadialCenterVisibility,
+}: {
+  shape: Shape
+  enableRadial: (id: string, angle: number) => void
+  disableRadial: (id: string) => void
+  updateRadial: (id: string, patch: Partial<RadialSpec>) => void
+  toggleRadialCenterVisibility: (id: string) => void
+}) {
+  const radial = shape.radial
+  if (!radial) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted w-[60px] text-[11px] tracking-[0.5px] uppercase">Radial</span>
+        {RADIAL_PRESETS.map(a => (
+          <button
+            key={a}
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() => enableRadial(shape.id, a)}
+            title={`Add a radial repeat with a ${a}° increment (${Math.floor(360 / a)} copies total) around the canvas center.`}
+          >
+            {a}°
+          </button>
+        ))}
+      </div>
+    )
+  }
+  const copies = Math.max(1, Math.floor((360 - 1e-3) / radial.angle) + 1)
+  return (
+    <section className="border-line mt-2.5 border-t pt-2.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-muted flex-1 text-[11px] tracking-[0.5px] uppercase">Radial</span>
+        <button type="button" className="px-[7px] py-[2px] text-[11px]" onClick={() => disableRadial(shape.id)}>
+          Remove
+        </button>
+      </div>
+      <label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span style={{ flex: 1 }}>Show center on canvas</span>
+          <input
+            type="checkbox"
+            checked={!!radial.showCenter}
+            onChange={() => toggleRadialCenterVisibility(shape.id)}
+          />
+        </span>
+      </label>
+      <label>
+        <span>Center X / Y</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            step={1}
+            value={radial.cx}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateRadial(shape.id, { cx: v })
+            }}
+          />
+          <input
+            type="number"
+            step={1}
+            value={radial.cy}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v)) updateRadial(shape.id, { cy: v })
+            }}
+          />
+        </div>
+      </label>
+      <label>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span style={{ flex: 1 }}>Angle (°)</span>
+          <span className="text-muted text-[11px]">{copies} copies</span>
+        </span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            step={1}
+            min={1}
+            max={360}
+            value={radial.angle}
+            onChange={e => {
+              const v = parseFloat(e.target.value)
+              if (Number.isFinite(v) && v > 0) updateRadial(shape.id, { angle: v })
+            }}
+          />
+        </div>
+      </label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {RADIAL_PRESETS.map(a => (
+          <button
+            key={a}
+            type="button"
+            className="px-[7px] py-[2px] text-[11px]"
+            onClick={() => updateRadial(shape.id, { angle: a })}
+            title={`Set the increment to ${a}°.`}
+          >
+            {a}°
+          </button>
+        ))}
       </div>
     </section>
   )

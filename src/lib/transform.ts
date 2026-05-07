@@ -1,6 +1,6 @@
 import { bbox, dist, fmt } from './geometry'
 
-import type { MirrorAxis, Point, Shape } from '../types'
+import type { MirrorAxis, Point, RadialSpec, Shape } from '../types'
 
 /**
  * Effective rotation (degrees) and uniform scale of a shape. Defaults so callers
@@ -200,6 +200,15 @@ export const pairBBoxCenter = (shape: Shape): Point => {
 export const shapePivot = (shape: Shape): Point => (shape.mirror ? pairBBoxCenter(shape) : shapeBBoxCenter(shape))
 
 /**
+ * Pivot used for the shape's *animation* transforms (entrance rotation, spin).
+ * For a radial repeat, the entire pattern rotates around the radial center so
+ * the clone arrangement stays put while spinning. Falls back to the
+ * per-shape pivot otherwise.
+ */
+export const shapeAnimationPivot = (shape: Shape): Point =>
+  shape.radial ? [shape.radial.cx, shape.radial.cy] : shapePivot(shape)
+
+/**
  * Combined visual bbox center for a group's members. Used as the pivot for
  * the group's `<g transform>` and as the rotation/scale center when baking
  * a group transform into its children. Aggregates each member's
@@ -236,6 +245,31 @@ export const transformAroundString = (rot: number, scl: number, cx: number, cy: 
     `rotate(${fmt(rot)}) scale(${fmt(scl)}) ` +
     `translate(${fmt(-cx)} ${fmt(-cy)})`
   )
+}
+
+/**
+ * Default radial spec for a freshly-enabled radial repeat: centered on the
+ * supplied point with the given angular increment.
+ */
+export const defaultRadialSpec = (centerX: number, centerY: number, angle: number): RadialSpec => ({
+  cx: centerX,
+  cy: centerY,
+  angle,
+})
+
+const RADIAL_EPS = 1e-3
+
+/**
+ * The clone angles (excluding the source at 0°) for a radial repeat. Returns
+ * `[]` when the spec is invalid (non-positive angle) or describes a single
+ * copy. Cuts at `360 - eps` so an exact divisor like 90° produces 3 clones
+ * and an exact 360° produces none.
+ */
+export const radialCloneAngles = (spec: RadialSpec): number[] => {
+  if (!Number.isFinite(spec.angle) || spec.angle <= 0) return []
+  const out: number[] = []
+  for (let k = 1; k * spec.angle < 360 - RADIAL_EPS; k++) out.push(k * spec.angle)
+  return out
 }
 
 /** AABB of the rotated+scaled bbox. Used by marquee selection so a rotated shape still hits. */

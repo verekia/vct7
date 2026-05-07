@@ -16,6 +16,7 @@ import {
   groupBBoxCenter,
   hasTransform,
   pairBBoxCenter,
+  radialCloneAngles,
   reflectShape,
   shapeRotation,
   shapeScale,
@@ -378,16 +379,21 @@ function AnimatedShape({
     shape.mirror ? (
       <MirrorNode shape={shape} bezier={bezier} fillOverride={fillOverride} strokeOverride={strokeOverride} />
     ) : null
+  const renderRadial = (fillOverride?: string | null, strokeOverride?: string | null) =>
+    shape.radial ? (
+      <RadialClones shape={shape} bezier={bezier} fillOverride={fillOverride} strokeOverride={strokeOverride} />
+    ) : null
 
   // Identity offsets + no ghost → render the bare ShapeNode so untouched
   // shapes have the exact same DOM shape as the pre-animation editor. This
   // matters for selection hit testing tests that inspect `<g data-shape-id>`.
   if (transform === '' && opacity === undefined && !ghostOffsets && offsets.fill === null && offsets.stroke === null) {
-    if (!shape.mirror) return <ShapeNode shape={shape} bezier={bezier} />
+    if (!shape.mirror && !shape.radial) return <ShapeNode shape={shape} bezier={bezier} />
     return (
       <>
         <ShapeNode shape={shape} bezier={bezier} />
         {renderMirror()}
+        {renderRadial()}
       </>
     )
   }
@@ -403,11 +409,13 @@ function AnimatedShape({
             strokeOverride={ghostOffsets.stroke}
           />
           {renderMirror(ghostOffsets.fill, ghostOffsets.stroke)}
+          {renderRadial(ghostOffsets.fill, ghostOffsets.stroke)}
         </g>
       )}
       <g transform={transform || undefined} opacity={opacity}>
         <ShapeNode shape={shape} bezier={bezier} fillOverride={offsets.fill} strokeOverride={offsets.stroke} />
         {renderMirror(offsets.fill, offsets.stroke)}
+        {renderRadial(offsets.fill, offsets.stroke)}
       </g>
     </>
   )
@@ -600,6 +608,40 @@ function MirrorNode({
   )
 }
 
+/**
+ * Live radial repeat copies. Each clone is the source `ShapeNode` wrapped in a
+ * `<g transform="rotate(angle, cx, cy)">` so the clone (including its own
+ * rotation/scale around the source's bbox center) ends up rotated as a rigid
+ * body around the radial center. Hit testing falls through to the source via
+ * the inner `data-shape-id`, matching the mirror's "click clone selects source"
+ * convention.
+ */
+function RadialClones({
+  shape,
+  bezier,
+  fillOverride,
+  strokeOverride,
+}: {
+  shape: Shape
+  bezier: number
+  fillOverride?: string | null
+  strokeOverride?: string | null
+}) {
+  if (!shape.radial) return null
+  const angles = radialCloneAngles(shape.radial)
+  if (angles.length === 0) return null
+  const { cx, cy } = shape.radial
+  return (
+    <>
+      {angles.map(a => (
+        <g key={a} transform={`rotate(${fmt(a)} ${fmt(cx)} ${fmt(cy)})`}>
+          <ShapeNode shape={shape} bezier={bezier} fillOverride={fillOverride} strokeOverride={strokeOverride} />
+        </g>
+      ))}
+    </>
+  )
+}
+
 function ShapeNode({
   shape,
   bezier,
@@ -781,6 +823,8 @@ function SelectionLayer({
   const axisLayer = shape.mirror?.showAxis ? (
     <MirrorAxisLayer shape={shape} scale={scale} disabled={hasTransform(shape)} />
   ) : null
+  const radialOutlines = shape.radial ? radialSelectionOutlines(shape, transformAttr) : null
+  const radialCenter = shape.radial?.showCenter ? <RadialCenterMarker spec={shape.radial} scale={scale} /> : null
   // Vertex handles are pre-transform anchors. Once a transform is applied they
   // would render at the *transformed* positions but a drag would set the
   // underlying point in canvas coords without inverting — making the visual
@@ -791,11 +835,15 @@ function SelectionLayer({
   if (shape.kind === 'glyphs' && shape.glyphs && shape.points.length >= 2) {
     const { width, height } = shape.glyphs
     return (
-      <g transform={transformAttr}>
-        <rect x={0} y={0} width={fmt(width)} height={fmt(height)} className="selection-outline" fill="none" />
-        {mirrorOutline}
-        {axisLayer}
-      </g>
+      <>
+        <g transform={transformAttr}>
+          <rect x={0} y={0} width={fmt(width)} height={fmt(height)} className="selection-outline" fill="none" />
+          {mirrorOutline}
+          {axisLayer}
+        </g>
+        {radialOutlines}
+        {radialCenter}
+      </>
     )
   }
   let outline
@@ -811,25 +859,29 @@ function SelectionLayer({
     outline = <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
   }
   return (
-    <g transform={transformAttr}>
-      {outline}
-      {mirrorOutline}
-      {axisLayer}
-      {showVertices &&
-        !transformed &&
-        shape.points.map((p, i) => (
-          <circle
-            key={i}
-            cx={fmt(p[0])}
-            cy={fmt(p[1])}
-            r={5 / scale}
-            className={`vertex-handle${selectedSet.has(i) ? ' selected' : ''}`}
-            data-shape-id={shape.id}
-            data-vertex-index={i}
-            pointerEvents={shape.locked ? 'none' : undefined}
-          />
-        ))}
-    </g>
+    <>
+      <g transform={transformAttr}>
+        {outline}
+        {mirrorOutline}
+        {axisLayer}
+        {showVertices &&
+          !transformed &&
+          shape.points.map((p, i) => (
+            <circle
+              key={i}
+              cx={fmt(p[0])}
+              cy={fmt(p[1])}
+              r={5 / scale}
+              className={`vertex-handle${selectedSet.has(i) ? ' selected' : ''}`}
+              data-shape-id={shape.id}
+              data-vertex-index={i}
+              pointerEvents={shape.locked ? 'none' : undefined}
+            />
+          ))}
+      </g>
+      {radialOutlines}
+      {radialCenter}
+    </>
   )
 }
 
@@ -895,6 +947,64 @@ const mirrorSelectionOutline = (shape: Shape) => {
     return <circle cx={fmt(cx)} cy={fmt(cy)} r={fmt(radius)} className="selection-outline" fill="none" />
   }
   return <path d={pointsToPath(r.points, r.closed, 0)} className="selection-outline" />
+}
+
+/**
+ * Dashed outline at every radial clone position. Each clone wraps the source's
+ * own composed transform (so the source's rotation/scale around its own bbox
+ * is preserved) inside a `rotate(angle, cx, cy)` so the whole pose pivots
+ * around the radial center. Returns null when the spec has no clones.
+ */
+const radialSelectionOutlines = (shape: Shape, sourceTransform: string | undefined) => {
+  if (!shape.radial) return null
+  const angles = radialCloneAngles(shape.radial)
+  if (angles.length === 0) return null
+  const { cx, cy } = shape.radial
+  let outline: ReactNode
+  if (shape.kind === 'glyphs' && shape.glyphs && shape.points.length >= 2) {
+    const { width, height } = shape.glyphs
+    outline = <rect x={0} y={0} width={fmt(width)} height={fmt(height)} className="selection-outline" fill="none" />
+  } else if (shape.kind === 'circle' && shape.points.length >= 2) {
+    const [scx, scy] = shape.points[0]
+    const r = dist(shape.points[0], shape.points[1])
+    outline = isPartialArc(shape.arc) ? (
+      <path d={arcToPath(scx, scy, r, shape.arc)} className="selection-outline" fill="none" />
+    ) : (
+      <circle cx={fmt(scx)} cy={fmt(scy)} r={fmt(r)} className="selection-outline" fill="none" />
+    )
+  } else {
+    outline = <path d={pointsToPath(shape.points, shape.closed, 0)} className="selection-outline" />
+  }
+  return (
+    <>
+      {angles.map(a => (
+        <g key={a} transform={`rotate(${fmt(a)} ${fmt(cx)} ${fmt(cy)})`}>
+          <g transform={sourceTransform}>{outline}</g>
+        </g>
+      ))}
+    </>
+  )
+}
+
+/**
+ * Orange dot marking the radial center on canvas. Drawn at the spec's `(cx, cy)`
+ * with a non-scaling stroke so it stays the same screen size at any zoom. Not
+ * interactive — the user edits the center via the side panel inputs.
+ */
+function RadialCenterMarker({ spec, scale }: { spec: { cx: number; cy: number }; scale: number }) {
+  const r = 5 / scale
+  return (
+    <circle
+      cx={fmt(spec.cx)}
+      cy={fmt(spec.cy)}
+      r={r}
+      fill="#ff8a00"
+      stroke="#3a1f00"
+      strokeWidth={1}
+      vectorEffect="non-scaling-stroke"
+      pointerEvents="none"
+    />
+  )
 }
 
 const MIRROR_AXIS_HANDLE_PX = 60

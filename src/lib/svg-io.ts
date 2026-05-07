@@ -6,6 +6,7 @@ import {
   composeTransformString,
   groupBBoxCenter,
   pairBBoxCenter,
+  radialCloneAngles,
   reflectShape,
   shapeRotation,
   shapeScale,
@@ -24,6 +25,7 @@ import type {
   PaletteColor,
   Point,
   ProjectSettings,
+  RadialSpec,
   Shape,
   SpinSpec,
   StrokeLinecap,
@@ -165,6 +167,14 @@ const parseMirrorAxisAttr = (raw: string | null): MirrorAxis | undefined => {
   const parts = raw.split(',').map(s => parseFloat(s.trim()))
   if (parts.length !== 3 || !parts.every(Number.isFinite)) return undefined
   return { x: parts[0], y: parts[1], angle: parts[2] }
+}
+
+const parseRadialSpecAttr = (raw: string | null): RadialSpec | undefined => {
+  if (!raw) return undefined
+  const parts = raw.split(',').map(s => parseFloat(s.trim()))
+  if (parts.length !== 3 || !parts.every(Number.isFinite)) return undefined
+  if (parts[2] <= 0) return undefined
+  return { cx: parts[0], cy: parts[1], angle: parts[2] }
 }
 
 const parseArcAttr = (raw: string | null): ArcRange | undefined => {
@@ -391,6 +401,78 @@ const buildMirrorSibling = (source: Shape, settings: ProjectSettings, emitsPaint
   return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
 }
 
+/**
+ * Build the rendered radial-clone siblings as `<path>` / `<circle>` elements.
+ * Each clone wraps the source's composed transform inside a SVG
+ * `rotate(angle, cx, cy)` so external viewers see the same pose the editor
+ * renders. Marked `data-v7-radial-of` so the parser skips them — the source's
+ * `data-v7-radial-spec` is the authoritative metadata.
+ */
+const buildRadialSiblings = (source: Shape, settings: ProjectSettings, emitsPaint: boolean): string[] => {
+  if (!source.radial) return []
+  const angles = radialCloneAngles(source.radial)
+  if (angles.length === 0) return []
+  const isGlyphs = source.kind === 'glyphs' && !!source.glyphs
+  const isCircleSource = source.kind === 'circle' && source.points.length >= 2
+  const partialArc = isCircleSource && isPartialArc(source.arc) ? source.arc : undefined
+  const filled = partialArc ? partialArc.style !== 'open' : source.closed
+  const hasStroke = source.stroke !== 'none'
+
+  const attrs: string[] = []
+  attrs.push(`fill="${escapeAttr(filled || isGlyphs ? source.fill : 'none')}"`)
+  if (hasStroke) {
+    attrs.push(`stroke="${escapeAttr(source.stroke)}"`, `stroke-width="${fmt(source.strokeWidth)}"`)
+    const isPathElement = !isCircleSource || !!partialArc
+    if (isPathElement) {
+      const linejoin = source.strokeLinejoin ?? 'round'
+      const linecap = source.strokeLinecap ?? 'round'
+      attrs.push(`stroke-linejoin="${linejoin}"`, `stroke-linecap="${linecap}"`)
+    }
+    const dash = source.strokeDasharray?.trim()
+    if (dash) attrs.push(`stroke-dasharray="${escapeAttr(dash)}"`)
+    if (source.paintOrder === 'stroke') attrs.push(`paint-order="stroke"`)
+  }
+  if (source.hidden) attrs.push(`visibility="hidden"`)
+  if (source.blendMode && source.blendMode !== 'normal') {
+    attrs.push(`style="mix-blend-mode:${source.blendMode}"`)
+  }
+  if (source.opacity !== undefined && source.opacity < 1) {
+    attrs.push(`opacity="${fmt(Math.max(0, source.opacity))}"`)
+  }
+  attrs.push(`data-v7-radial-of="${escapeAttr(source.id)}"`)
+  if (emitsPaint) attrs.push(`class="vh-anim-${source.id}-paint"`)
+
+  const sourceTransform = composeTransformString(source)
+  const out: string[] = []
+  for (const a of angles) {
+    const rotateOuter = `rotate(${fmt(a)} ${fmt(source.radial.cx)} ${fmt(source.radial.cy)})`
+    const composed = sourceTransform ? `${rotateOuter} ${sourceTransform}` : rotateOuter
+    const transformAttr = ` transform="${composed}"`
+    let element: string
+    if (isGlyphs && source.glyphs) {
+      // Glyph d is in local coords; the source's composed transform already
+      // includes the translate to the canvas anchor — strip it and include
+      // both the outer rotate and the source's transform.
+      element = `<path d="${source.glyphs.d}" transform="${composed}" ${attrs.join(' ')}/>`
+    } else if (isCircleSource && !partialArc) {
+      const [scx, scy] = source.points[0]
+      const r = dist(source.points[0], source.points[1])
+      element = `<circle cx="${fmt(scx)}" cy="${fmt(scy)}" r="${fmt(r)}"${transformAttr} ${attrs.join(' ')}/>`
+    } else if (isCircleSource && partialArc) {
+      const [scx, scy] = source.points[0]
+      const r = dist(source.points[0], source.points[1])
+      const d = arcToPath(scx, scy, r, partialArc)
+      element = `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
+    } else {
+      const bz = source.bezierOverride ?? settings.bezier
+      const d = pointsToPath(source.points, source.closed, bz, source.pointBezierOverrides)
+      element = `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
+    }
+    out.push(element)
+  }
+  return out
+}
+
 let nextId = 1
 export const makeId = (): string => `s${nextId++}`
 export const resetIds = (n = 1): void => {
@@ -563,6 +645,11 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
       baseAttrs.push(`data-v7-mirror-axis="${fmt(ax.x)},${fmt(ax.y)},${fmt(ax.angle)}"`)
       if (shape.mirror.showAxis) baseAttrs.push(`data-v7-mirror-show-axis="true"`)
     }
+    if (shape.radial) {
+      const r = shape.radial
+      baseAttrs.push(`data-v7-radial-spec="${fmt(r.cx)},${fmt(r.cy)},${fmt(r.angle)}"`)
+      if (shape.radial.showCenter) baseAttrs.push(`data-v7-radial-show-center="true"`)
+    }
     // Animation metadata is only emitted when the project switch is on, so the
     // file is byte-identical to a non-animated project when the user toggles
     // animation off.
@@ -616,6 +703,10 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
     const mirrorElement: string | null = shape.mirror
       ? buildMirrorSibling(shape, settings, animationEmitsPaint(shape, settings))
       : null
+    // Same idea as the mirror sibling, but one element per radial clone.
+    const radialSiblings: string[] = shape.radial
+      ? buildRadialSiblings(shape, settings, animationEmitsPaint(shape, settings))
+      : []
 
     // Wrap animated shapes in a <g> the CSS keyframes can target. Only when
     // animationEnabled — otherwise emit the raw element (no extra DOM node).
@@ -630,15 +721,18 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
         lines.push(`    <g class="vh-anim-${id}-spin">`)
         lines.push(`      ${element}`)
         if (mirrorElement) lines.push(`      ${mirrorElement}`)
+        for (const r of radialSiblings) lines.push(`      ${r}`)
         lines.push(`    </g>`)
       } else {
         lines.push(`    ${element}`)
         if (mirrorElement) lines.push(`    ${mirrorElement}`)
+        for (const r of radialSiblings) lines.push(`    ${r}`)
       }
       lines.push(`  </g>`)
     } else {
       lines.push(`  ${element}`)
       if (mirrorElement) lines.push(`  ${mirrorElement}`)
+      for (const r of radialSiblings) lines.push(`  ${r}`)
     }
   }
   closeOpenGroup()
@@ -784,6 +878,9 @@ export function parseProject(text: string): ParsedProject {
     // Skip render-only mirror siblings — they are derived on the fly from the
     // source's `data-v7-mirror-axis` and don't materialize as their own Shape.
     if (el.hasAttribute('data-v7-mirror-of')) continue
+    // Same for radial-clone siblings: derived from the source's
+    // `data-v7-radial-spec`, never round-tripped as separate shapes.
+    if (el.hasAttribute('data-v7-radial-of')) continue
     if (isInsideNonRenderedAncestor(el, svg)) continue
     if (el === bgRectEl) continue
     const ptsAttr = el.getAttribute('data-v7-points')
@@ -860,6 +957,13 @@ export function parseProject(text: string): ParsedProject {
     const mirror = mirrorAxis
       ? { axis: mirrorAxis, ...(el.getAttribute('data-v7-mirror-show-axis') === 'true' ? { showAxis: true } : {}) }
       : undefined
+    const radialSpec = parseRadialSpecAttr(el.getAttribute('data-v7-radial-spec'))
+    const radial: RadialSpec | undefined = radialSpec
+      ? {
+          ...radialSpec,
+          ...(el.getAttribute('data-v7-radial-show-center') === 'true' ? { showCenter: true } : {}),
+        }
+      : undefined
     // The legacy default is 'round' for both — treat round as undefined so
     // re-saving a legacy file doesn't introduce a difference, and only persist
     // explicit non-default choices in memory.
@@ -916,6 +1020,7 @@ export function parseProject(text: string): ParsedProject {
       ...(scale !== undefined ? { scale } : {}),
       ...(animation ? { animation } : {}),
       ...(mirror ? { mirror } : {}),
+      ...(radial ? { radial } : {}),
       ...(groupId ? { groupId } : {}),
     })
   }
