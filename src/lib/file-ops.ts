@@ -7,7 +7,7 @@ import {
   writeToHandle,
   type FileHandle,
 } from './file-system'
-import { parseProject, serializeProject } from './svg-io'
+import { parseProject, serializeProject, stripV7Attributes } from './svg-io'
 
 const confirmDiscard = (): boolean => {
   if (!useStore.getState().dirty) return true
@@ -61,6 +61,13 @@ export async function saveFile(): Promise<void> {
     }
   }
   await saveFileAs()
+}
+
+export function exportFile(): void {
+  const state = useStore.getState()
+  const text = serializeProject(state.settings, state.shapes, state.groups)
+  const suggested = state.fileName || 'vct7.svg'
+  downloadText(suggested, stripV7Attributes(text))
 }
 
 export async function saveFileAs(): Promise<void> {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 
-import { DEFAULT_SETTINGS, parseProject, resetIds, serializeProject } from './svg-io'
+import { parsePathD, parseTransform } from './svg-import'
+import { DEFAULT_SETTINGS, parseProject, resetIds, serializeProject, stripV7Attributes } from './svg-io'
 
 import type { ProjectSettings, Shape } from '../types'
 
@@ -71,6 +72,269 @@ describe('serializeProject', () => {
     const bBlock = text.match(/data-v7-points="20,200[\s\S]*?\/>/)?.[0] ?? ''
     expect(aBlock).toContain('data-v7-bezier="0.5"')
     expect(bBlock).not.toContain('data-v7-bezier=')
+  })
+})
+
+describe('stripV7Attributes', () => {
+  it('removes every data-v7-* attribute while preserving real SVG attributes', () => {
+    const text = serializeProject(sampleSettings, sampleShapes)
+    const stripped = stripV7Attributes(text)
+    expect(stripped).not.toMatch(/data-v7-/)
+    expect(stripped).toContain('viewBox="0 0 400 300"')
+    expect(stripped).toContain('width="400"')
+    expect(stripped).toContain('fill="#ff0000"')
+  })
+
+  it('still parses as valid SVG after stripping', () => {
+    const stripped = stripV7Attributes(serializeProject(sampleSettings, sampleShapes))
+    const doc = new DOMParser().parseFromString(stripped, 'image/svg+xml')
+    expect(doc.querySelector('parsererror')).toBeNull()
+    expect(doc.querySelector('svg')).not.toBeNull()
+  })
+})
+
+describe('parsePathD', () => {
+  it('parses M and L commands as anchor points', () => {
+    const r = parsePathD('M 10 20 L 30 40 L 50 60 Z')
+    expect(r.points).toEqual([
+      [10, 20],
+      [30, 40],
+      [50, 60],
+    ])
+    expect(r.closed).toBe(true)
+  })
+
+  it('handles relative moves', () => {
+    const r = parsePathD('m 10 10 l 5 0 l 0 5 z')
+    expect(r.points).toEqual([
+      [10, 10],
+      [15, 10],
+      [15, 15],
+    ])
+    expect(r.closed).toBe(true)
+  })
+
+  it('extracts only endpoints from C and Q commands', () => {
+    const r = parsePathD('M 0 0 C 10 0 20 10 30 10 Q 40 20 50 20')
+    expect(r.points).toEqual([
+      [0, 0],
+      [30, 10],
+      [50, 20],
+    ])
+    expect(r.closed).toBe(false)
+  })
+
+  it('drops the duplicate closing vertex', () => {
+    const r = parsePathD('M 0 0 L 10 0 L 10 10 L 0 0 Z')
+    expect(r.points).toEqual([
+      [0, 0],
+      [10, 0],
+      [10, 10],
+    ])
+    expect(r.closed).toBe(true)
+  })
+})
+
+describe('parseTransform', () => {
+  it('parses translate / scale / rotate', () => {
+    const t = parseTransform('translate(10 20)')
+    expect(t.e).toBe(10)
+    expect(t.f).toBe(20)
+    const s = parseTransform('scale(2 3)')
+    expect(s.a).toBe(2)
+    expect(s.d).toBe(3)
+    const r = parseTransform('rotate(90)')
+    expect(r.a).toBeCloseTo(0)
+    expect(r.b).toBeCloseTo(1)
+  })
+})
+
+describe('parseProject — fresh SVG import (no v7 metadata)', () => {
+  it('imports plain SVG paths and circles as editable shapes', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <path d="M 10 10 L 90 10 L 90 90 L 10 90 Z" fill="#ff0000"/>
+        <circle cx="50" cy="50" r="20" fill="#00ff00"/>
+      </svg>`
+    const parsed = parseProject(text)
+    expect(parsed.shapes).toHaveLength(2)
+    expect(parsed.shapes[0].points).toEqual([
+      [10, 10],
+      [90, 10],
+      [90, 90],
+      [10, 90],
+    ])
+    expect(parsed.shapes[0].closed).toBe(true)
+    expect(parsed.shapes[0].fill).toBe('#ff0000')
+    // Plain `M L L L Z` square has no curves; reconciliation lifts the
+    // recovered `t = 0` to `settings.bezier` and nulls the shape override.
+    expect(parsed.settings.bezier).toBe(0)
+    expect(parsed.shapes[0].bezierOverride).toBe(null)
+    expect(parsed.shapes[1].kind).toBe('circle')
+    expect(parsed.shapes[1].points[0]).toEqual([50, 50])
+    expect(parsed.shapes[1].points[1]).toEqual([70, 50])
+  })
+
+  it('imports rect/line/polygon/polyline primitives', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+        <rect x="5" y="5" width="20" height="10"/>
+        <line x1="0" y1="0" x2="50" y2="50"/>
+        <polygon points="100,100 150,100 125,150"/>
+        <polyline points="0,180 50,180 50,200"/>
+      </svg>`
+    const parsed = parseProject(text)
+    expect(parsed.shapes).toHaveLength(4)
+    expect(parsed.shapes[0].points).toEqual([
+      [5, 5],
+      [25, 5],
+      [25, 15],
+      [5, 15],
+    ])
+    expect(parsed.shapes[0].closed).toBe(true)
+    expect(parsed.shapes[1].points).toEqual([
+      [0, 0],
+      [50, 50],
+    ])
+    expect(parsed.shapes[1].closed).toBe(false)
+    expect(parsed.shapes[2].closed).toBe(true)
+    expect(parsed.shapes[3].closed).toBe(false)
+  })
+
+  it('absorbs a leading viewBox-sized rect as the project background', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <rect x="0" y="0" width="100" height="100" fill="#123456"/>
+        <circle cx="50" cy="50" r="10" fill="#ffffff"/>
+      </svg>`
+    const parsed = parseProject(text)
+    expect(parsed.settings.bg).toBe('#123456')
+    expect(parsed.shapes).toHaveLength(1)
+    expect(parsed.shapes[0].kind).toBe('circle')
+  })
+
+  it('skips elements inside <defs> / <clipPath>', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <defs><clipPath id="c"><rect x="0" y="0" width="100" height="100"/></clipPath></defs>
+        <path d="M 0 0 L 50 0 L 50 50 Z"/>
+      </svg>`
+    const parsed = parseProject(text)
+    expect(parsed.shapes).toHaveLength(1)
+    expect(parsed.shapes[0].closed).toBe(true)
+  })
+
+  it('round-trips a stripped VCT7 export back to editable shapes with exact vertices', () => {
+    resetIds(1)
+    const exported = serializeProject(sampleSettings, sampleShapes)
+    const stripped = stripV7Attributes(exported)
+    const reparsed = parseProject(stripped)
+    expect(reparsed.shapes.length).toBe(sampleShapes.length)
+    expect(reparsed.settings.bg).toBe(sampleSettings.bg)
+    // The triangle was the only shape with corners; its `t = 0.5` becomes
+    // the project-level `settings.bezier`, and the shape inherits it via a
+    // null override (the line contributed nothing — no corners).
+    expect(reparsed.settings.bezier).toBeCloseTo(0.5, 2)
+    expect(reparsed.shapes[0].points).toEqual([
+      [10, 10],
+      [100, 10],
+      [100, 100],
+    ])
+    expect(reparsed.shapes[0].closed).toBe(true)
+    expect(reparsed.shapes[0].bezierOverride).toBe(null)
+    expect(reparsed.shapes[0].pointBezierOverrides).toBeUndefined()
+    expect(reparsed.shapes[1].points).toEqual([
+      [20, 200],
+      [300, 200],
+    ])
+    expect(reparsed.shapes[1].closed).toBe(false)
+    expect(reparsed.shapes[1].bezierOverride).toBe(null)
+  })
+
+  it('preserves per-vertex bezier overrides across a stripped round-trip', () => {
+    resetIds(1)
+    const sq: Shape = {
+      id: 'sq',
+      points: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+      closed: true,
+      fill: '#000000',
+      stroke: 'none',
+      strokeWidth: 1,
+      bezierOverride: 0.4,
+      pointBezierOverrides: { 2: 0.8 },
+      hidden: false,
+      locked: false,
+    }
+    const exported = serializeProject({ ...sampleSettings, bg: null }, [sq])
+    const stripped = stripV7Attributes(exported)
+    const reparsed = parseProject(stripped)
+    expect(reparsed.shapes).toHaveLength(1)
+    expect(reparsed.shapes[0].points).toEqual([
+      [0, 0],
+      [100, 0],
+      [100, 100],
+      [0, 100],
+    ])
+    // The shape's representative `t` (0.4) becomes global; the shape's own
+    // override is nulled (it matches global), and the deviating corner at
+    // index 2 is preserved as a per-vertex override.
+    expect(reparsed.settings.bezier).toBeCloseTo(0.4, 2)
+    expect(reparsed.shapes[0].bezierOverride).toBe(null)
+    expect(reparsed.shapes[0].pointBezierOverrides).toBeDefined()
+    expect(reparsed.shapes[0].pointBezierOverrides?.[2]).toBeCloseTo(0.8, 2)
+  })
+
+  it('lifts the dominant per-shape bezier into settings.bezier and keeps outliers as overrides', () => {
+    resetIds(1)
+    const triangleAt = (cx: number, cy: number, t: number): Shape => ({
+      id: `t${cx}`,
+      points: [
+        [cx, cy],
+        [cx + 60, cy],
+        [cx + 60, cy + 60],
+      ],
+      closed: true,
+      fill: '#000000',
+      stroke: 'none',
+      strokeWidth: 1,
+      bezierOverride: t,
+      hidden: false,
+      locked: false,
+    })
+    const shapes_ = [triangleAt(0, 0, 0.5), triangleAt(100, 0, 0.5), triangleAt(0, 100, 0.5), triangleAt(100, 100, 0.8)]
+    const exported = serializeProject({ ...sampleSettings, bg: null, bezier: 0.1 }, shapes_)
+    const stripped = stripV7Attributes(exported)
+    const reparsed = parseProject(stripped)
+    expect(reparsed.shapes).toHaveLength(4)
+    // Three shapes vote 0.5, one votes 0.8 — global lifts to 0.5.
+    expect(reparsed.settings.bezier).toBeCloseTo(0.5, 2)
+    // The matching shapes get nulled to inherit global; the outlier keeps
+    // its explicit override.
+    expect(reparsed.shapes[0].bezierOverride).toBe(null)
+    expect(reparsed.shapes[1].bezierOverride).toBe(null)
+    expect(reparsed.shapes[2].bezierOverride).toBe(null)
+    expect(reparsed.shapes[3].bezierOverride).toBeCloseTo(0.8, 2)
+  })
+
+  it('bakes ancestor transforms into shape points', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <g transform="translate(50 50)">
+          <rect x="0" y="0" width="10" height="10"/>
+        </g>
+      </svg>`
+    const parsed = parseProject(text)
+    expect(parsed.shapes[0].points).toEqual([
+      [50, 50],
+      [60, 50],
+      [60, 60],
+      [50, 60],
+    ])
   })
 })
 
@@ -200,9 +464,11 @@ describe('parseProject round-trip', () => {
     expect(parsed.shapes[0].bezierOverride).toBe(null)
   })
 
-  // Foreign / pre-existing `<path>` elements without `data-v7-points` must not
-  // be imported as editable shapes — the editor only owns paths it tagged.
-  it('ignores <path> elements without data-v7-points', () => {
+  // Mixed file: a hand-edited v7 SVG with foreign paths should load both —
+  // the v7-tagged path round-trips precisely, the foreign one comes in via
+  // the plain-SVG fallback. The leading viewBox-sized `<rect>` is absorbed
+  // as the background color.
+  it('imports both v7-tagged and foreign <path> elements', () => {
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <rect width="100" height="100" fill="white"/>
@@ -210,8 +476,16 @@ describe('parseProject round-trip', () => {
   <path d="M5 5 L20 20" data-v7-points="5,5 20,20" data-v7-closed="false"/>
 </svg>`
     const parsed = parseProject(svg)
-    expect(parsed.shapes).toHaveLength(1)
+    expect(parsed.settings.bg).toBe('white')
+    expect(parsed.shapes).toHaveLength(2)
     expect(parsed.shapes[0].points).toEqual([
+      [0, 0],
+      [10, 10],
+    ])
+    // 2-vertex line has no corners; bezierOverride is meaningless and gets
+    // nulled so the on-disk file stays clean.
+    expect(parsed.shapes[0].bezierOverride).toBe(null)
+    expect(parsed.shapes[1].points).toEqual([
       [5, 5],
       [20, 20],
     ])

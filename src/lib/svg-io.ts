@@ -1,6 +1,7 @@
 import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
 import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation'
 import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry'
+import { importFreshShape, isInsideNonRenderedAncestor, pickDominantT } from './svg-import'
 import {
   composeTransformString,
   groupBBoxCenter,
@@ -396,6 +397,14 @@ export const resetIds = (n = 1): void => {
   nextId = n
 }
 
+/**
+ * Strip every `data-v7-*` attribute from a serialized SVG so the file becomes
+ * a plain SVG with no VCT7 round-trip metadata. Used by Export. Attribute
+ * values can't contain unescaped `"` (see {@link escapeAttr}), so a simple
+ * whitespace-anchored regex is sufficient.
+ */
+export const stripV7Attributes = (svg: string): string => svg.replaceAll(/\s+data-v7-[\w-]+="[^"]*"/g, '')
+
 export function serializeProject(settings: ProjectSettings, shapes: Shape[], groups: Group[] = []): string {
   const lines: string[] = []
   lines.push('<?xml version="1.0" encoding="UTF-8"?>')
@@ -732,14 +741,68 @@ export function parseProject(text: string): ParsedProject {
     settings.animationEnabled = true
   }
 
+  // Both VCT7 exports and many third-party SVGs render their background as a
+  // viewBox-sized `<rect>`. We always identify it (so the shape loop can skip
+  // it — otherwise the user gets a giant background-colored rectangle as the
+  // bottom layer), and absorb its fill into `settings.bg` when v7 hasn't
+  // already specified one.
+  let bgRectEl: Element | null = null
+  const firstRect = Array.from(svg.children).find(c => c.tagName.toLowerCase() === 'rect') ?? null
+  if (firstRect) {
+    const rx = parseFloat(firstRect.getAttribute('x') ?? '0')
+    const ry = parseFloat(firstRect.getAttribute('y') ?? '0')
+    const rw = parseFloat(firstRect.getAttribute('width') ?? '')
+    const rh = parseFloat(firstRect.getAttribute('height') ?? '')
+    const fill = firstRect.getAttribute('fill')
+    if (
+      Number.isFinite(rw) &&
+      Number.isFinite(rh) &&
+      Math.abs(rx - settings.viewBoxX) < 1e-6 &&
+      Math.abs(ry - settings.viewBoxY) < 1e-6 &&
+      Math.abs(rw - settings.viewBoxWidth) < 1e-6 &&
+      Math.abs(rh - settings.viewBoxHeight) < 1e-6 &&
+      fill &&
+      fill !== 'none'
+    ) {
+      bgRectEl = firstRect
+      const v7HasBg = svg.hasAttribute('data-v7-bg') || svg.getAttribute('data-v7-no-bg') === 'true'
+      if (!v7HasBg) settings.bg = fill
+    }
+  }
+
   const shapes: Shape[] = []
-  // Iterate path AND circle elements in document order so z-order survives.
-  for (const el of Array.from(svg.querySelectorAll('path, circle'))) {
+  // Indices of shapes that came in via the plain-SVG fallback (no v7
+  // metadata). Tracked so the post-loop reconciliation pass can lift the
+  // dominant per-shape bezier into `settings.bezier` and null out the
+  // shape-level overrides that match it.
+  const freshIndices: number[] = []
+  // Iterate every renderable shape element in document order so z-order
+  // survives. Plain SVG primitives (rect/line/polygon/polyline) are imported
+  // via `importFreshShape` below; VCT7-authored elements carry data-v7-points
+  // and take the precise round-trip branch.
+  for (const el of Array.from(svg.querySelectorAll('path, circle, rect, line, polygon, polyline'))) {
     // Skip render-only mirror siblings — they are derived on the fly from the
     // source's `data-v7-mirror-axis` and don't materialize as their own Shape.
     if (el.hasAttribute('data-v7-mirror-of')) continue
+    if (isInsideNonRenderedAncestor(el, svg)) continue
+    if (el === bgRectEl) continue
     const ptsAttr = el.getAttribute('data-v7-points')
-    if (!ptsAttr) continue
+    if (!ptsAttr) {
+      // No round-trip metadata — derive a Shape from native geometry
+      // attributes. `importFreshShape` supplies the recovered per-shape
+      // `bezierOverride`; the post-loop pass below lifts the dominant value
+      // up to the project setting and nulls shapes that match it.
+      const fresh = importFreshShape(el, svg)
+      if (fresh) {
+        shapes.push({
+          id: makeId(),
+          ...fresh,
+          locked: false,
+        })
+        freshIndices.push(shapes.length - 1)
+      }
+      continue
+    }
     const points = ptsAttr
       .trim()
       .split(/\s+/)
@@ -855,6 +918,42 @@ export function parseProject(text: string): ParsedProject {
       ...(mirror ? { mirror } : {}),
       ...(groupId ? { groupId } : {}),
     })
+  }
+
+  // Reconcile fresh-imported shapes' per-shape bezier into a single project
+  // setting. The user model is "global is the source of truth, shape-level
+  // overrides only when they differ, point-level overrides only when those
+  // differ from their shape" — but `importFreshShape` writes a per-shape
+  // override on every fresh path because it can't see siblings. Here we
+  // collect those overrides, pick the dominant value (2-dp bucketed so float
+  // drift in the recovered `t` doesn't shatter the histogram), and:
+  //   1. promote it to `settings.bezier` when the file didn't already carry
+  //      `data-v7-bezier`,
+  //   2. null any fresh shape's `bezierOverride` that lands on the global
+  //      (and any shape with no actual corners — `bezierOverride` on a
+  //      2-vertex line is meaningless and would emit a noisy attribute).
+  // Per-vertex overrides are left alone — they were already selected to
+  // deviate from the shape's representative `t`, so they remain meaningful
+  // overrides regardless of where the shape's base lands.
+  if (freshIndices.length > 0) {
+    const candidateTs: number[] = []
+    for (const idx of freshIndices) {
+      const sh = shapes[idx]
+      if (sh.kind === 'circle') continue
+      if (sh.points.length < 3) continue
+      if (typeof sh.bezierOverride === 'number') candidateTs.push(sh.bezierOverride)
+    }
+    if (candidateTs.length > 0 && !svg.hasAttribute('data-v7-bezier')) {
+      settings.bezier = pickDominantT(candidateTs)
+    }
+    for (const idx of freshIndices) {
+      const sh = shapes[idx]
+      if (typeof sh.bezierOverride !== 'number') continue
+      const noCorners = sh.kind === 'circle' || sh.points.length < 3
+      if (noCorners || Math.abs(sh.bezierOverride - settings.bezier) <= 0.005) {
+        sh.bezierOverride = null
+      }
+    }
   }
 
   // Backfill `groups` for any shape-referenced ids that weren't declared on

@@ -1,4 +1,4 @@
-import { newProject, openFile, saveFile, saveFileAs } from '../lib/file-ops'
+import { exportFile, newProject, openFile, saveFile, saveFileAs } from '../lib/file-ops'
 import { useStore } from '../store'
 import { CodeButton } from './CodeDialog'
 import { Toolbar } from './Toolbar'
@@ -41,6 +41,9 @@ export function Topbar() {
         </button>
         <button onClick={saveFileAs} title="Save As (Ctrl/Cmd+Shift+S)">
           Save As
+        </button>
+        <button onClick={exportFile} title="Export plain SVG (no VCT7 metadata)">
+          Export
         </button>
         <CodeButton />
       </div>
