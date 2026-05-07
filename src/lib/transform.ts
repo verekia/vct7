@@ -200,6 +200,15 @@ export const pairBBoxCenter = (shape: Shape): Point => {
 export const shapePivot = (shape: Shape): Point => (shape.mirror ? pairBBoxCenter(shape) : shapeBBoxCenter(shape))
 
 /**
+ * Pivot used for the shape's *animation* transforms (entrance rotation, spin).
+ * For a radial repeat, the entire pattern rotates around the radial center so
+ * the clone arrangement stays put while spinning. Falls back to the
+ * per-shape pivot otherwise.
+ */
+export const shapeAnimationPivot = (shape: Shape): Point =>
+  shape.radial ? [shape.radial.cx, shape.radial.cy] : shapePivot(shape)
+
+/**
  * Combined visual bbox center for a group's members. Used as the pivot for
  * the group's `<g transform>` and as the rotation/scale center when baking
  * a group transform into its children. Aggregates each member's

@@ -1,6 +1,6 @@
 import { parseHex, toHex } from './blend'
 import { fmt } from './geometry'
-import { shapePivot } from './transform'
+import { shapeAnimationPivot } from './transform'
 
 import type { AnimationFromState, AnimationSpec, Easing, Group, Point, Shape } from '../types'
 import type { RGB } from './blend'
@@ -228,9 +228,10 @@ export const groupOffsetsToTransform = (o: AnimationOffsets, cx: number, cy: num
 export const offsetsToTransform = (shape: Shape, o: AnimationOffsets): string => {
   if (o.rotation === 0 && o.scale === 1 && o.translateX === 0 && o.translateY === 0) return ''
   // Mirror-attached shapes pivot at the combined pair center so the source
-  // and reflection rotate as one rigid group during animation. Non-mirrored
-  // shapes pivot at their own bbox center as before.
-  const [cx, cy] = shapePivot(shape)
+  // and reflection rotate as one rigid group; radial shapes pivot at the
+  // radial center so the whole repeat pattern spins as a unit. Plain shapes
+  // pivot at their own bbox center as before.
+  const [cx, cy] = shapeAnimationPivot(shape)
   const parts: string[] = []
   if (o.translateX !== 0 || o.translateY !== 0) {
     parts.push(`translate(${fmt(o.translateX)} ${fmt(o.translateY)})`)
@@ -313,7 +314,7 @@ export const buildKeyframesStyle = (shapes: Shape[], groups: Group[] = []): stri
   for (const sh of shapes) {
     if (!sh.animation) continue
     const startOffsets = lerpOffsets(sh.animation.from, 0, sh.fill, sh.stroke)
-    const { from: startTransform, to: restTransform } = cssTransformPair(shapePivot(sh), startOffsets)
+    const { from: startTransform, to: restTransform } = cssTransformPair(shapeAnimationPivot(sh), startOffsets)
     const opacityRule = startOffsets.opacityMul === 1 ? '' : `    opacity: ${fmt(startOffsets.opacityMul)};\n`
     const fromTransformRule = startTransform === 'none' ? '' : `    transform: ${startTransform};\n`
     const toTransformPart = restTransform === 'none' ? 'none' : restTransform
@@ -350,7 +351,7 @@ export const buildKeyframesStyle = (shapes: Shape[], groups: Group[] = []): stri
     // transform animation isn't shadowed. Pivot is the shape's bbox center,
     // baked into the keyframe values for cross-browser consistency.
     if (sh.animation.spin && sh.animation.spin.speed !== 0) {
-      blocks.push(...spinKeyframeBlocks(id, sh.animation, shapePivot(sh)))
+      blocks.push(...spinKeyframeBlocks(id, sh.animation, shapeAnimationPivot(sh)))
     }
   }
   // Group-level animations get the same shape-agnostic treatment: pivot is
