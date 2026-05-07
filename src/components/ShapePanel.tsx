@@ -132,6 +132,7 @@ export function ShapePanel() {
   const disableRadial = useStore(s => s.disableRadial)
   const updateRadial = useStore(s => s.updateRadial)
   const toggleRadialCenterVisibility = useStore(s => s.toggleRadialCenterVisibility)
+  const ejectRadial = useStore(s => s.ejectRadial)
   const mergeShapes = useStore(s => s.mergeShapes)
   const insertPointBetween = useStore(s => s.insertPointBetween)
   const groups = useStore(s => s.groups)
@@ -218,6 +219,7 @@ export function ShapePanel() {
         disableRadial={disableRadial}
         updateRadial={updateRadial}
         toggleRadialCenterVisibility={toggleRadialCenterVisibility}
+        ejectRadial={ejectRadial}
         insertPointBetween={insertPointBetween}
       />
     )
@@ -402,6 +404,7 @@ function ShapePanelInner({
   disableRadial,
   updateRadial,
   toggleRadialCenterVisibility,
+  ejectRadial,
   insertPointBetween,
 }: {
   shape: Shape
@@ -428,6 +431,7 @@ function ShapePanelInner({
   disableRadial: (id: string) => void
   updateRadial: (id: string, patch: Partial<RadialSpec>) => void
   toggleRadialCenterVisibility: (id: string) => void
+  ejectRadial: (id: string) => string[] | null
   insertPointBetween: (shapeId: string, i: number, j: number) => void
 }) {
   const [strokeText, setStrokeText] = useState(shape.stroke)
@@ -687,6 +691,7 @@ function ShapePanelInner({
           disableRadial={disableRadial}
           updateRadial={updateRadial}
           toggleRadialCenterVisibility={toggleRadialCenterVisibility}
+          ejectRadial={ejectRadial}
         />
       )}
 
@@ -1468,12 +1473,14 @@ function RadialControls({
   disableRadial,
   updateRadial,
   toggleRadialCenterVisibility,
+  ejectRadial,
 }: {
   shape: Shape
   enableRadial: (id: string, angle: number) => void
   disableRadial: (id: string) => void
   updateRadial: (id: string, patch: Partial<RadialSpec>) => void
   toggleRadialCenterVisibility: (id: string) => void
+  ejectRadial: (id: string) => string[] | null
 }) {
   const radial = shape.radial
   if (!radial) {
@@ -1567,6 +1574,16 @@ function RadialControls({
             {a}°
           </button>
         ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          className={APPLY_BTN}
+          onClick={() => ejectRadial(shape.id)}
+          title="Bake every radial clone into an independent shape so each copy can be edited separately."
+        >
+          Eject
+        </button>
       </div>
     </section>
   )

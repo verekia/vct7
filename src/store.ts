@@ -10,6 +10,7 @@ import {
   hasTransform,
   isPointOnAxis,
   pairBBoxCenter,
+  radialCloneAngles,
   reflectPoint,
   reflectShape,
   shapeBBoxCenter,
@@ -375,6 +376,14 @@ export interface AppState {
   updateRadial: (id: string, patch: Partial<RadialSpec>) => void
   /** Toggle the orange center-dot indicator on canvas. Doesn't change geometry. */
   toggleRadialCenterVisibility: (id: string) => void
+  /**
+   * Bake every radial clone into an independent shape inserted right after
+   * the source in z-order. Source keeps its geometry; `radial` is cleared and
+   * any per-shape rotation/scale is baked so all ejected shapes sit at their
+   * visual rest pose. Returns the new ids in clone-angle order, or `null`
+   * when the source has no radial.
+   */
+  ejectRadial: (id: string) => string[] | null
   /** Drop the live mirror without baking the reflection. */
   disableMirror: (id: string) => void
   /** Patch one or more axis fields. Coalesces with continuous axis drags so a slider/handle drag is one undo. */
@@ -1202,6 +1211,75 @@ export const useStore = create<AppState>(set => ({
         ),
       }
     }),
+  ejectRadial: id => {
+    let newIds: string[] | null = null
+    set(s => {
+      const idx = s.shapes.findIndex(sh => sh.id === id)
+      if (idx === -1) return s
+      const source = s.shapes[idx]
+      if (!source.radial) return s
+      const angles = radialCloneAngles(source.radial)
+      if (angles.length === 0) {
+        // Single-copy spec — just drop the modifier, no clones to bake.
+        newIds = []
+        return {
+          ...pushSnapshot(s),
+          shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, radial: undefined } : sh)),
+          dirty: true,
+        }
+      }
+      const rot = shapeRotation(source)
+      const scl = shapeScale(source)
+      const [bbcx, bbcy] = shapeBBoxCenter(source)
+      // Bake the source's per-shape rotation/scale (which pivots at its own
+      // bbox center) into the points, so each ejected clone can apply its
+      // single radial rotation around (cx, cy) without further composition.
+      const bakedSourcePoints =
+        rot === 0 && scl === 1 ? source.points : transformPointsAround(source.points, rot, scl, bbcx, bbcy)
+      const bakedSourceArc =
+        source.arc && rot !== 0
+          ? { ...source.arc, start: source.arc.start + rot, end: source.arc.end + rot }
+          : source.arc
+      const { cx, cy } = source.radial
+      const ejectedIds: string[] = []
+      const clones: Shape[] = angles.map(a => {
+        const cloneId = makeId()
+        ejectedIds.push(cloneId)
+        const clonePoints = transformPointsAround(bakedSourcePoints, a, 1, cx, cy)
+        const cloneArc = bakedSourceArc
+          ? { ...bakedSourceArc, start: bakedSourceArc.start + a, end: bakedSourceArc.end + a }
+          : undefined
+        const clone: Shape = {
+          ...source,
+          id: cloneId,
+          points: clonePoints,
+          rotation: undefined,
+          scale: undefined,
+          radial: undefined,
+          mirror: undefined,
+          ...(cloneArc ? { arc: cloneArc } : {}),
+        }
+        return clone
+      })
+      newIds = ejectedIds
+      const next = s.shapes.slice()
+      next[idx] = {
+        ...source,
+        points: bakedSourcePoints,
+        rotation: undefined,
+        scale: undefined,
+        radial: undefined,
+        ...(bakedSourceArc ? { arc: bakedSourceArc } : {}),
+      }
+      next.splice(idx + 1, 0, ...clones)
+      return {
+        ...pushSnapshot(s),
+        shapes: next,
+        dirty: true,
+      }
+    })
+    return newIds
+  },
   disableMirror: id =>
     set(s => {
       const target = s.shapes.find(sh => sh.id === id)
