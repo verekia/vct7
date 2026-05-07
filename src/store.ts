@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, makeId } from './lib/svg-io'
 import {
   applyTransformToPoint,
   defaultMirrorAxis,
+  defaultRadialSpec,
   groupBBoxCenter,
   hasTransform,
   isPointOnAxis,
@@ -26,6 +27,7 @@ import type {
   PaletteColor,
   Point,
   ProjectSettings,
+  RadialSpec,
   Shape,
   Tool,
   ViewState,
@@ -361,6 +363,18 @@ export interface AppState {
    * unsupported (matching `flipShapes`); the call is a no-op for them.
    */
   enableMirror: (id: string, axis: 'horizontal' | 'vertical') => void
+  /**
+   * Enable a live radial repeat on the shape, centered on the artboard with
+   * the given angular increment. Clears any existing live mirror first
+   * (mirror and radial are mutually exclusive at the UI level).
+   */
+  enableRadial: (id: string, angle: number) => void
+  /** Drop the live radial repeat. */
+  disableRadial: (id: string) => void
+  /** Patch one or more radial-spec fields. Coalesces with continuous slider drags. */
+  updateRadial: (id: string, patch: Partial<RadialSpec>) => void
+  /** Toggle the orange center-dot indicator on canvas. Doesn't change geometry. */
+  toggleRadialCenterVisibility: (id: string) => void
   /** Drop the live mirror without baking the reflection. */
   disableMirror: (id: string) => void
   /** Patch one or more axis fields. Coalesces with continuous axis drags so a slider/handle drag is one undo. */
@@ -1134,8 +1148,58 @@ export const useStore = create<AppState>(set => ({
       const axisSpec = defaultMirrorAxis(cx, cy, angle)
       return {
         ...pushSnapshot(s),
-        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: { axis: axisSpec } } : sh)),
+        // Mirror and radial are mutually exclusive at the UI level: enabling
+        // one drops the other so the panel never has to render both at once.
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, mirror: { axis: axisSpec }, radial: undefined } : sh)),
         dirty: true,
+      }
+    }),
+  enableRadial: (id, angle) =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target) return s
+      if (target.kind === 'glyphs') return s
+      if (!Number.isFinite(angle) || angle <= 0) return s
+      const cx = s.settings.viewBoxX + s.settings.viewBoxWidth / 2
+      const cy = s.settings.viewBoxY + s.settings.viewBoxHeight / 2
+      const spec = defaultRadialSpec(cx, cy, angle)
+      return {
+        ...pushSnapshot(s),
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, radial: spec, mirror: undefined } : sh)),
+        dirty: true,
+      }
+    }),
+  disableRadial: id =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target?.radial) return s
+      return {
+        ...pushSnapshot(s),
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, radial: undefined } : sh)),
+        dirty: true,
+      }
+    }),
+  updateRadial: (id, patch) =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target?.radial) return s
+      const nextSpec: RadialSpec = { ...target.radial, ...patch }
+      if (!Number.isFinite(nextSpec.angle) || nextSpec.angle <= 0) return s
+      return {
+        ...pushSnapshot(s, `radial:${id}`),
+        shapes: s.shapes.map(sh => (sh.id === id && sh.radial ? { ...sh, radial: nextSpec } : sh)),
+        dirty: true,
+      }
+    }),
+  toggleRadialCenterVisibility: id =>
+    set(s => {
+      const target = s.shapes.find(sh => sh.id === id)
+      if (!target?.radial) return s
+      const next = !target.radial.showCenter
+      return {
+        shapes: s.shapes.map(sh =>
+          sh.id === id && sh.radial ? { ...sh, radial: { ...sh.radial, showCenter: next || undefined } } : sh,
+        ),
       }
     }),
   disableMirror: id =>

@@ -819,6 +819,43 @@ describe('mirror round-trip', () => {
   })
 })
 
+describe('radial round-trip', () => {
+  const radial: Shape = {
+    id: 'r',
+    points: [
+      [40, 0],
+      [50, 0],
+      [50, 10],
+    ],
+    closed: true,
+    fill: '#00aa00',
+    stroke: 'none',
+    strokeWidth: 1,
+    bezierOverride: null,
+    hidden: false,
+    locked: false,
+    radial: { cx: 50, cy: 50, angle: 90, showCenter: true },
+  }
+
+  it('emits the source plus one sibling per radial clone', () => {
+    const text = serializeProject(sampleSettings, [radial])
+    expect(text).toContain('data-v7-radial-spec="50,50,90"')
+    expect(text).toContain('data-v7-radial-show-center="true"')
+    expect(text).toContain(`data-v7-radial-of="${radial.id}"`)
+    // Source + 3 clones at 90 / 180 / 270.
+    const elements = text.match(/<(?:path|circle)[^/]*\/>/g) ?? []
+    expect(elements.length).toBe(4)
+  })
+
+  it('parses back to a single Shape with the radial spec restored', () => {
+    resetIds(1)
+    const text = serializeProject(sampleSettings, [radial])
+    const parsed = parseProject(text)
+    expect(parsed.shapes).toHaveLength(1)
+    expect(parsed.shapes[0].radial).toEqual({ cx: 50, cy: 50, angle: 90, showCenter: true })
+  })
+})
+
 describe('groups round-trip', () => {
   beforeEach(() => resetIds(1))
 
