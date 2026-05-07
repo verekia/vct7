@@ -137,7 +137,7 @@ export const defaultMirrorAxis = (centerX: number, centerY: number, angle = 90):
 
 /**
  * Reflect a shape's geometry across `axis`. Used by the live-mirror renderer
- * (each frame) and by `ejectMirror` (one-shot bake). The result keeps the
+ * (each frame) and by `convertMirrorToGroup` (one-shot bake). The result keeps the
  * source's `rotation` / `scale` *unchanged* — the live renderer applies them
  * to source and reflection alike around the combined pair pivot, so the pair
  * rotates as one rigid group rather than each half pivoting independently.
@@ -158,7 +158,7 @@ export const reflectShape = (shape: Shape, axis: MirrorAxis): Shape => {
 
 /**
  * Rotate + scale `points` around an explicit pivot, returning new points.
- * Used by `ejectMirror` to bake the group transform (which pivots at the
+ * Used by `convertMirrorToGroup` to bake the group transform (which pivots at the
  * combined pair center, not the shape's own bbox) into both the source and
  * the materialized reflection so the ejected pair is at its visual rest pose.
  */

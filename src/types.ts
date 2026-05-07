@@ -123,8 +123,8 @@ export interface Shape {
    * the source is edited. Source and reflection behave as one rigid pair: the
    * shape's instance rotation/scale and its animation pivot move from the
    * source's bbox center to the *combined* bbox center while a mirror is
-   * attached. Use `ejectMirror` on the store to bake the reflection into a
-   * second independent shape.
+   * attached. Use `convertMirrorToGroup` on the store to bake the reflection
+   * into a second independent shape inside a fresh group.
    */
   mirror?: MirrorSpec
   /**

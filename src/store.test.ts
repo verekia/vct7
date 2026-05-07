@@ -969,37 +969,39 @@ describe('store: live mirror', () => {
     expect(useStore.getState().shapes[0].mirror).toBeUndefined()
   })
 
-  it('ejectMirror inserts a baked sibling right after the source', () => {
+  it('convertMirrorToGroup inserts a baked sibling and groups both halves', () => {
     seed()
     useStore.getState().enableMirror('a', 'horizontal')
     // Move axis to x=20 so the reflection lands at x ∈ [30..40].
     useStore.getState().updateMirrorAxis('a', { x: 20, angle: 90 })
-    const newId = useStore.getState().ejectMirror('a')
-    expect(newId).not.toBeNull()
-    const shapes = useStore.getState().shapes
-    expect(shapes).toHaveLength(2)
-    expect(shapes[0].id).toBe('a')
-    expect(shapes[0].mirror).toBeUndefined()
-    expect(shapes[1].id).toBe(newId as string)
+    const groupId = useStore.getState().convertMirrorToGroup('a')!
+    const state = useStore.getState()
+    expect(state.shapes).toHaveLength(2)
+    expect(state.shapes[0].id).toBe('a')
+    expect(state.shapes[0].mirror).toBeUndefined()
+    expect(state.shapes[0].groupId).toBe(groupId)
+    expect(state.shapes[1].groupId).toBe(groupId)
+    expect(state.groups.some(g => g.id === groupId)).toBe(true)
     // Source point (10, 0) reflects across vertical line at x=20 → (30, 0).
-    expect(shapes[1].points[1][0]).toBeCloseTo(30)
-    expect(shapes[1].points[1][1]).toBeCloseTo(0)
+    expect(state.shapes[1].points[1][0]).toBeCloseTo(30)
+    expect(state.shapes[1].points[1][1]).toBeCloseTo(0)
   })
 
-  it('ejectMirror bakes the group rotation into both halves', () => {
+  it('convertMirrorToGroup bakes the group rotation into both halves', () => {
     seed()
     useStore.getState().enableMirror('a', 'horizontal')
     useStore.getState().updateShape('a', { rotation: 90 })
-    const newId = useStore.getState().ejectMirror('a')!
+    const groupId = useStore.getState().convertMirrorToGroup('a')!
     const shapes = useStore.getState().shapes
-    expect(shapes[0].rotation).toBeUndefined()
-    expect(shapes.find(s => s.id === newId)?.rotation).toBeUndefined()
+    expect(shapes.every(sh => sh.groupId === groupId)).toBe(true)
+    expect(shapes.every(sh => sh.rotation === undefined)).toBe(true)
   })
 
-  it('ejectMirror is a no-op when mirror is not set', () => {
+  it('convertMirrorToGroup is a no-op when mirror is not set', () => {
     seed()
-    expect(useStore.getState().ejectMirror('a')).toBeNull()
+    expect(useStore.getState().convertMirrorToGroup('a')).toBeNull()
     expect(useStore.getState().shapes).toHaveLength(1)
+    expect(useStore.getState().groups).toHaveLength(0)
   })
 
   const expectPointsClose = (actual: readonly (readonly [number, number])[], expected: number[][]) => {
