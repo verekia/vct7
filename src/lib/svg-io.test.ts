@@ -306,8 +306,8 @@ describe('parseProject — fresh SVG import (no v7 metadata)', () => {
       hidden: false,
       locked: false,
     })
-    const shapes_ = [triangleAt(0, 0, 0.5), triangleAt(100, 0, 0.5), triangleAt(0, 100, 0.5), triangleAt(100, 100, 0.8)]
-    const exported = serializeProject({ ...sampleSettings, bg: null, bezier: 0.1 }, shapes_)
+    const shapes = [triangleAt(0, 0, 0.5), triangleAt(100, 0, 0.5), triangleAt(0, 100, 0.5), triangleAt(100, 100, 0.8)]
+    const exported = serializeProject({ ...sampleSettings, bg: null, bezier: 0.1 }, shapes)
     const stripped = stripV7Attributes(exported)
     const reparsed = parseProject(stripped)
     expect(reparsed.shapes).toHaveLength(4)
