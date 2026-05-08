@@ -20,8 +20,7 @@ generate or commit a `package-lock.json` or `yarn.lock`.
 ```sh
 bun install
 bun run dev          # http://localhost:3000
-bun run all          # format:check + lint + typecheck (run before committing)
-bun run test         # run separately — kept out of `all` so warden's requiredScripts check is exact
+bun run all          # format:check + lint + typecheck + test (run before committing)
 ```
 
 Other scripts (all defined in `package.json`): `build` (produces `out/` static
