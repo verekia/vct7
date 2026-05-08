@@ -203,7 +203,7 @@ detail is restored.
 
 | Key                               | Action                            |
 | --------------------------------- | --------------------------------- |
-| `V`                               | Select tool                      |
+| `V`                               | Select tool                       |
 | `L`                               | Line tool                         |
 | `P`                               | Polygon tool                      |
 | `C`                               | Circle tool                       |
