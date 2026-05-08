@@ -12,10 +12,11 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint",
-    "format": "oxfmt",
-    "format:check": "oxfmt --check",
-    "all": "bun run format:check && bun run lint && bun run typecheck && bun run test"
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "all": "bun run format:check && bun run lint && bun run typecheck"
   },
   "dependencies": {
     "next": "16.2.2",
@@ -33,8 +34,8 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "^19.2.3",
     "babel-plugin-react-compiler": "1.0.0",
-    "oxfmt": "^0.46.0",
-    "oxlint": "^1.61.0",
+    "oxfmt": "0.48.0",
+    "oxlint": "1.63.0",
     "portless": "0.12.0",
     "postcss": "8.5.8",
     "serve": "14.2.6",
