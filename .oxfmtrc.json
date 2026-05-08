@@ -25,6 +25,6 @@
     "newlinesBetween": true,
     "ignoreCase": true
   },
-  "experimentalTailwindcss": {},
+  "sortTailwindcss": true,
   "ignorePatterns": ["node_modules", "dist", "out", ".next"]
 }
