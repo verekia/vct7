@@ -4,9 +4,9 @@ import { BLEND_MODES, type BlendMode, type Point, type StrokeLinecap, type Strok
  * Plain-SVG import path. Used when an opened file lacks the `data-v7-*`
  * round-trip metadata (VCT7's exported plain SVG, an Inkscape/Illustrator
  * file, etc.) — we derive editable {@link Shape}s from native attributes
- * instead. The import is intentionally lossy: curves and arcs collapse to
- * their endpoint anchors, so the recovered polyline renders close to the
- * original silhouette but with extra vertices at every bezier shoulder.
+ * instead. Bezier and arc commands are flattened to a polyline of sampled
+ * points so the recovered silhouette tracks the original curve; each shape
+ * still becomes a vertex polygon, just with finer resolution along curves.
  */
 
 interface Mat2x3 {
@@ -282,6 +282,118 @@ const recoverVCT7Polygon = (segs: PathSegment[]): ParsedPath | null => {
   }
 }
 
+const CUBIC_STEPS = 16
+const QUAD_STEPS = 12
+const ARC_STEP_DEG = 22.5
+
+type AddPoint = (x: number, y: number) => void
+
+const sampleCubic = (
+  p0x: number,
+  p0y: number,
+  p1x: number,
+  p1y: number,
+  p2x: number,
+  p2y: number,
+  p3x: number,
+  p3y: number,
+  add: AddPoint,
+): void => {
+  for (let i = 1; i <= CUBIC_STEPS; i++) {
+    const t = i / CUBIC_STEPS
+    const u = 1 - t
+    const b0 = u * u * u
+    const b1 = 3 * u * u * t
+    const b2 = 3 * u * t * t
+    const b3 = t * t * t
+    add(b0 * p0x + b1 * p1x + b2 * p2x + b3 * p3x, b0 * p0y + b1 * p1y + b2 * p2y + b3 * p3y)
+  }
+}
+
+const sampleQuadratic = (
+  p0x: number,
+  p0y: number,
+  p1x: number,
+  p1y: number,
+  p2x: number,
+  p2y: number,
+  add: AddPoint,
+): void => {
+  for (let i = 1; i <= QUAD_STEPS; i++) {
+    const t = i / QUAD_STEPS
+    const u = 1 - t
+    add(u * u * p0x + 2 * u * t * p1x + t * t * p2x, u * u * p0y + 2 * u * t * p1y + t * t * p2y)
+  }
+}
+
+const signedAngle = (ax: number, ay: number, bx: number, by: number): number => {
+  const sign = ax * by - ay * bx >= 0 ? 1 : -1
+  const len = Math.hypot(ax, ay) * Math.hypot(bx, by)
+  if (len === 0) return 0
+  const cos = Math.min(1, Math.max(-1, (ax * bx + ay * by) / len))
+  return sign * Math.acos(cos)
+}
+
+/**
+ * Endpoint-to-center conversion for an SVG elliptical arc, then sample at
+ * roughly one segment per {@link ARC_STEP_DEG}. Degenerate radii fall back to
+ * a straight line. See https://www.w3.org/TR/SVG/implnote.html#ArcImplementationNotes.
+ */
+const sampleArc = (
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  rxIn: number,
+  ryIn: number,
+  phi: number,
+  large: boolean,
+  sweep: boolean,
+  add: AddPoint,
+): void => {
+  let rx = Math.abs(rxIn)
+  let ry = Math.abs(ryIn)
+  if (rx === 0 || ry === 0 || (x1 === x2 && y1 === y2)) {
+    add(x2, y2)
+    return
+  }
+  const cosPhi = Math.cos(phi)
+  const sinPhi = Math.sin(phi)
+  const dx = (x1 - x2) / 2
+  const dy = (y1 - y2) / 2
+  const x1p = cosPhi * dx + sinPhi * dy
+  const y1p = -sinPhi * dx + cosPhi * dy
+  const lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry)
+  if (lambda > 1) {
+    const s = Math.sqrt(lambda)
+    rx *= s
+    ry *= s
+  }
+  const sign = large === sweep ? -1 : 1
+  const num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
+  const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+  const factor = sign * Math.sqrt(Math.max(0, num / den))
+  const cxp = (factor * rx * y1p) / ry
+  const cyp = (factor * -ry * x1p) / rx
+  const cxc = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2
+  const cyc = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2
+  const ux = (x1p - cxp) / rx
+  const uy = (y1p - cyp) / ry
+  const vx = (-x1p - cxp) / rx
+  const vy = (-y1p - cyp) / ry
+  const theta1 = signedAngle(1, 0, ux, uy)
+  let dTheta = signedAngle(ux, uy, vx, vy)
+  if (!sweep && dTheta > 0) dTheta -= 2 * Math.PI
+  if (sweep && dTheta < 0) dTheta += 2 * Math.PI
+  const steps = Math.max(4, Math.ceil((Math.abs(dTheta) * 180) / Math.PI / ARC_STEP_DEG))
+  for (let i = 1; i <= steps; i++) {
+    const theta = theta1 + (dTheta * i) / steps
+    const cosT = Math.cos(theta)
+    const sinT = Math.sin(theta)
+    add(cosPhi * (rx * cosT) - sinPhi * (ry * sinT) + cxc, sinPhi * (rx * cosT) + cosPhi * (ry * sinT) + cyc)
+  }
+}
+
 const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
   const points: Point[] = []
   let closed = false
@@ -289,7 +401,12 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
   let cy = 0
   let startX = 0
   let startY = 0
-  const add = (x: number, y: number) => {
+  // Reflected-control trackers for smooth-curve commands: S reflects the
+  // previous C/S control2; T reflects the previous Q/T control. Any other
+  // command resets them so the next S/T falls back to the current point.
+  let lastCubicCtrl: Point | null = null
+  let lastQuadCtrl: Point | null = null
+  const add: AddPoint = (x, y) => {
     points.push([x, y])
     cx = x
     cy = y
@@ -313,7 +430,9 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
         add(lx, ly)
         k += 2
       }
-    } else if (upper === 'L' || upper === 'T') {
+      lastCubicCtrl = null
+      lastQuadCtrl = null
+    } else if (upper === 'L') {
       let k = 0
       while (k + 1 < args.length) {
         const x = rel ? cx + args[k] : args[k]
@@ -321,38 +440,89 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
         add(x, y)
         k += 2
       }
+      lastCubicCtrl = null
+      lastQuadCtrl = null
     } else if (upper === 'H') {
       for (const v of args) add(rel ? cx + v : v, cy)
+      lastCubicCtrl = null
+      lastQuadCtrl = null
     } else if (upper === 'V') {
       for (const v of args) add(cx, rel ? cy + v : v)
+      lastCubicCtrl = null
+      lastQuadCtrl = null
     } else if (upper === 'C') {
       let k = 0
       while (k + 5 < args.length) {
+        const c1x = rel ? cx + args[k] : args[k]
+        const c1y = rel ? cy + args[k + 1] : args[k + 1]
+        const c2x = rel ? cx + args[k + 2] : args[k + 2]
+        const c2y = rel ? cy + args[k + 3] : args[k + 3]
         const x = rel ? cx + args[k + 4] : args[k + 4]
         const y = rel ? cy + args[k + 5] : args[k + 5]
-        add(x, y)
+        sampleCubic(cx, cy, c1x, c1y, c2x, c2y, x, y, add)
+        lastCubicCtrl = [c2x, c2y]
         k += 6
       }
-    } else if (upper === 'S' || upper === 'Q') {
+      lastQuadCtrl = null
+    } else if (upper === 'S') {
       let k = 0
       while (k + 3 < args.length) {
+        const c1x = lastCubicCtrl ? 2 * cx - lastCubicCtrl[0] : cx
+        const c1y = lastCubicCtrl ? 2 * cy - lastCubicCtrl[1] : cy
+        const c2x = rel ? cx + args[k] : args[k]
+        const c2y = rel ? cy + args[k + 1] : args[k + 1]
         const x = rel ? cx + args[k + 2] : args[k + 2]
         const y = rel ? cy + args[k + 3] : args[k + 3]
-        add(x, y)
+        sampleCubic(cx, cy, c1x, c1y, c2x, c2y, x, y, add)
+        lastCubicCtrl = [c2x, c2y]
         k += 4
       }
+      lastQuadCtrl = null
+    } else if (upper === 'Q') {
+      let k = 0
+      while (k + 3 < args.length) {
+        const c1x = rel ? cx + args[k] : args[k]
+        const c1y = rel ? cy + args[k + 1] : args[k + 1]
+        const x = rel ? cx + args[k + 2] : args[k + 2]
+        const y = rel ? cy + args[k + 3] : args[k + 3]
+        sampleQuadratic(cx, cy, c1x, c1y, x, y, add)
+        lastQuadCtrl = [c1x, c1y]
+        k += 4
+      }
+      lastCubicCtrl = null
+    } else if (upper === 'T') {
+      let k = 0
+      while (k + 1 < args.length) {
+        const c1x: number = lastQuadCtrl ? 2 * cx - lastQuadCtrl[0] : cx
+        const c1y: number = lastQuadCtrl ? 2 * cy - lastQuadCtrl[1] : cy
+        const x = rel ? cx + args[k] : args[k]
+        const y = rel ? cy + args[k + 1] : args[k + 1]
+        sampleQuadratic(cx, cy, c1x, c1y, x, y, add)
+        lastQuadCtrl = [c1x, c1y]
+        k += 2
+      }
+      lastCubicCtrl = null
     } else if (upper === 'A') {
       let k = 0
       while (k + 6 < args.length) {
+        const rx = args[k]
+        const ry = args[k + 1]
+        const xRot = (args[k + 2] * Math.PI) / 180
+        const large = args[k + 3] !== 0
+        const sweep = args[k + 4] !== 0
         const x = rel ? cx + args[k + 5] : args[k + 5]
         const y = rel ? cy + args[k + 6] : args[k + 6]
-        add(x, y)
+        sampleArc(cx, cy, x, y, rx, ry, xRot, large, sweep, add)
         k += 7
       }
+      lastCubicCtrl = null
+      lastQuadCtrl = null
     } else if (upper === 'Z') {
       closed = true
       cx = startX
       cy = startY
+      lastCubicCtrl = null
+      lastQuadCtrl = null
     }
   }
 
@@ -371,9 +541,9 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
  * Parse an SVG `d` attribute into editable shape data. First tries to
  * recognize VCT7's own emit pattern (so our exports re-import losslessly,
  * including the per-corner bezier `t`); falls back to a generic polyline
- * extraction when the structure doesn't match — curves and arcs collapse
- * to their endpoint anchors there, which is lossy but keeps a foreign SVG
- * editable.
+ * extraction when the structure doesn't match — cubic / quadratic / arc
+ * segments are flattened into sampled vertices there so the imported
+ * silhouette tracks the foreign curves.
  */
 export const parsePathD = (d: string): ParsedPath => {
   const segments = parsePathSegments(d)
