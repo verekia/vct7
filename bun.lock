@@ -19,7 +19,7 @@
         "@types/opentype.js": "^1.3.9",
         "@types/react": "19.2.14",
         "@types/react-dom": "^19.2.3",
-        "@verekia/warden": "0.0.2",
+        "@verekia/warden": "0.0.3",
         "babel-plugin-react-compiler": "1.0.0",
         "oxfmt": "0.48.0",
         "oxlint": "1.63.0",
@@ -244,7 +244,7 @@
 
     "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
 
-    "@verekia/warden": ["@verekia/warden@0.0.2", "", { "bin": { "warden": "src/index.ts" } }, "sha512-pqQwB8ZK4p3KXLqyfC6XnafP3Hfv+J3eEwLrMatlzndk9vEsmyN1gpnqoh93Bkz8NGPIaqBtTA5SGuGhUqSj8g=="],
+    "@verekia/warden": ["@verekia/warden@0.0.3", "", { "bin": { "warden": "src/index.ts" } }, "sha512-HdaKlZE48Hn3MwFQjGw/+kvbqExjPu+vWxPOm4Z8VIS0nnaNro3Mj5CiXZ5QzXutKJ77crnlUz4+riZ0nwpioQ=="],
 
     "@zeit/schemas": ["@zeit/schemas@2.36.0", "", {}, "sha512-7kjMwcChYEzMKjeex9ZFXkt1AyNov9R5HZtjBKVsmVpw7pa7ZtlCGvCBC2vnnXctaYN+aRI61HjIqeetZW5ROg=="],
 
