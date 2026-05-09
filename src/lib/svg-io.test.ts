@@ -114,14 +114,51 @@ describe('parsePathD', () => {
     expect(r.closed).toBe(true)
   })
 
-  it('extracts only endpoints from C and Q commands', () => {
+  it('flattens cubic and quadratic curves into sampled polyline points', () => {
     const r = parsePathD('M 0 0 C 10 0 20 10 30 10 Q 40 20 50 20')
-    expect(r.points).toEqual([
-      [0, 0],
-      [30, 10],
-      [50, 20],
-    ])
+    // First and last points are exact; the curves contribute many sample
+    // points in between so the silhouette tracks them rather than a chord.
+    expect(r.points[0]).toEqual([0, 0])
+    expect(r.points[r.points.length - 1]).toEqual([50, 20])
+    expect(r.points.length).toBeGreaterThan(20)
     expect(r.closed).toBe(false)
+    // The cubic bulges below its chord (start->end is y=0..10 with controls
+    // at y=0 and y=10), so at least one sampled point should sit above the
+    // straight chord — a regression check that we're actually sampling the
+    // curve, not just emitting a denser polyline along the chord.
+    const cubicSample = r.points.find(([x]) => x > 5 && x < 25)
+    expect(cubicSample).toBeDefined()
+    if (cubicSample) expect(cubicSample[1]).toBeGreaterThan(0)
+  })
+
+  it('reflects S/T smooth-curve controls off the previous segment', () => {
+    // Two cubics whose join is C1-end at (10,10), C2-start by S reflection
+    // sits at (20 - 10, 20 - 10) = (10, 10) mirrored about (10,10) → (10,10)
+    // is the join point; mirroring (8,2) about (10,10) gives ctrl1=(12,18).
+    const r = parsePathD('M 0 0 C 2 8 8 2 10 10 S 18 18 20 20')
+    // Sanity: endpoints exact, plenty of samples.
+    expect(r.points[0]).toEqual([0, 0])
+    expect(r.points[r.points.length - 1]).toEqual([20, 20])
+    expect(r.points.length).toBeGreaterThan(30)
+  })
+
+  it('flattens elliptical arcs along the curve, not as a chord', () => {
+    // Quarter arc from (10,0) to (0,10) on the radius-10 circle centered at
+    // origin (sweep=1 picks the (0,0) center over the (10,10) alternative).
+    const r = parsePathD('M 10 0 A 10 10 0 0 1 0 10')
+    expect(r.points[0]).toEqual([10, 0])
+    expect(r.points[r.points.length - 1][0]).toBeCloseTo(0, 5)
+    expect(r.points[r.points.length - 1][1]).toBeCloseTo(10, 5)
+    // Every sampled point sits on the radius-10 circle around origin.
+    for (const [x, y] of r.points) {
+      expect(Math.hypot(x, y)).toBeCloseTo(10, 4)
+    }
+    // A real arc bows outward from its chord — the midpoint of a 90° arc
+    // is at (cos45°, sin45°)·10 ≈ (7.07, 7.07), well above the chord
+    // midpoint at (5, 5).
+    const mid = r.points[Math.floor(r.points.length / 2)]
+    expect(mid[0]).toBeGreaterThan(5)
+    expect(mid[1]).toBeGreaterThan(5)
   })
 
   it('drops the duplicate closing vertex', () => {
