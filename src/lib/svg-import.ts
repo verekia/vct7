@@ -394,18 +394,38 @@ const sampleArc = (
   }
 }
 
-const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
-  const points: Point[] = []
+const polylinesFromSegments = (segments: PathSegment[]): ParsedPath[] => {
+  // SVG `d` can contain multiple subpaths separated by additional `M`/`m`
+  // commands. Each subpath is a logically independent shape (its own fill loop
+  // when `Z`-closed). We yield one ParsedPath per subpath so the importer can
+  // surface each as its own editable Shape. The very first MoveTo of the path
+  // is treated as absolute regardless of case (per SVG spec); subsequent
+  // MoveTo commands respect their case relative to the previous current point.
+  const results: ParsedPath[] = []
+  let points: Point[] = []
   let closed = false
   let cx = 0
   let cy = 0
   let startX = 0
   let startY = 0
+  let firstMSeen = false
   // Reflected-control trackers for smooth-curve commands: S reflects the
   // previous C/S control2; T reflects the previous Q/T control. Any other
   // command resets them so the next S/T falls back to the current point.
   let lastCubicCtrl: Point | null = null
   let lastQuadCtrl: Point | null = null
+  const flush = () => {
+    if (closed && points.length >= 2) {
+      const a = points[0]
+      const b = points[points.length - 1]
+      if (Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6) points.pop()
+    }
+    if (points.length >= 2) {
+      results.push({ points, closed, bezierOverride: 0 })
+    }
+    points = []
+    closed = false
+  }
   const add: AddPoint = (x, y) => {
     points.push([x, y])
     cx = x
@@ -418,8 +438,10 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
     const args = seg.args
     if (upper === 'M') {
       if (args.length < 2) continue
-      const x = rel && points.length > 0 ? cx + args[0] : args[0]
-      const y = rel && points.length > 0 ? cy + args[1] : args[1]
+      flush()
+      const x = rel && firstMSeen ? cx + args[0] : args[0]
+      const y = rel && firstMSeen ? cy + args[1] : args[1]
+      firstMSeen = true
       add(x, y)
       startX = x
       startY = y
@@ -526,15 +548,8 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
     }
   }
 
-  // A `... L start Z` pattern leaves the start vertex duplicated at the end —
-  // drop it so the closed polygon doesn't carry a zero-length edge.
-  if (closed && points.length >= 2) {
-    const a = points[0]
-    const b = points[points.length - 1]
-    if (Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6) points.pop()
-  }
-
-  return { points, closed, bezierOverride: 0 }
+  flush()
+  return results
 }
 
 /**
@@ -543,11 +558,28 @@ const polylineFromSegments = (segments: PathSegment[]): ParsedPath => {
  * including the per-corner bezier `t`); falls back to a generic polyline
  * extraction when the structure doesn't match — cubic / quadratic / arc
  * segments are flattened into sampled vertices there so the imported
- * silhouette tracks the foreign curves.
+ * silhouette tracks the foreign curves. Returns the *first* subpath;
+ * foreign paths with multiple subpaths should use `parsePathMultiD` to
+ * recover them all.
  */
 export const parsePathD = (d: string): ParsedPath => {
   const segments = parsePathSegments(d)
-  return recoverVCT7Polygon(segments) ?? polylineFromSegments(segments)
+  const recovered = recoverVCT7Polygon(segments)
+  if (recovered) return recovered
+  const parts = polylinesFromSegments(segments)
+  return parts[0] ?? { points: [], closed: false, bezierOverride: 0 }
+}
+
+/**
+ * Like {@link parsePathD} but returns every subpath as its own ParsedPath.
+ * Used by the importer so a foreign `<path d="M…Z M…Z">` lands as multiple
+ * Shapes instead of one polyline with edges hopping between subpaths.
+ */
+export const parsePathMultiD = (d: string): ParsedPath[] => {
+  const segments = parsePathSegments(d)
+  const recovered = recoverVCT7Polygon(segments)
+  if (recovered) return [recovered]
+  return polylinesFromSegments(segments)
 }
 
 export const parsePointsAttr = (raw: string): Point[] => {
@@ -602,16 +634,20 @@ export interface FreshShapeData {
 }
 
 /**
- * Derive editable shape data from a native SVG element. Returns null when the
- * element can't be imported (malformed numeric attrs, unsupported tag,
- * degenerate geometry). Composes ancestor `transform` chains and bakes the
- * resulting matrix into the points so the imported shape renders at its
- * original on-canvas location without inheriting the transform attribute.
+ * Derive editable shape data from a native SVG element. Returns an empty array
+ * when the element can't be imported (malformed numeric attrs, unsupported
+ * tag, degenerate geometry); usually returns a single-entry array; for
+ * `<path>` elements containing multiple subpaths each subpath becomes its
+ * own entry so the user can edit / reorder them independently.
  *
- * The caller is expected to assign `id`, `bezierOverride: 0`, and
- * `locked: false` to produce a complete {@link Shape}.
+ * Composes ancestor `transform` chains and bakes the resulting matrix into
+ * the points so each imported shape renders at its original on-canvas
+ * location without inheriting the transform attribute.
+ *
+ * The caller is expected to assign `id` and `locked: false` to produce a
+ * complete {@link Shape}.
  */
-export const importFreshShape = (el: Element, root: Element): FreshShapeData | null => {
+export const importFreshShape = (el: Element, root: Element): FreshShapeData[] => {
   const tag = el.tagName.toLowerCase()
   const m = combinedMatrix(el, root)
 
@@ -620,12 +656,13 @@ export const importFreshShape = (el: Element, root: Element): FreshShapeData | n
   let kind: FreshShapeData['kind']
   let bezierOverride = 0
   let pointBezierOverrides: Record<number, number> | undefined
+  let extraParts: ParsedPath[] | null = null
 
   if (tag === 'circle') {
     const cx = parseFloat(el.getAttribute('cx') ?? '0')
     const cy = parseFloat(el.getAttribute('cy') ?? '0')
     const r = parseFloat(el.getAttribute('r') ?? '')
-    if (![cx, cy, r].every(Number.isFinite) || r <= 0) return null
+    if (![cx, cy, r].every(Number.isFinite) || r <= 0) return []
     // The shape model stores center + perimeter anchor; transform both so
     // a translated/rotated circle keeps its on-canvas position. Non-uniform
     // scale would distort to an ellipse — we lose that and keep it circular,
@@ -635,19 +672,22 @@ export const importFreshShape = (el: Element, root: Element): FreshShapeData | n
     closed = true
   } else if (tag === 'path') {
     const d = el.getAttribute('d')
-    if (!d) return null
-    const parsed = parsePathD(d)
-    if (parsed.points.length < 2) return null
-    points = parsed.points.map(p => applyMatrix(m, p))
-    closed = parsed.closed
-    bezierOverride = parsed.bezierOverride
-    pointBezierOverrides = parsed.pointBezierOverrides
+    if (!d) return []
+    const allParts = parsePathMultiD(d)
+    const usable = allParts.filter(p => p.points.length >= 2)
+    if (usable.length === 0) return []
+    const first = usable[0]
+    points = first.points.map(p => applyMatrix(m, p))
+    closed = first.closed
+    bezierOverride = first.bezierOverride
+    pointBezierOverrides = first.pointBezierOverrides
+    if (usable.length > 1) extraParts = usable.slice(1)
   } else if (tag === 'rect') {
     const x = parseFloat(el.getAttribute('x') ?? '0')
     const y = parseFloat(el.getAttribute('y') ?? '0')
     const w = parseFloat(el.getAttribute('width') ?? '')
     const h = parseFloat(el.getAttribute('height') ?? '')
-    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null
+    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return []
     points = [
       applyMatrix(m, [x, y]),
       applyMatrix(m, [x + w, y]),
@@ -660,18 +700,18 @@ export const importFreshShape = (el: Element, root: Element): FreshShapeData | n
     const y1 = parseFloat(el.getAttribute('y1') ?? '0')
     const x2 = parseFloat(el.getAttribute('x2') ?? '0')
     const y2 = parseFloat(el.getAttribute('y2') ?? '0')
-    if (![x1, y1, x2, y2].every(Number.isFinite)) return null
+    if (![x1, y1, x2, y2].every(Number.isFinite)) return []
     points = [applyMatrix(m, [x1, y1]), applyMatrix(m, [x2, y2])]
     closed = false
   } else if (tag === 'polygon' || tag === 'polyline') {
     const raw = el.getAttribute('points')
-    if (!raw) return null
+    if (!raw) return []
     const pts = parsePointsAttr(raw)
-    if (pts.length < 2) return null
+    if (pts.length < 2) return []
     points = pts.map(p => applyMatrix(m, p))
     closed = tag === 'polygon'
   } else {
-    return null
+    return []
   }
 
   const fill = el.getAttribute('fill') ?? (closed ? '#000000' : 'none')
@@ -703,16 +743,11 @@ export const importFreshShape = (el: Element, root: Element): FreshShapeData | n
     blendMode = blendMatch[1] as BlendMode
   }
 
-  return {
-    ...(kind ? { kind } : {}),
-    points,
-    closed,
+  const styleBase = {
     fill,
     stroke,
     strokeWidth,
     hidden,
-    bezierOverride,
-    ...(pointBezierOverrides ? { pointBezierOverrides } : {}),
     ...(strokeLinejoin ? { strokeLinejoin } : {}),
     ...(strokeLinecap ? { strokeLinecap } : {}),
     ...(strokeDasharray ? { strokeDasharray } : {}),
@@ -720,4 +755,26 @@ export const importFreshShape = (el: Element, root: Element): FreshShapeData | n
     ...(opacity !== undefined ? { opacity } : {}),
     ...(blendMode ? { blendMode } : {}),
   }
+  const out: FreshShapeData[] = [
+    {
+      ...(kind ? { kind } : {}),
+      points,
+      closed,
+      bezierOverride,
+      ...(pointBezierOverrides ? { pointBezierOverrides } : {}),
+      ...styleBase,
+    },
+  ]
+  if (extraParts) {
+    for (const part of extraParts) {
+      out.push({
+        points: part.points.map(p => applyMatrix(m, p)),
+        closed: part.closed,
+        bezierOverride: part.bezierOverride,
+        ...(part.pointBezierOverrides ? { pointBezierOverrides: part.pointBezierOverrides } : {}),
+        ...styleBase,
+      })
+    }
+  }
+  return out
 }

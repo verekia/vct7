@@ -1029,8 +1029,8 @@ export function parseProject(text: string): ParsedProject {
       // attributes. `importFreshShape` supplies the recovered per-shape
       // `bezierOverride`; the post-loop pass below lifts the dominant value
       // up to the project setting and nulls shapes that match it.
-      const fresh = importFreshShape(el, svg)
-      if (fresh) {
+      const freshList = importFreshShape(el, svg)
+      for (const fresh of freshList) {
         shapes.push({
           id: makeId(),
           ...fresh,

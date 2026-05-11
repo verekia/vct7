@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 
-import { parsePathD, parseTransform } from './svg-import'
+import { parsePathD, parsePathMultiD, parseTransform } from './svg-import'
 import { DEFAULT_SETTINGS, parseProject, resetIds, serializeProject, stripV7Attributes } from './svg-io'
 
 import type { ProjectSettings, Shape } from '../types'
@@ -169,6 +169,65 @@ describe('parsePathD', () => {
       [10, 10],
     ])
     expect(r.closed).toBe(true)
+  })
+
+  it('returns only the first subpath for foreign multi-subpath input', () => {
+    const r = parsePathD('M 0 0 L 10 0 L 10 10 Z M 100 100 L 110 100 L 110 110 Z')
+    expect(r.points).toEqual([
+      [0, 0],
+      [10, 0],
+      [10, 10],
+    ])
+    expect(r.closed).toBe(true)
+  })
+})
+
+describe('parsePathMultiD', () => {
+  it('returns one ParsedPath per subpath, each independently closed', () => {
+    const parts = parsePathMultiD('M 0 0 L 10 0 L 10 10 Z M 100 100 L 110 100 L 110 110 Z')
+    expect(parts).toHaveLength(2)
+    expect(parts[0].points).toEqual([
+      [0, 0],
+      [10, 0],
+      [10, 10],
+    ])
+    expect(parts[0].closed).toBe(true)
+    expect(parts[1].points).toEqual([
+      [100, 100],
+      [110, 100],
+      [110, 110],
+    ])
+    expect(parts[1].closed).toBe(true)
+  })
+
+  it('keeps a single-subpath path as a single entry', () => {
+    const parts = parsePathMultiD('M 0 0 L 10 0 L 10 10 Z')
+    expect(parts).toHaveLength(1)
+    expect(parts[0].points).toEqual([
+      [0, 0],
+      [10, 0],
+      [10, 10],
+    ])
+  })
+
+  it('mixes closed and open subpaths', () => {
+    const parts = parsePathMultiD('M 0 0 L 10 0 L 10 10 Z M 50 50 L 60 60')
+    expect(parts).toHaveLength(2)
+    expect(parts[0].closed).toBe(true)
+    expect(parts[1].closed).toBe(false)
+    expect(parts[1].points).toEqual([
+      [50, 50],
+      [60, 60],
+    ])
+  })
+
+  it('handles a relative m starting a second subpath from the prior current point', () => {
+    // After `M 0 0 L 10 0 Z`, current point returns to (0,0). `m 50 50` then
+    // becomes absolute (0+50, 0+50) → (50, 50).
+    const parts = parsePathMultiD('M 0 0 L 10 0 Z m 50 50 l 10 0')
+    expect(parts).toHaveLength(2)
+    expect(parts[1].points[0]).toEqual([50, 50])
+    expect(parts[1].points[1]).toEqual([60, 50])
   })
 })
 
