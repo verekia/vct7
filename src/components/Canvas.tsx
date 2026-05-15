@@ -24,9 +24,10 @@ import {
   transformAroundString,
 } from '../lib/transform'
 import { useStore } from '../store'
-import { effectiveBezier } from '../store'
+import { effectiveBezier, globalBezierSpec, globalCanvasRef } from '../store'
 
-import type { BoxSelect } from '../store'
+import type { BezierSpec } from '../lib/geometry'
+import type { BoxSelect, ShapeBezier } from '../store'
 import type { Drawing, Group, Point, ProjectSettings, Shape } from '../types'
 
 interface ContainerSize {
@@ -216,7 +217,8 @@ export function Canvas() {
               snapAngles={settings.snapAngles}
               boardW={settings.viewBoxWidth}
               boardH={settings.viewBoxHeight}
-              bezier={settings.bezier}
+              bezier={globalBezierSpec(settings)}
+              canvasRef={globalCanvasRef(settings)}
               scale={view.scale}
             />
           )}
@@ -366,7 +368,7 @@ function AnimatedShape({
   onionSkin,
 }: {
   shape: Shape
-  bezier: number
+  bezier: ShapeBezier
   sceneT: number | null
   onionSkin: boolean
 }) {
@@ -611,7 +613,7 @@ function MirrorNode({
   strokeOverride,
 }: {
   shape: Shape
-  bezier: number
+  bezier: ShapeBezier
   fillOverride?: string | null
   strokeOverride?: string | null
 }) {
@@ -646,7 +648,7 @@ function RadialClones({
   strokeOverride,
 }: {
   shape: Shape
-  bezier: number
+  bezier: ShapeBezier
   fillOverride?: string | null
   strokeOverride?: string | null
 }) {
@@ -672,7 +674,7 @@ function ShapeNode({
   strokeOverride,
 }: {
   shape: Shape
-  bezier: number
+  bezier: ShapeBezier
   fillOverride?: string | null
   strokeOverride?: string | null
 }) {
@@ -790,7 +792,7 @@ function ShapeNode({
       </g>
     )
   }
-  const d = pointsToPath(shape.points, shape.closed, bezier, shape.pointBezierOverrides)
+  const d = pointsToPath(shape.points, shape.closed, bezier.spec, bezier.perPoint, bezier.canvasRef)
   return (
     <g data-shape-id={shape.id} transform={transformAttr}>
       <path
@@ -1153,6 +1155,7 @@ function PreviewLayer({
   boardW,
   boardH,
   bezier,
+  canvasRef,
   scale,
 }: {
   drawing: Drawing
@@ -1161,7 +1164,8 @@ function PreviewLayer({
   snapAngles: number[]
   boardW: number
   boardH: number
-  bezier: number
+  bezier: BezierSpec
+  canvasRef: number
   scale: number
 }) {
   if (drawing.points.length === 0) return null
@@ -1202,7 +1206,11 @@ function PreviewLayer({
         )}
 
       {drawing.type === 'polygon' && previewPts.length >= 3 && (
-        <path d={pointsToPath(previewPts, true, bezier)} fill="rgba(255,59,48,0.08)" stroke="none" />
+        <path
+          d={pointsToPath(previewPts, true, bezier, undefined, canvasRef)}
+          fill="rgba(255,59,48,0.08)"
+          stroke="none"
+        />
       )}
 
       {isCircle ? (
@@ -1225,7 +1233,11 @@ function PreviewLayer({
           />
         </>
       ) : (
-        <path d={pointsToPath(previewPts, false, bezier)} className="preview-shape" vectorEffect="non-scaling-stroke" />
+        <path
+          d={pointsToPath(previewPts, false, bezier, undefined, canvasRef)}
+          className="preview-shape"
+          vectorEffect="non-scaling-stroke"
+        />
       )}
 
       {drawing.points.map((p, i) => (

@@ -2,8 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 
 import { ANGLE_PRESETS } from '../lib/snap'
 import { useStore } from '../store'
+import { BEZIER_MODES } from '../types'
 
-import type { PaletteColor } from '../types'
+import type { BezierMode, PaletteColor } from '../types'
+
+const BEZIER_MODE_LABELS: Record<BezierMode, string> = {
+  proportional: 'Proportional',
+  absolute: 'Radius absolute',
+  relative: 'Radius relative',
+}
+
+/** Slider config — `max` and `step` adapt to the chosen bezier mode. */
+export interface BezierSliderRange {
+  max: number
+  step: number
+  isAbsolute: boolean
+}
+
+export const bezierSliderRange = (mode: BezierMode, canvasRef: number): BezierSliderRange => {
+  if (mode === 'absolute') {
+    const max = Math.max(1, canvasRef / 2)
+    return { max, step: Math.max(0.1, max / 100), isAbsolute: true }
+  }
+  return { max: 1, step: 0.01, isAbsolute: false }
+}
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i
 // Mirrors PALETTE_NAME_RE in svg-io.ts — keep these aligned so a name accepted
@@ -101,19 +123,14 @@ export function ProjectPanel() {
         </div>
       </div>
 
-      <label>
-        <span>
-          Global bezier <span className="text-text tabular-nums">{settings.bezier.toFixed(2)}</span>
-        </span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={settings.bezier}
-          onChange={e => setSettings({ bezier: parseFloat(e.target.value) })}
-        />
-      </label>
+      <BezierControl
+        mode={settings.bezierMode ?? 'proportional'}
+        value={settings.bezier}
+        canvasRef={Math.min(settings.viewBoxWidth, settings.viewBoxHeight)}
+        label="Global bezier"
+        onModeChange={m => setSettings({ bezierMode: m === 'proportional' ? undefined : m })}
+        onValueChange={v => setSettings({ bezier: v })}
+      />
 
       <label>
         <span>Background</span>
@@ -294,6 +311,70 @@ export function ProjectPanel() {
         </div>
       </div>
     </section>
+  )
+}
+
+/**
+ * Mode dropdown + numeric/slider input for a single bezier value. Reused at
+ * every scope (global, per-shape, per-point) so the controls look identical
+ * everywhere. `extra` is rendered to the right of the mode dropdown — for
+ * scopes that have an "inherit" / "use global" button.
+ *
+ * `valueDisplay` is rendered after the slider; multi-shape selections pass
+ * "Mixed" or a fallback readout here. When omitted the resolved value is
+ * shown in plain `toFixed` form.
+ */
+export function BezierControl({
+  mode,
+  value,
+  canvasRef,
+  label,
+  extra,
+  valueDisplay,
+  onModeChange,
+  onValueChange,
+}: {
+  mode: BezierMode
+  value: number
+  canvasRef: number
+  label: string
+  extra?: React.ReactNode
+  valueDisplay?: React.ReactNode
+  onModeChange: (m: BezierMode) => void
+  onValueChange: (v: number) => void
+}) {
+  const range = bezierSliderRange(mode, canvasRef)
+  const sliderValue = Math.min(Math.max(0, value), range.max)
+  return (
+    <label>
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span style={{ flex: 1 }}>{label}</span>
+        <select
+          className="text-[11px]"
+          value={mode}
+          onChange={e => onModeChange(e.target.value as BezierMode)}
+          title="How this value becomes a corner radius"
+        >
+          {BEZIER_MODES.map(m => (
+            <option key={m} value={m}>
+              {BEZIER_MODE_LABELS[m]}
+            </option>
+          ))}
+        </select>
+        {extra}
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={range.max}
+        step={range.step}
+        value={sliderValue}
+        onChange={e => onValueChange(parseFloat(e.target.value))}
+      />
+      <span className="text-text tabular-nums">
+        {valueDisplay ?? (range.isAbsolute ? value.toFixed(1) : value.toFixed(2))}
+      </span>
+    </label>
   )
 }
 

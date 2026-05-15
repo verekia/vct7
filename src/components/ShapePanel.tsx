@@ -4,8 +4,9 @@ import { dist, isPartialArc } from '../lib/geometry'
 import { applyTransformToPoint, hasTransform, isPointOnAxis, shapeRotation, shapeScale } from '../lib/transform'
 import { useStore } from '../store'
 import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
-import { PaletteRefSelect } from './ProjectPanel'
+import { BezierControl, PaletteRefSelect } from './ProjectPanel'
 
+import type { BezierMode } from '../types'
 import type {
   AnimationFromState,
   AnimationSpec,
@@ -110,6 +111,8 @@ export function ShapePanel() {
   const selectedShapeIds = useStore(s => s.selectedShapeIds)
   const selectedVertices = useStore(s => s.selectedVertices)
   const globalBezier = useStore(s => s.settings.bezier)
+  const globalBezierMode = useStore(s => s.settings.bezierMode ?? 'proportional')
+  const canvasRef = useStore(s => Math.min(s.settings.viewBoxWidth, s.settings.viewBoxHeight))
   const snapAngles = useStore(s => s.settings.snapAngles)
   const animationEnabled = useStore(s => s.settings.animationEnabled)
   const palette = useStore(s => s.settings.palette)
@@ -220,6 +223,8 @@ export function ShapePanel() {
         shape={shape}
         selectedVertexIndices={vertexIndices}
         globalBezier={globalBezier}
+        globalBezierMode={globalBezierMode}
+        canvasRef={canvasRef}
         snapAngles={snapAngles}
         animationEnabled={animationEnabled}
         palette={palette}
@@ -265,6 +270,8 @@ export function ShapePanel() {
       shapes={selectedShapes}
       kind={kinds[0]}
       globalBezier={globalBezier}
+      globalBezierMode={globalBezierMode}
+      canvasRef={canvasRef}
       snapAngles={snapAngles}
       palette={palette}
       snapDisabled={snapDisabled}
@@ -405,6 +412,8 @@ function ShapePanelInner({
   shape,
   selectedVertexIndices,
   globalBezier,
+  globalBezierMode,
+  canvasRef,
   snapAngles,
   animationEnabled,
   palette,
@@ -432,6 +441,8 @@ function ShapePanelInner({
   shape: Shape
   selectedVertexIndices: number[]
   globalBezier: number
+  globalBezierMode: BezierMode
+  canvasRef: number
   snapAngles: number[]
   animationEnabled: boolean
   palette: PaletteColor[]
@@ -462,6 +473,8 @@ function ShapePanelInner({
   useEffect(() => setFillText(shape.fill), [shape.fill])
 
   const bezierValue = shape.bezierOverride ?? globalBezier
+  const bezierMode: BezierMode =
+    shape.bezierOverride !== null ? (shape.bezierModeOverride ?? 'proportional') : globalBezierMode
   const isCircle = shape.kind === 'circle'
   const isGlyphs = shape.kind === 'glyphs' && !!shape.glyphs
   const partial = isCircle && isPartialArc(shape.arc)
@@ -735,31 +748,44 @@ function ShapePanelInner({
       {isCircle && <ArcControls shape={shape} updateShape={updateShape} />}
 
       {showBezierOverride && (
-        <label>
-          <span className="flex flex-wrap items-center gap-1.5">
-            <span style={{ flex: 1 }}>Layer bezier override</span>
-            {shape.bezierOverride !== null && (
+        <BezierControl
+          mode={bezierMode}
+          value={bezierValue}
+          canvasRef={canvasRef}
+          label="Layer bezier override"
+          extra={
+            shape.bezierOverride !== null && (
               <button
                 type="button"
                 className="px-[7px] py-[2px] text-[11px]"
-                onClick={() => updateShape(shape.id, { bezierOverride: null })}
+                onClick={() => updateShape(shape.id, { bezierOverride: null, bezierModeOverride: undefined })}
               >
                 use global
               </button>
-            )}
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={bezierValue}
-            onChange={e => updateShape(shape.id, { bezierOverride: parseFloat(e.target.value) })}
-          />
-          <span className="text-text tabular-nums">
-            {shape.bezierOverride === null ? `— (global ${globalBezier.toFixed(2)})` : shape.bezierOverride.toFixed(2)}
-          </span>
-        </label>
+            )
+          }
+          valueDisplay={
+            shape.bezierOverride === null
+              ? `— (global ${globalBezier.toFixed(bezierMode === 'absolute' ? 1 : 2)})`
+              : undefined
+          }
+          onModeChange={m =>
+            updateShape(shape.id, {
+              // Selecting a mode promotes the value to a shape-level override
+              // if there wasn't one already (using the resolved current value).
+              bezierOverride: shape.bezierOverride ?? globalBezier,
+              bezierModeOverride: m === 'proportional' ? undefined : m,
+            })
+          }
+          onValueChange={v =>
+            updateShape(shape.id, {
+              bezierOverride: v,
+              // Lock in the currently-displayed mode if this is the first edit.
+              bezierModeOverride:
+                shape.bezierOverride === null && bezierMode !== 'proportional' ? bezierMode : shape.bezierModeOverride,
+            })
+          }
+        />
       )}
 
       {showBezierOverride &&
@@ -782,6 +808,8 @@ function ShapePanelInner({
           shape={shape}
           indices={selectedVertexIndices}
           layerBezier={bezierValue}
+          layerBezierMode={bezierMode}
+          canvasRef={canvasRef}
           updateShape={updateShape}
         />
       )}
@@ -812,54 +840,86 @@ function PointBezierControl({
   shape,
   indices,
   layerBezier,
+  layerBezierMode,
+  canvasRef,
   updateShape,
 }: {
   shape: Shape
   indices: number[]
   layerBezier: number
+  layerBezierMode: BezierMode
+  canvasRef: number
   updateShape: (id: string, patch: Partial<Shape>) => void
 }) {
   const overrides = shape.pointBezierOverrides
+  const modeOverrides = shape.pointBezierModeOverrides
   const values = indices.map(i => overrides?.[i])
+  const modes = indices.map(i => modeOverrides?.[i])
   const uniform = allSame(values)
+  const uniformMode = allSame(modes)
   const firstDefined = values.find(v => v !== undefined)
   const sliderValue = uniform ? (values[0] ?? layerBezier) : (firstDefined ?? layerBezier)
   const anyOverride = values.some(v => v !== undefined)
+  // Mode shown in the dropdown: explicit override if uniform, else the layer
+  // mode this corner would inherit if cleared.
+  const displayedMode: BezierMode =
+    uniformMode && modes[0] !== undefined ? modes[0]! : anyOverride ? 'proportional' : layerBezierMode
   const label =
     indices.length === 1 ? `Point bezier override (#${indices[0]})` : `Point bezier override (×${indices.length})`
 
   const setAll = (v: number | undefined) => {
     const next: Record<number, number> = { ...overrides }
+    const nextMode: Record<number, BezierMode> = { ...modeOverrides }
     for (const i of indices) {
-      if (v === undefined) delete next[i]
-      else next[i] = v
+      if (v === undefined) {
+        delete next[i]
+        delete nextMode[i]
+      } else {
+        next[i] = v
+      }
     }
     const trimmed = Object.keys(next).length > 0 ? next : undefined
-    updateShape(shape.id, { pointBezierOverrides: trimmed })
+    const trimmedMode = Object.keys(nextMode).length > 0 ? nextMode : undefined
+    updateShape(shape.id, { pointBezierOverrides: trimmed, pointBezierModeOverrides: trimmedMode })
+  }
+
+  const setAllMode = (m: BezierMode) => {
+    // Picking a mode promotes the point(s) to an override if there wasn't one,
+    // using the layer's resolved value as the seed.
+    const next: Record<number, number> = { ...overrides }
+    const nextMode: Record<number, BezierMode> = { ...modeOverrides }
+    for (const i of indices) {
+      if (next[i] === undefined) next[i] = layerBezier
+      if (m === 'proportional') delete nextMode[i]
+      else nextMode[i] = m
+    }
+    const trimmedMode = Object.keys(nextMode).length > 0 ? nextMode : undefined
+    updateShape(shape.id, { pointBezierOverrides: next, pointBezierModeOverrides: trimmedMode })
   }
 
   return (
-    <label>
-      <span className="flex flex-wrap items-center gap-1.5">
-        <span style={{ flex: 1 }}>{label}</span>
-        {anyOverride && (
+    <BezierControl
+      mode={displayedMode}
+      value={sliderValue}
+      canvasRef={canvasRef}
+      label={label}
+      extra={
+        anyOverride && (
           <button type="button" className="px-[7px] py-[2px] text-[11px]" onClick={() => setAll(undefined)}>
             use layer
           </button>
-        )}
-      </span>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.01}
-        value={sliderValue}
-        onChange={e => setAll(parseFloat(e.target.value))}
-      />
-      <span className="text-text tabular-nums">
-        {!uniform ? 'Mixed' : values[0] === undefined ? `— (layer ${layerBezier.toFixed(2)})` : values[0].toFixed(2)}
-      </span>
-    </label>
+        )
+      }
+      valueDisplay={
+        !uniform
+          ? 'Mixed'
+          : values[0] === undefined
+            ? `— (layer ${layerBezier.toFixed(layerBezierMode === 'absolute' ? 1 : 2)})`
+            : values[0].toFixed(displayedMode === 'absolute' ? 1 : 2)
+      }
+      onModeChange={setAllMode}
+      onValueChange={v => setAll(v)}
+    />
   )
 }
 
@@ -1715,6 +1775,8 @@ function MultiShapePanel({
   shapes,
   kind,
   globalBezier,
+  globalBezierMode,
+  canvasRef,
   snapAngles,
   palette,
   snapDisabled,
@@ -1730,6 +1792,8 @@ function MultiShapePanel({
   shapes: Shape[]
   kind: ShapeKind
   globalBezier: number
+  globalBezierMode: BezierMode
+  canvasRef: number
   snapAngles: number[]
   palette: PaletteColor[]
   snapDisabled: boolean
@@ -1796,6 +1860,15 @@ function MultiShapePanel({
   }
 
   const bezierForRange = overrideUniform && overrides[0] !== null ? overrides[0] : globalBezier
+  const modeOverrides = shapes.map(s => s.bezierModeOverride)
+  const modeOverrideUniform = allSame(modeOverrides)
+  const allOverridden = overrides.every(o => o !== null)
+  const bezierModeForRange: BezierMode =
+    modeOverrideUniform && allOverridden
+      ? (modeOverrides[0] ?? 'proportional')
+      : overrides.every(o => o === null)
+        ? globalBezierMode
+        : 'proportional'
 
   const typeLabel =
     kind === 'circle'
@@ -1934,35 +2007,47 @@ function MultiShapePanel({
       )}
 
       {showBezier && (
-        <label>
-          <span className="flex flex-wrap items-center gap-1.5">
-            <span style={{ flex: 1 }}>Layer bezier override</span>
-            {overrides.some(o => o !== null) && (
+        <BezierControl
+          mode={bezierModeForRange}
+          value={bezierForRange}
+          canvasRef={canvasRef}
+          label="Layer bezier override"
+          extra={
+            overrides.some(o => o !== null) && (
               <button
                 type="button"
                 className="px-[7px] py-[2px] text-[11px]"
-                onClick={() => applyAll({ bezierOverride: null })}
+                onClick={() => applyAll({ bezierOverride: null, bezierModeOverride: undefined })}
               >
                 use global
               </button>
-            )}
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={bezierForRange}
-            onChange={e => applyAll({ bezierOverride: parseFloat(e.target.value) })}
-          />
-          <span className="text-text tabular-nums">
-            {!overrideUniform
+            )
+          }
+          valueDisplay={
+            !overrideUniform
               ? 'Mixed'
               : overrides[0] === null
-                ? `— (global ${globalBezier.toFixed(2)})`
-                : overrides[0]!.toFixed(2)}
-          </span>
-        </label>
+                ? `— (global ${globalBezier.toFixed(globalBezierMode === 'absolute' ? 1 : 2)})`
+                : overrides[0]!.toFixed(bezierModeForRange === 'absolute' ? 1 : 2)
+          }
+          onModeChange={m =>
+            // Switching mode in the multi-select promotes every shape to an
+            // explicit override using its current resolved value (so they keep
+            // their look until the slider moves).
+            shapes.forEach(s =>
+              updateShape(s.id, {
+                bezierOverride: s.bezierOverride ?? globalBezier,
+                bezierModeOverride: m === 'proportional' ? undefined : m,
+              }),
+            )
+          }
+          onValueChange={v =>
+            applyAll({
+              bezierOverride: v,
+              ...(bezierModeForRange !== 'proportional' ? { bezierModeOverride: bezierModeForRange } : {}),
+            })
+          }
+        />
       )}
 
       <label>

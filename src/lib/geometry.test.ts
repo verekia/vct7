@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'bun:test'
 
-import { arcSweep, arcToPath, bbox, corner, fmt, isPartialArc, pointsToPath } from './geometry'
+import {
+  arcSweep,
+  arcToPath,
+  bbox,
+  buildPerPointSpecMap,
+  corner,
+  fmt,
+  isPartialArc,
+  pointsToPath,
+  resolveCornerRadius,
+  resolveShapeBezier,
+} from './geometry'
 
 import type { ArcRange, Point } from '../types'
 
@@ -221,6 +232,75 @@ describe('mixed-angle polygon rounding', () => {
       const c = corner(prev, cur, next, 1)
       expect(c.control).toEqual(cur)
     }
+  })
+})
+
+describe('resolveCornerRadius', () => {
+  it('proportional matches the legacy t × 0.5 × min formula', () => {
+    expect(resolveCornerRadius({ mode: 'proportional', value: 0.5 }, 100, 100, 0)).toBe(25)
+    expect(resolveCornerRadius({ mode: 'proportional', value: 1 }, 100, 100, 0)).toBe(50)
+  })
+
+  it('absolute uses the raw value and clamps to half-min-neighbor', () => {
+    expect(resolveCornerRadius({ mode: 'absolute', value: 30 }, 100, 100, 0)).toBe(30)
+    expect(resolveCornerRadius({ mode: 'absolute', value: 999 }, 100, 100, 0)).toBe(50)
+  })
+
+  it('relative scales the value by canvasRef', () => {
+    expect(resolveCornerRadius({ mode: 'relative', value: 0.05 }, 1000, 1000, 100)).toBe(5)
+    expect(resolveCornerRadius({ mode: 'relative', value: 0.05 }, 1000, 1000, 200)).toBe(10)
+  })
+
+  it('clamps negative values to 0', () => {
+    expect(resolveCornerRadius({ mode: 'absolute', value: -5 }, 100, 100, 0)).toBe(0)
+    expect(resolveCornerRadius({ mode: 'relative', value: -1 }, 100, 100, 100)).toBe(0)
+  })
+})
+
+describe('resolveShapeBezier', () => {
+  it('uses the shape override when present', () => {
+    expect(resolveShapeBezier(0.3, 'absolute', 0.7, 'proportional')).toEqual({ mode: 'absolute', value: 0.3 })
+    expect(resolveShapeBezier(0.3, undefined, 0.7, 'absolute')).toEqual({ mode: 'proportional', value: 0.3 })
+  })
+
+  it('falls back to the global when no shape override', () => {
+    expect(resolveShapeBezier(null, undefined, 0.7, 'relative')).toEqual({ mode: 'relative', value: 0.7 })
+    expect(resolveShapeBezier(null, undefined, 0.7, undefined)).toEqual({ mode: 'proportional', value: 0.7 })
+  })
+})
+
+describe('buildPerPointSpecMap', () => {
+  it('returns undefined when there are no point overrides', () => {
+    expect(buildPerPointSpecMap(undefined, undefined)).toBeUndefined()
+    expect(buildPerPointSpecMap({}, undefined)).toBeUndefined()
+  })
+
+  it('pairs each value with its mode override, defaulting to proportional', () => {
+    expect(buildPerPointSpecMap({ 0: 0.5, 2: 0.8 }, { 0: 'absolute' })).toEqual({
+      0: { mode: 'absolute', value: 0.5 },
+      2: { mode: 'proportional', value: 0.8 },
+    })
+  })
+})
+
+describe('pointsToPath bezier modes', () => {
+  const triangle: Point[] = [
+    [0, 0],
+    [10, 0],
+    [5, 100],
+  ]
+  it('proportional and oversize-absolute paths agree at the cap', () => {
+    const dProp = pointsToPath(triangle, true, 1)
+    const dAbs = pointsToPath(triangle, true, { mode: 'absolute', value: 1000 })
+    expect(dAbs).toBe(dProp)
+  })
+
+  it('relative mode emits curves and scales with canvasRef', () => {
+    const small = pointsToPath(triangle, true, { mode: 'relative', value: 0.05 }, undefined, 100)
+    const big = pointsToPath(triangle, true, { mode: 'relative', value: 0.05 }, undefined, 1000)
+    expect(small).toContain('Q')
+    expect(big).toContain('Q')
+    expect(small).not.toBe(big)
   })
 })
 
