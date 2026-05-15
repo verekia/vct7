@@ -4,7 +4,7 @@ import { ANGLE_PRESETS } from '../lib/snap'
 import { useStore } from '../store'
 import { BEZIER_MODES } from '../types'
 
-import type { BezierMode, PaletteColor } from '../types'
+import type { BezierMode, BezierPreset, PaletteColor } from '../types'
 
 const BEZIER_MODE_LABELS: Record<BezierMode, string> = {
   proportional: 'Proportional',
@@ -130,6 +130,11 @@ export function ProjectPanel() {
         label="Global bezier"
         onModeChange={m => setSettings({ bezierMode: m === 'proportional' ? undefined : m })}
         onValueChange={v => setSettings({ bezier: v })}
+      />
+
+      <BezierPresetsSection
+        presets={settings.bezierPresets}
+        canvasRef={Math.min(settings.viewBoxWidth, settings.viewBoxHeight)}
       />
 
       <label>
@@ -331,6 +336,7 @@ export function BezierControl({
   label,
   extra,
   valueDisplay,
+  disabled,
   onModeChange,
   onValueChange,
 }: {
@@ -340,18 +346,21 @@ export function BezierControl({
   label: string
   extra?: React.ReactNode
   valueDisplay?: React.ReactNode
+  /** Disable both inputs (preset is in charge — slider would be a no-op). */
+  disabled?: boolean
   onModeChange: (m: BezierMode) => void
   onValueChange: (v: number) => void
 }) {
   const range = bezierSliderRange(mode, canvasRef)
   const sliderValue = Math.min(Math.max(0, value), range.max)
   return (
-    <label>
+    <label className={disabled ? 'opacity-60' : undefined}>
       <span className="flex flex-wrap items-center gap-1.5">
         <span style={{ flex: 1 }}>{label}</span>
         <select
           className="text-[11px]"
           value={mode}
+          disabled={disabled}
           onChange={e => onModeChange(e.target.value as BezierMode)}
           title="How this value becomes a corner radius"
         >
@@ -369,12 +378,186 @@ export function BezierControl({
         max={range.max}
         step={range.step}
         value={sliderValue}
+        disabled={disabled}
         onChange={e => onValueChange(parseFloat(e.target.value))}
       />
       <span className="text-text tabular-nums">
         {valueDisplay ?? (range.isAbsolute ? value.toFixed(1) : value.toFixed(2))}
       </span>
     </label>
+  )
+}
+
+/**
+ * Tiny preset selector. Shows up above a `BezierControl` at any scope where
+ * presets are usable (layer, per-point, multi-layer). Skips rendering when
+ * no presets are defined yet.
+ *
+ * `value` is the active preset name; `null` means "mixed across the
+ * selection" and renders a `Mixed` placeholder option that can't be picked.
+ */
+export function BezierRefSelect({
+  value,
+  presets,
+  label,
+  onChange,
+}: {
+  value: string | undefined | null
+  presets: readonly BezierPreset[]
+  label: string
+  onChange: (name: string | undefined) => void
+}) {
+  if (presets.length === 0) return null
+  const selected = value === null ? '__mixed__' : (value ?? '')
+  return (
+    <label>
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span style={{ flex: 1 }}>{label}</span>
+        <select
+          className="text-[11px]"
+          value={selected}
+          onChange={e => {
+            const v = e.target.value
+            onChange(v === '' || v === '__mixed__' ? undefined : v)
+          }}
+        >
+          <option value="">— off —</option>
+          {value === null && (
+            <option value="__mixed__" disabled>
+              Mixed
+            </option>
+          )}
+          {presets.map(p => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </span>
+    </label>
+  )
+}
+
+/**
+ * Project-level bezier preset library. Names are restricted to characters
+ * that round-trip cleanly through the comma-separated `data-v7-point-bezier-
+ * ref` attribute (no commas, no colons). The first preset is *not* an
+ * implicit default in vct7 — the global value+mode is — so the list can be
+ * empty without affecting rendering.
+ */
+const PRESET_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/
+
+function BezierPresetsSection({ presets, canvasRef }: { presets: BezierPreset[]; canvasRef: number }) {
+  const addPreset = useStore(s => s.addBezierPreset)
+  const updatePreset = useStore(s => s.updateBezierPreset)
+  const removePreset = useStore(s => s.removeBezierPreset)
+  const [newName, setNewName] = useState('')
+
+  const handleAdd = () => {
+    const trimmed = newName.trim()
+    if (!trimmed || !PRESET_NAME_RE.test(trimmed)) return
+    addPreset(trimmed, 0.5)
+    setNewName('')
+  }
+
+  return (
+    <div className="text-muted mb-2.5 flex flex-col gap-1 text-[11px] tracking-[0.4px]">
+      <span className="flex items-center justify-between gap-1.5">
+        <span>Bezier presets</span>
+      </span>
+      {presets.length === 0 ? (
+        <span className="text-muted-2 text-[10px] leading-snug tracking-normal normal-case">
+          Add a preset to reuse a (mode, value) pair across layers and points.
+        </span>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {presets.map(p => (
+            <BezierPresetRow
+              key={p.name}
+              preset={p}
+              canvasRef={canvasRef}
+              onRename={n => updatePreset(p.name, { name: n })}
+              onValueChange={v => updatePreset(p.name, { value: v })}
+              onModeChange={m => updatePreset(p.name, { mode: m })}
+              onDelete={() => removePreset(p.name)}
+            />
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          className="min-w-0 flex-1"
+          placeholder="new preset name"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleAdd()
+          }}
+        />
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={handleAdd}
+          disabled={!newName.trim() || !PRESET_NAME_RE.test(newName.trim())}
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function BezierPresetRow({
+  preset,
+  canvasRef,
+  onRename,
+  onValueChange,
+  onModeChange,
+  onDelete,
+}: {
+  preset: BezierPreset
+  canvasRef: number
+  onRename: (n: string) => void
+  onValueChange: (v: number) => void
+  onModeChange: (m: BezierMode) => void
+  onDelete: () => void
+}) {
+  const [nameDraft, setNameDraft] = useState(preset.name)
+  useEffect(() => setNameDraft(preset.name), [preset.name])
+  const mode = preset.mode ?? 'proportional'
+  return (
+    <li className="bg-bg-0 border-line border p-2">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <input
+          type="text"
+          className="min-w-0 flex-1"
+          value={nameDraft}
+          onChange={e => setNameDraft(e.target.value)}
+          onBlur={() => {
+            const trimmed = nameDraft.trim()
+            if (trimmed && trimmed !== preset.name && PRESET_NAME_RE.test(trimmed)) onRename(trimmed)
+            else setNameDraft(preset.name)
+          }}
+        />
+        <button
+          type="button"
+          className="px-[7px] py-[2px] text-[11px]"
+          onClick={onDelete}
+          title="Delete preset (shapes referencing it fall back to the global / layer value)"
+        >
+          ×
+        </button>
+      </div>
+      <BezierControl
+        mode={mode}
+        value={preset.value}
+        canvasRef={canvasRef}
+        label={preset.name}
+        onModeChange={onModeChange}
+        onValueChange={onValueChange}
+      />
+    </li>
   )
 }
 

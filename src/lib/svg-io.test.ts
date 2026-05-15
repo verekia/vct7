@@ -8,6 +8,7 @@ import type { ProjectSettings, Shape } from '../types'
 const sampleSettings: ProjectSettings = {
   snapAngles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],
   bezier: 0.2,
+  bezierPresets: [],
   palette: [],
   bg: '#ffeedd',
   width: 400,
@@ -72,6 +73,60 @@ describe('serializeProject', () => {
     const bBlock = text.match(/data-v7-points="20,200[\s\S]*?\/>/)?.[0] ?? ''
     expect(aBlock).toContain('data-v7-bezier="0.5"')
     expect(bBlock).not.toContain('data-v7-bezier=')
+  })
+})
+
+describe('bezier presets', () => {
+  const settingsWithPresets: ProjectSettings = {
+    ...sampleSettings,
+    bezierPresets: [
+      { name: 'soft', value: 0.3 },
+      { name: 'pixely', value: 12, mode: 'absolute' },
+    ],
+  }
+  const shapesWithRefs: Shape[] = [
+    {
+      id: 'a',
+      points: [
+        [10, 10],
+        [100, 10],
+        [100, 100],
+        [10, 100],
+      ],
+      closed: true,
+      fill: '#ff0000',
+      stroke: 'none',
+      strokeWidth: 1,
+      bezierOverride: null,
+      bezierRef: 'soft',
+      pointBezierRefs: { 2: 'pixely' },
+      hidden: false,
+      locked: false,
+    },
+  ]
+
+  it('round-trips the project preset list', () => {
+    const text = serializeProject(settingsWithPresets, shapesWithRefs)
+    expect(text).toContain('data-v7-bezier-presets=')
+    const { settings } = parseProject(text)
+    expect(settings.bezierPresets).toEqual([
+      { name: 'soft', value: 0.3 },
+      { name: 'pixely', value: 12, mode: 'absolute' },
+    ])
+  })
+
+  it('round-trips per-shape and per-point preset refs', () => {
+    const text = serializeProject(settingsWithPresets, shapesWithRefs)
+    expect(text).toContain('data-v7-bezier-ref="soft"')
+    expect(text).toContain('data-v7-point-bezier-ref="2:pixely"')
+    const { shapes } = parseProject(text)
+    expect(shapes[0].bezierRef).toBe('soft')
+    expect(shapes[0].pointBezierRefs).toEqual({ 2: 'pixely' })
+  })
+
+  it('does not emit the preset attr when the list is empty', () => {
+    const text = serializeProject(sampleSettings, sampleShapes)
+    expect(text).not.toContain('data-v7-bezier-presets')
   })
 })
 

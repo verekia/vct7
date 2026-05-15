@@ -1,4 +1,4 @@
-import type { ArcRange, BezierMode, Point } from '../types'
+import type { ArcRange, BezierMode, BezierPreset, Point, ProjectSettings, Shape } from '../types'
 
 const RAD_TO_DEG = 180 / Math.PI
 const DEG_TO_RAD = Math.PI / 180
@@ -34,10 +34,21 @@ export function resolveCornerRadius(spec: BezierSpec, inLen: number, outLen: num
 
 const asSpec = (v: number | BezierSpec): BezierSpec => (typeof v === 'number' ? { mode: 'proportional', value: v } : v)
 
+/** Look up a preset by name. Returns `undefined` for missing / empty refs. */
+export function presetSpec(name: string | null | undefined, presets: readonly BezierPreset[]): BezierSpec | undefined {
+  if (!name) return undefined
+  const p = presets.find(pr => pr.name === name)
+  return p ? { mode: p.mode ?? 'proportional', value: p.value } : undefined
+}
+
 /**
  * Compose the effective bezier spec for a shape given its optional override
  * and the project-global default. Mirrors the precedence the renderer uses:
  * shape override (with its own mode) wins; otherwise inherit the global.
+ *
+ * Presets are *not* resolved here — they live at a higher layer (the store /
+ * SVG IO compose a `BezierSpec` from a preset ref via {@link presetSpec} and
+ * skip this helper). This stays pure value+mode plumbing.
  */
 export function resolveShapeBezier(
   shapeValue: number | null,
@@ -65,6 +76,45 @@ export function buildPerPointSpecMap(
     const idx = Number(k)
     if (!Number.isFinite(idx)) continue
     out[idx] = { mode: pointBezierModeOverrides?.[idx] ?? 'proportional', value: v }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * Resolve the shape-level corner spec, walking the
+ * `bezierRef → bezierOverride+bezierModeOverride → global` precedence chain.
+ * Refs to missing presets fall through silently.
+ */
+export function resolveShapeLevelSpec(shape: Shape, settings: ProjectSettings): BezierSpec {
+  const fromRef = presetSpec(shape.bezierRef, settings.bezierPresets)
+  if (fromRef) return fromRef
+  return resolveShapeBezier(shape.bezierOverride, shape.bezierModeOverride, settings.bezier, settings.bezierMode)
+}
+
+/**
+ * Build the per-vertex spec map: per-vertex ref wins, then per-vertex inline
+ * (value + mode), then the absent-key default in `pointsToPath` falls back to
+ * the shape-level spec. Returns `undefined` when no vertex has any per-point
+ * spec.
+ */
+export function resolvePerPointSpecMap(
+  shape: Shape,
+  settings: ProjectSettings,
+): Record<number, BezierSpec> | undefined {
+  const out: Record<number, BezierSpec> = {}
+  if (shape.pointBezierRefs) {
+    for (const [k, name] of Object.entries(shape.pointBezierRefs)) {
+      const spec = presetSpec(name, settings.bezierPresets)
+      if (spec) out[Number(k)] = spec
+    }
+  }
+  if (shape.pointBezierOverrides) {
+    for (const [k, v] of Object.entries(shape.pointBezierOverrides)) {
+      if (v === undefined) continue
+      const idx = Number(k)
+      if (out[idx]) continue
+      out[idx] = { mode: shape.pointBezierModeOverrides?.[idx] ?? 'proportional', value: v }
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined
 }

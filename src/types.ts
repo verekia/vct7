@@ -18,6 +18,21 @@ export type BezierMode = 'proportional' | 'absolute' | 'relative'
 
 export const BEZIER_MODES: readonly BezierMode[] = ['proportional', 'absolute', 'relative']
 
+/**
+ * A named bezier rounding value, shared across the whole project. Shapes and
+ * vertices can reference one by `name`; tweaking the preset's value or mode
+ * updates every corner that refers to it. References to missing presets fall
+ * through silently to the next layer in the resolution chain.
+ */
+export interface BezierPreset {
+  /** Unique identifier and display name. */
+  name: string
+  /** Corner-rounding amount. Range depends on `mode`. */
+  value: number
+  /** How `value` is interpreted. Absent in legacy files → `'proportional'`. */
+  mode?: BezierMode
+}
+
 export type StrokeLinejoin = 'miter' | 'round' | 'bevel'
 export type StrokeLinecap = 'butt' | 'round' | 'square'
 
@@ -98,6 +113,14 @@ export interface Shape {
    */
   bezierModeOverride?: BezierMode
   /**
+   * Reference to a `BezierPreset` by name. When set, *wins over* the inline
+   * `bezierOverride` / `bezierModeOverride` for this layer (those are kept in
+   * memory but ignored at render time). Setting a ref via the panel clears
+   * the inline pair; setting an inline value via the panel clears the ref.
+   * `null` means no ref — fall through to the inline pair, then the global.
+   */
+  bezierRef?: string | null
+  /**
    * Sparse per-vertex bezier override map (`pointIndex → t`). Wins over the
    * layer's `bezierOverride` and the project's global bezier for the corner
    * at that vertex. Endpoints of open polylines have no corner — entries on
@@ -111,6 +134,12 @@ export interface Shape {
    * interpret) and ignored at render time.
    */
   pointBezierModeOverrides?: Record<number, BezierMode>
+  /**
+   * Sparse per-vertex preset reference map. A ref at a vertex wins over the
+   * inline value/mode at that vertex AND over the shape-level ref / inline.
+   * Refs to missing presets fall through to the next layer.
+   */
+  pointBezierRefs?: Record<number, string>
   hidden: boolean
   locked: boolean
   /** User-supplied display name. Empty / undefined falls back to "polygon" / "line" / "circle". */
@@ -388,6 +417,13 @@ export interface ProjectSettings {
    * not specify its own mode). Absent in legacy files → `'proportional'`.
    */
   bezierMode?: BezierMode
+  /**
+   * Named bezier presets, shared across the whole project. Shapes and
+   * vertices can reference an entry by name; editing the entry updates every
+   * reference live. Names must be unique and non-empty. Empty list means the
+   * project doesn't use named presets — fully equivalent to legacy projects.
+   */
+  bezierPresets: BezierPreset[]
   /**
    * Project-level color palette. The editor enforces unique non-empty names;
    * the order is the order the user added entries (used as the display order
