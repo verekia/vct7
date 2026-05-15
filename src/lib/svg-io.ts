@@ -282,10 +282,16 @@ const parseArcAttr = (raw: string | null): ArcRange | undefined => {
   return { start, end, style }
 }
 
+/**
+ * The first entry of `bezierPresets` is the implicit global default. It's
+ * always present — new projects start with `default = 0.5`, and the parser
+ * synthesizes one from legacy `data-v7-bezier` when an old file is opened.
+ */
+export const DEFAULT_BEZIER_PRESET_NAME = 'default'
+
 export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
-  bezier: 0.5,
-  bezierPresets: [],
+  bezierPresets: [{ name: DEFAULT_BEZIER_PRESET_NAME, value: 0.5 }],
   palette: [],
   bg: null,
   width: 100,
@@ -689,7 +695,10 @@ export const resetIds = (n = 1): void => {
  * values can't contain unescaped `"` (see {@link escapeAttr}), so a simple
  * whitespace-anchored regex is sufficient.
  */
-export const stripV7Attributes = (svg: string): string => svg.replaceAll(/\s+data-v7-[\w-]+="[^"]*"/g, '')
+// Match both `"..."` and `'...'` so JSON-bearing attrs (which use single
+// quotes because their value contains `"`) are stripped along with the rest.
+export const stripV7Attributes = (svg: string): string =>
+  svg.replaceAll(/\s+data-v7-[\w-]+="[^"]*"/g, '').replaceAll(/\s+data-v7-[\w-]+='[^']*'/g, '')
 
 export function serializeProject(settings: ProjectSettings, shapes: Shape[], groups: Group[] = []): string {
   const lines: string[] = []
@@ -703,13 +712,11 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
       vbH,
     )}" width="${fmt(settings.width)}" height="${fmt(settings.height)}"` +
       ` data-v7-snap-angles="${escapeAttr(settings.snapAngles.join(','))}"` +
-      ` data-v7-bezier="${fmt(settings.bezier)}"` +
-      (settings.bezierMode && settings.bezierMode !== 'proportional'
-        ? ` data-v7-bezier-mode="${settings.bezierMode}"`
-        : '') +
-      (settings.bezierPresets.length > 0
-        ? ` data-v7-bezier-presets='${escapeAttr(JSON.stringify(settings.bezierPresets))}'`
-        : '') +
+      // Project-level bezier lives entirely inside the preset list. The first
+      // entry is the implicit global default; legacy `data-v7-bezier` /
+      // `data-v7-bezier-mode` are still parsed for migration but no longer
+      // emitted.
+      ` data-v7-bezier-presets='${escapeAttr(JSON.stringify(settings.bezierPresets))}'` +
       (settings.bg === null ? ` data-v7-no-bg="true"` : ` data-v7-bg="${escapeAttr(settings.bg)}"`) +
       (settings.bgRef ? ` data-v7-bg-ref="${escapeAttr(settings.bgRef)}"` : '') +
       (settings.palette.length > 0 ? ` data-v7-palette="${escapeAttr(serializePalette(settings.palette))}"` : '') +
@@ -1065,15 +1072,25 @@ export function parseProject(text: string): ParsedProject {
     if (parsed.length > 0) settings.snapAngles = parsed
   }
 
-  const bz = svg.getAttribute('data-v7-bezier')
-  if (bz) {
-    const v = parseFloat(bz)
-    if (Number.isFinite(v)) settings.bezier = v
-  }
-  const bzMode = parseBezierMode(svg.getAttribute('data-v7-bezier-mode'))
-  if (bzMode) settings.bezierMode = bzMode
   const presets = parseBezierPresetsAttr(svg.getAttribute('data-v7-bezier-presets'))
-  if (presets) settings.bezierPresets = presets
+  if (presets && presets.length > 0) {
+    settings.bezierPresets = presets
+  } else {
+    // Legacy migration: a project saved before the "first preset is the
+    // implicit global default" model carried the global as a raw
+    // `data-v7-bezier` (and optionally `data-v7-bezier-mode`). Promote those
+    // values into a synthesized `default` preset so the new resolution chain
+    // has something to fall back to.
+    const bzRaw = svg.getAttribute('data-v7-bezier')
+    const bzValue = bzRaw === null ? NaN : parseFloat(bzRaw)
+    const value = Number.isFinite(bzValue) ? bzValue : DEFAULT_SETTINGS.bezierPresets[0].value
+    const mode = parseBezierMode(svg.getAttribute('data-v7-bezier-mode'))
+    settings.bezierPresets = [
+      mode && mode !== 'proportional'
+        ? { name: DEFAULT_BEZIER_PRESET_NAME, value, mode }
+        : { name: DEFAULT_BEZIER_PRESET_NAME, value },
+    ]
+  }
 
   if (svg.getAttribute('data-v7-no-bg') === 'true') {
     settings.bg = null
@@ -1318,8 +1335,8 @@ export function parseProject(text: string): ParsedProject {
   // override on every fresh path because it can't see siblings. Here we
   // collect those overrides, pick the dominant value (2-dp bucketed so float
   // drift in the recovered `t` doesn't shatter the histogram), and:
-  //   1. promote it to `settings.bezier` when the file didn't already carry
-  //      `data-v7-bezier`,
+  //   1. promote it into the implicit-default preset (`bezierPresets[0]`)
+  //      when the file didn't already carry a presets attribute,
   //   2. null any fresh shape's `bezierOverride` that lands on the global
   //      (and any shape with no actual corners — `bezierOverride` on a
   //      2-vertex line is meaningless and would emit a noisy attribute).
@@ -1334,14 +1351,18 @@ export function parseProject(text: string): ParsedProject {
       if (sh.points.length < 3) continue
       if (typeof sh.bezierOverride === 'number') candidateTs.push(sh.bezierOverride)
     }
-    if (candidateTs.length > 0 && !svg.hasAttribute('data-v7-bezier')) {
-      settings.bezier = pickDominantT(candidateTs)
+    const hadExplicitPresets = svg.hasAttribute('data-v7-bezier-presets')
+    const hadLegacyBezier = svg.hasAttribute('data-v7-bezier')
+    if (candidateTs.length > 0 && !hadExplicitPresets && !hadLegacyBezier) {
+      const dominant = pickDominantT(candidateTs)
+      settings.bezierPresets = [{ name: DEFAULT_BEZIER_PRESET_NAME, value: dominant }]
     }
+    const defaultValue = settings.bezierPresets[0]?.value ?? 0
     for (const idx of freshIndices) {
       const sh = shapes[idx]
       if (typeof sh.bezierOverride !== 'number') continue
       const noCorners = sh.kind === 'circle' || sh.points.length < 3
-      if (noCorners || Math.abs(sh.bezierOverride - settings.bezier) <= 0.005) {
+      if (noCorners || Math.abs(sh.bezierOverride - defaultValue) <= 0.005) {
         sh.bezierOverride = null
       }
     }

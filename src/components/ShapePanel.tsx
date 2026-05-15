@@ -110,9 +110,13 @@ export function ShapePanel() {
   const shapes = useStore(s => s.shapes)
   const selectedShapeIds = useStore(s => s.selectedShapeIds)
   const selectedVertices = useStore(s => s.selectedVertices)
-  const globalBezier = useStore(s => s.settings.bezier)
-  const globalBezierMode = useStore(s => s.settings.bezierMode ?? 'proportional')
   const bezierPresets = useStore(s => s.settings.bezierPresets)
+  // The first preset is the implicit global default. The loader guarantees at
+  // least one preset, but stay defensive in case a hand-edited file slips
+  // through.
+  const defaultPreset = bezierPresets[0]
+  const globalBezier = defaultPreset?.value ?? 0
+  const globalBezierMode = defaultPreset?.mode ?? 'proportional'
   const canvasRef = useStore(s => Math.min(s.settings.viewBoxWidth, s.settings.viewBoxHeight))
   const setShapeBezierRef = useStore(s => s.setShapeBezierRef)
   const setVertexBezierRef = useStore(s => s.setVertexBezierRef)

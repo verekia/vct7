@@ -7,8 +7,7 @@ import type { ProjectSettings, Shape } from '../types'
 
 const sampleSettings: ProjectSettings = {
   snapAngles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],
-  bezier: 0.2,
-  bezierPresets: [],
+  bezierPresets: [{ name: 'default', value: 0.2 }],
   palette: [],
   bg: '#ffeedd',
   width: 400,
@@ -62,7 +61,8 @@ describe('serializeProject', () => {
     expect(text).toContain('<?xml version="1.0"')
     expect(text).toContain('viewBox="0 0 400 300"')
     expect(text).toContain('data-v7-snap-angles="0,30,60,90,120,150,180,210,240,270,300,330"')
-    expect(text).toContain('data-v7-bezier="0.2"')
+    // The global value lives in the implicit-default preset.
+    expect(text).toContain(`data-v7-bezier-presets='[{&quot;name&quot;:&quot;default&quot;,&quot;value&quot;:0.2}]'`)
     expect(text).toContain('data-v7-bg="#ffeedd"')
     expect(text).toContain('<rect x="0" y="0" width="400" height="300" fill="#ffeedd"/>')
   })
@@ -73,6 +73,32 @@ describe('serializeProject', () => {
     const bBlock = text.match(/data-v7-points="20,200[\s\S]*?\/>/)?.[0] ?? ''
     expect(aBlock).toContain('data-v7-bezier="0.5"')
     expect(bBlock).not.toContain('data-v7-bezier=')
+  })
+})
+
+describe('legacy bezier migration', () => {
+  it('synthesizes a default preset from data-v7-bezier when no presets attr is present', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"
+           data-v7-bezier="0.42"/>`
+    const parsed = parseProject(text)
+    expect(parsed.settings.bezierPresets).toEqual([{ name: 'default', value: 0.42 }])
+  })
+
+  it('carries data-v7-bezier-mode into the synthesized default preset', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"
+           data-v7-bezier="12" data-v7-bezier-mode="absolute"/>`
+    const parsed = parseProject(text)
+    expect(parsed.settings.bezierPresets).toEqual([{ name: 'default', value: 12, mode: 'absolute' }])
+  })
+
+  it('falls back to the built-in default when the file has no bezier attrs at all', () => {
+    const text = `<?xml version="1.0"?>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"/>`
+    const parsed = parseProject(text)
+    expect(parsed.settings.bezierPresets.length).toBe(1)
+    expect(parsed.settings.bezierPresets[0].name).toBe('default')
   })
 })
 
@@ -124,9 +150,9 @@ describe('bezier presets', () => {
     expect(shapes[0].pointBezierRefs).toEqual({ 2: 'pixely' })
   })
 
-  it('does not emit the preset attr when the list is empty', () => {
+  it('always emits the preset attr (the list always has at least the default)', () => {
     const text = serializeProject(sampleSettings, sampleShapes)
-    expect(text).not.toContain('data-v7-bezier-presets')
+    expect(text).toContain('data-v7-bezier-presets=')
   })
 })
 
@@ -318,8 +344,8 @@ describe('parseProject — fresh SVG import (no v7 metadata)', () => {
     expect(parsed.shapes[0].closed).toBe(true)
     expect(parsed.shapes[0].fill).toBe('#ff0000')
     // Plain `M L L L Z` square has no curves; reconciliation lifts the
-    // recovered `t = 0` to `settings.bezier` and nulls the shape override.
-    expect(parsed.settings.bezier).toBe(0)
+    // recovered `t = 0` into the default preset and nulls the shape override.
+    expect(parsed.settings.bezierPresets[0].value).toBe(0)
     expect(parsed.shapes[0].bezierOverride).toBe(null)
     expect(parsed.shapes[1].kind).toBe('circle')
     expect(parsed.shapes[1].points[0]).toEqual([50, 50])
@@ -383,9 +409,9 @@ describe('parseProject — fresh SVG import (no v7 metadata)', () => {
     expect(reparsed.shapes.length).toBe(sampleShapes.length)
     expect(reparsed.settings.bg).toBe(sampleSettings.bg)
     // The triangle was the only shape with corners; its `t = 0.5` becomes
-    // the project-level `settings.bezier`, and the shape inherits it via a
-    // null override (the line contributed nothing — no corners).
-    expect(reparsed.settings.bezier).toBeCloseTo(0.5, 2)
+    // the implicit default preset, and the shape inherits it via a null
+    // override (the line contributed nothing — no corners).
+    expect(reparsed.settings.bezierPresets[0].value).toBeCloseTo(0.5, 2)
     expect(reparsed.shapes[0].points).toEqual([
       [10, 10],
       [100, 10],
@@ -431,16 +457,16 @@ describe('parseProject — fresh SVG import (no v7 metadata)', () => {
       [100, 100],
       [0, 100],
     ])
-    // The shape's representative `t` (0.4) becomes global; the shape's own
-    // override is nulled (it matches global), and the deviating corner at
-    // index 2 is preserved as a per-vertex override.
-    expect(reparsed.settings.bezier).toBeCloseTo(0.4, 2)
+    // The shape's representative `t` (0.4) becomes the implicit default
+    // preset; the shape's own override is nulled (it matches), and the
+    // deviating corner at index 2 is preserved as a per-vertex override.
+    expect(reparsed.settings.bezierPresets[0].value).toBeCloseTo(0.4, 2)
     expect(reparsed.shapes[0].bezierOverride).toBe(null)
     expect(reparsed.shapes[0].pointBezierOverrides).toBeDefined()
     expect(reparsed.shapes[0].pointBezierOverrides?.[2]).toBeCloseTo(0.8, 2)
   })
 
-  it('lifts the dominant per-shape bezier into settings.bezier and keeps outliers as overrides', () => {
+  it('lifts the dominant per-shape bezier into the default preset and keeps outliers as overrides', () => {
     resetIds(1)
     const triangleAt = (cx: number, cy: number, t: number): Shape => ({
       id: `t${cx}`,
@@ -458,12 +484,15 @@ describe('parseProject — fresh SVG import (no v7 metadata)', () => {
       locked: false,
     })
     const shapes = [triangleAt(0, 0, 0.5), triangleAt(100, 0, 0.5), triangleAt(0, 100, 0.5), triangleAt(100, 100, 0.8)]
-    const exported = serializeProject({ ...sampleSettings, bg: null, bezier: 0.1 }, shapes)
+    const exported = serializeProject(
+      { ...sampleSettings, bg: null, bezierPresets: [{ name: 'default', value: 0.1 }] },
+      shapes,
+    )
     const stripped = stripV7Attributes(exported)
     const reparsed = parseProject(stripped)
     expect(reparsed.shapes).toHaveLength(4)
-    // Three shapes vote 0.5, one votes 0.8 — global lifts to 0.5.
-    expect(reparsed.settings.bezier).toBeCloseTo(0.5, 2)
+    // Three shapes vote 0.5, one votes 0.8 — default lifts to 0.5.
+    expect(reparsed.settings.bezierPresets[0].value).toBeCloseTo(0.5, 2)
     // The matching shapes get nulled to inherit global; the outlier keeps
     // its explicit override.
     expect(reparsed.shapes[0].bezierOverride).toBe(null)
@@ -519,12 +548,12 @@ describe('parseProject round-trip', () => {
     expect(() => parseProject('<not valid')).toThrow()
   })
 
-  // Regression: `if (bz)` correctly treats the string "0" as truthy, so a
-  // global bezier of exactly 0 round-trips. (Easy bug to introduce later.)
-  it('preserves bezier === 0 across round-trip', () => {
-    const settings: ProjectSettings = { ...sampleSettings, bezier: 0 }
+  // Regression: a default-preset value of exactly 0 must round-trip as 0,
+  // not be lost to a truthy check.
+  it('preserves default preset value === 0 across round-trip', () => {
+    const settings: ProjectSettings = { ...sampleSettings, bezierPresets: [{ name: 'default', value: 0 }] }
     const text = serializeProject(settings, [])
-    expect(parseProject(text).settings.bezier).toBe(0)
+    expect(parseProject(text).settings.bezierPresets[0].value).toBe(0)
   })
 
   // Regression: a per-shape bezierOverride of 0 (forced sharp) must come back

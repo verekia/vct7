@@ -2210,6 +2210,10 @@ export const useStore = create<AppState>(set => ({
   removeBezierPreset: name =>
     set(s => {
       if (!s.settings.bezierPresets.some(p => p.name === name)) return s
+      // The first preset is the implicit global default — deleting the only
+      // entry would leave the project without one, so block that case (matches
+      // fnt7's behavior with its preset list).
+      if (s.settings.bezierPresets.length <= 1) return s
       const settings: ProjectSettings = {
         ...s.settings,
         bezierPresets: s.settings.bezierPresets.filter(p => p.name !== name),
@@ -2410,8 +2414,11 @@ export const effectiveBezier = (shape: Shape, settings: ProjectSettings): ShapeB
 export const globalCanvasRef = (settings: ProjectSettings): number =>
   Math.min(settings.viewBoxWidth, settings.viewBoxHeight)
 
-/** Resolved global bezier spec (used for drawing previews — no shape context). */
-export const globalBezierSpec = (settings: ProjectSettings): BezierSpec => ({
-  mode: settings.bezierMode ?? 'proportional',
-  value: settings.bezier,
-})
+/**
+ * Resolved global bezier spec — the first preset is the implicit default.
+ * Used for drawing previews (no shape context).
+ */
+export const globalBezierSpec = (settings: ProjectSettings): BezierSpec => {
+  const p = settings.bezierPresets[0]
+  return p ? { mode: p.mode ?? 'proportional', value: p.value } : { mode: 'proportional', value: 0 }
+}

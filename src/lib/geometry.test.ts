@@ -10,7 +10,6 @@ import {
   isPartialArc,
   pointsToPath,
   resolveCornerRadius,
-  resolveShapeBezier,
 } from './geometry'
 
 import type { ArcRange, Point } from '../types'
@@ -254,18 +253,6 @@ describe('resolveCornerRadius', () => {
   it('clamps negative values to 0', () => {
     expect(resolveCornerRadius({ mode: 'absolute', value: -5 }, 100, 100, 0)).toBe(0)
     expect(resolveCornerRadius({ mode: 'relative', value: -1 }, 100, 100, 100)).toBe(0)
-  })
-})
-
-describe('resolveShapeBezier', () => {
-  it('uses the shape override when present', () => {
-    expect(resolveShapeBezier(0.3, 'absolute', 0.7, 'proportional')).toEqual({ mode: 'absolute', value: 0.3 })
-    expect(resolveShapeBezier(0.3, undefined, 0.7, 'absolute')).toEqual({ mode: 'proportional', value: 0.3 })
-  })
-
-  it('falls back to the global when no shape override', () => {
-    expect(resolveShapeBezier(null, undefined, 0.7, 'relative')).toEqual({ mode: 'relative', value: 0.7 })
-    expect(resolveShapeBezier(null, undefined, 0.7, undefined)).toEqual({ mode: 'proportional', value: 0.7 })
   })
 })
 

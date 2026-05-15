@@ -123,15 +123,6 @@ export function ProjectPanel() {
         </div>
       </div>
 
-      <BezierControl
-        mode={settings.bezierMode ?? 'proportional'}
-        value={settings.bezier}
-        canvasRef={Math.min(settings.viewBoxWidth, settings.viewBoxHeight)}
-        label="Global bezier"
-        onModeChange={m => setSettings({ bezierMode: m === 'proportional' ? undefined : m })}
-        onValueChange={v => setSettings({ bezier: v })}
-      />
-
       <BezierPresetsSection
         presets={settings.bezierPresets}
         canvasRef={Math.min(settings.viewBoxWidth, settings.viewBoxHeight)}
@@ -441,9 +432,10 @@ export function BezierRefSelect({
 /**
  * Project-level bezier preset library. Names are restricted to characters
  * that round-trip cleanly through the comma-separated `data-v7-point-bezier-
- * ref` attribute (no commas, no colons). The first preset is *not* an
- * implicit default in vct7 — the global value+mode is — so the list can be
- * empty without affecting rendering.
+ * ref` attribute (no commas, no colons). The first preset is the implicit
+ * global default — shapes/vertices that don't override fall back to it — so
+ * the list always carries at least one entry (the loader migrates legacy
+ * files into a `default` preset).
  */
 const PRESET_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9_ -]*$/
 
@@ -465,25 +457,21 @@ function BezierPresetsSection({ presets, canvasRef }: { presets: BezierPreset[];
       <span className="flex items-center justify-between gap-1.5">
         <span>Bezier presets</span>
       </span>
-      {presets.length === 0 ? (
-        <span className="text-muted-2 text-[10px] leading-snug tracking-normal normal-case">
-          Add a preset to reuse a (mode, value) pair across layers and points.
-        </span>
-      ) : (
-        <ul className="flex flex-col gap-1.5">
-          {presets.map(p => (
-            <BezierPresetRow
-              key={p.name}
-              preset={p}
-              canvasRef={canvasRef}
-              onRename={n => updatePreset(p.name, { name: n })}
-              onValueChange={v => updatePreset(p.name, { value: v })}
-              onModeChange={m => updatePreset(p.name, { mode: m })}
-              onDelete={() => removePreset(p.name)}
-            />
-          ))}
-        </ul>
-      )}
+      <ul className="flex flex-col gap-1.5">
+        {presets.map((p, i) => (
+          <BezierPresetRow
+            key={p.name}
+            preset={p}
+            canvasRef={canvasRef}
+            isDefault={i === 0}
+            canDelete={presets.length > 1}
+            onRename={n => updatePreset(p.name, { name: n })}
+            onValueChange={v => updatePreset(p.name, { value: v })}
+            onModeChange={m => updatePreset(p.name, { mode: m })}
+            onDelete={() => removePreset(p.name)}
+          />
+        ))}
+      </ul>
       <div className="flex items-center gap-1.5">
         <input
           type="text"
@@ -511,6 +499,8 @@ function BezierPresetsSection({ presets, canvasRef }: { presets: BezierPreset[];
 function BezierPresetRow({
   preset,
   canvasRef,
+  isDefault,
+  canDelete,
   onRename,
   onValueChange,
   onModeChange,
@@ -518,6 +508,8 @@ function BezierPresetRow({
 }: {
   preset: BezierPreset
   canvasRef: number
+  isDefault: boolean
+  canDelete: boolean
   onRename: (n: string) => void
   onValueChange: (v: number) => void
   onModeChange: (m: BezierMode) => void
@@ -540,11 +532,13 @@ function BezierPresetRow({
             else setNameDraft(preset.name)
           }}
         />
+        {isDefault && <span className="text-muted-2 text-[9px] tracking-[0.4px] uppercase">Default</span>}
         <button
           type="button"
           className="px-[7px] py-[2px] text-[11px]"
           onClick={onDelete}
-          title="Delete preset (shapes referencing it fall back to the global / layer value)"
+          disabled={!canDelete}
+          title={canDelete ? 'Delete preset (refs to it fall back to the next layer)' : 'Cannot delete the only preset'}
         >
           ×
         </button>

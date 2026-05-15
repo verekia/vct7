@@ -42,25 +42,6 @@ export function presetSpec(name: string | null | undefined, presets: readonly Be
 }
 
 /**
- * Compose the effective bezier spec for a shape given its optional override
- * and the project-global default. Mirrors the precedence the renderer uses:
- * shape override (with its own mode) wins; otherwise inherit the global.
- *
- * Presets are *not* resolved here — they live at a higher layer (the store /
- * SVG IO compose a `BezierSpec` from a preset ref via {@link presetSpec} and
- * skip this helper). This stays pure value+mode plumbing.
- */
-export function resolveShapeBezier(
-  shapeValue: number | null,
-  shapeMode: BezierMode | undefined,
-  globalValue: number,
-  globalMode: BezierMode | undefined,
-): BezierSpec {
-  if (shapeValue !== null) return { mode: shapeMode ?? 'proportional', value: shapeValue }
-  return { mode: globalMode ?? 'proportional', value: globalValue }
-}
-
-/**
  * Build the per-point spec map `pointsToPath` consumes from a shape's
  * point-level overrides. Returns `undefined` when no per-point value is set —
  * that lets the renderer skip the per-point branch entirely.
@@ -82,13 +63,22 @@ export function buildPerPointSpecMap(
 
 /**
  * Resolve the shape-level corner spec, walking the
- * `bezierRef → bezierOverride+bezierModeOverride → global` precedence chain.
- * Refs to missing presets fall through silently.
+ * `bezierRef → bezierOverride+bezierModeOverride → first preset` chain. Refs
+ * to missing presets fall through silently. The first preset is the implicit
+ * global default — it's always present in well-formed projects (the loader
+ * migrates legacy files so this is guaranteed).
  */
 export function resolveShapeLevelSpec(shape: Shape, settings: ProjectSettings): BezierSpec {
   const fromRef = presetSpec(shape.bezierRef, settings.bezierPresets)
   if (fromRef) return fromRef
-  return resolveShapeBezier(shape.bezierOverride, shape.bezierModeOverride, settings.bezier, settings.bezierMode)
+  if (shape.bezierOverride !== null) {
+    return { mode: shape.bezierModeOverride ?? 'proportional', value: shape.bezierOverride }
+  }
+  const fallback = settings.bezierPresets[0]
+  if (fallback) return { mode: fallback.mode ?? 'proportional', value: fallback.value }
+  // Defensive: every code path should keep the preset list non-empty, but
+  // returning a zero spec keeps rendering finite if it ever isn't.
+  return { mode: 'proportional', value: 0 }
 }
 
 /**

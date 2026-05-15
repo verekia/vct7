@@ -410,18 +410,14 @@ export interface PaletteColor {
 export interface ProjectSettings {
   /** Allowed snap angles in degrees. Empty array disables snapping. */
   snapAngles: number[]
-  /** Global corner rounding amount. Range depends on `bezierMode`. */
-  bezier: number
   /**
-   * Interpretation of `bezier` (and of every shape/point override that does
-   * not specify its own mode). Absent in legacy files → `'proportional'`.
-   */
-  bezierMode?: BezierMode
-  /**
-   * Named bezier presets, shared across the whole project. Shapes and
-   * vertices can reference an entry by name; editing the entry updates every
-   * reference live. Names must be unique and non-empty. Empty list means the
-   * project doesn't use named presets — fully equivalent to legacy projects.
+   * Named bezier presets, shared across the whole project. The first entry
+   * is the *implicit global default* — any shape/vertex that doesn't override
+   * inherits its value and mode. Renaming the first preset still keeps it as
+   * the default (position, not name, decides). Must contain at least one
+   * entry: new projects ship with `{ name: 'default', value: 0.5 }`, and the
+   * SVG loader synthesizes one from legacy `data-v7-bezier` attributes when a
+   * pre-presets file is opened.
    */
   bezierPresets: BezierPreset[]
   /**
