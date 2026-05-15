@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent }
 import { bbox, dist, pointsToPath } from '../lib/geometry'
 import { useStore, effectiveBezier } from '../store'
 
+import type { ShapeBezier } from '../store'
 import type { Group, Shape } from '../types'
 
 interface DropTarget {
@@ -363,7 +364,7 @@ function ShapeRow({
 }: {
   shape: Shape
   depth: number
-  bezier: number
+  bezier: ShapeBezier
   isSelected: boolean
   isDragging: boolean
   drop: 'above' | 'below' | null
@@ -567,7 +568,7 @@ function Swatch({ color, title }: { color: string; title: string }) {
   return <span className={cls} style={isNone ? undefined : { background: color }} title={title} />
 }
 
-function ShapePreview({ shape, bezier, dim }: { shape: Shape; bezier: number; dim: boolean }) {
+function ShapePreview({ shape, bezier, dim }: { shape: Shape; bezier: ShapeBezier; dim: boolean }) {
   const fill = shape.closed ? (shape.fill === 'none' ? 'transparent' : shape.fill) : 'none'
   const stroke = shape.stroke === 'none' ? 'transparent' : shape.stroke
   const pad = 1
@@ -596,7 +597,7 @@ function ShapePreview({ shape, bezier, dim }: { shape: Shape; bezier: number; di
   const w = Math.max(box.w, 0.0001)
   const h = Math.max(box.h, 0.0001)
   const vb = `${box.x - pad} ${box.y - pad} ${w + pad * 2} ${h + pad * 2}`
-  const d = pointsToPath(shape.points, shape.closed, bezier)
+  const d = pointsToPath(shape.points, shape.closed, bezier.spec, bezier.perPoint, bezier.canvasRef)
   return (
     <span className={wrap} aria-hidden>
       <svg viewBox={vb} width="20" height="20" preserveAspectRatio="xMidYMid meet">

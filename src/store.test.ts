@@ -627,14 +627,14 @@ describe('store: undo / redo', () => {
   it('coalesces consecutive setSettings calls with the same patch shape into one entry', () => {
     seed()
     const s = useStore.getState()
-    s.setSettings({ bezier: 0.1 })
-    s.setSettings({ bezier: 0.2 })
-    s.setSettings({ bezier: 0.3 })
+    s.setSettings({ gridSize: 10 })
+    s.setSettings({ gridSize: 20 })
+    s.setSettings({ gridSize: 30 })
     // All three slider ticks collapse to a single undo step that returns to
     // the pre-drag value.
     expect(useStore.getState().past.length).toBe(1)
     useStore.getState().undo()
-    expect(useStore.getState().settings.bezier).toBe(DEFAULT_SETTINGS.bezier)
+    expect(useStore.getState().settings.gridSize).toBe(DEFAULT_SETTINGS.gridSize)
   })
 
   it('coalesces updateShape calls with the same id and key set', () => {

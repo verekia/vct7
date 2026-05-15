@@ -1,4 +1,4 @@
-import type { ArcRange, Point } from '../types'
+import type { ArcRange, BezierMode, BezierPreset, Point, ProjectSettings, Shape } from '../types'
 
 const RAD_TO_DEG = 180 / Math.PI
 const DEG_TO_RAD = Math.PI / 180
@@ -6,6 +6,108 @@ const DEG_TO_RAD = Math.PI / 180
 export const dist = (a: Point, b: Point): number => Math.hypot(a[0] - b[0], a[1] - b[1])
 
 export const fmt = (n: number): number => (Number.isFinite(n) ? Number(n.toFixed(3)) : 0)
+
+/** Resolved corner-rounding spec: mode tells how `value` becomes a radius. */
+export interface BezierSpec {
+  mode: BezierMode
+  value: number
+}
+
+/**
+ * Convert a `BezierSpec` into the *target* corner radius in canvas units, then
+ * clamp at half the shorter neighboring edge so adjacent corners can't overlap.
+ *
+ * - `proportional`: clamp(value, 0, 1) × 0.5 × min(inLen, outLen) — the legacy
+ *   behavior, equivalent to passing a raw `t`.
+ * - `absolute`: max(0, value) directly in canvas units.
+ * - `relative`: max(0, value) × `canvasRef`, where `canvasRef` is typically
+ *   `min(viewBoxWidth, viewBoxHeight)`.
+ */
+export function resolveCornerRadius(spec: BezierSpec, inLen: number, outLen: number, canvasRef: number): number {
+  const cap = 0.5 * Math.min(inLen, outLen)
+  let raw: number
+  if (spec.mode === 'absolute') raw = Math.max(0, spec.value)
+  else if (spec.mode === 'relative') raw = Math.max(0, spec.value) * Math.max(0, canvasRef)
+  else raw = Math.max(0, Math.min(1, spec.value)) * cap
+  return Math.min(raw, cap)
+}
+
+const asSpec = (v: number | BezierSpec): BezierSpec => (typeof v === 'number' ? { mode: 'proportional', value: v } : v)
+
+/** Look up a preset by name. Returns `undefined` for missing / empty refs. */
+export function presetSpec(name: string | null | undefined, presets: readonly BezierPreset[]): BezierSpec | undefined {
+  if (!name) return undefined
+  const p = presets.find(pr => pr.name === name)
+  return p ? { mode: p.mode ?? 'proportional', value: p.value } : undefined
+}
+
+/**
+ * Build the per-point spec map `pointsToPath` consumes from a shape's
+ * point-level overrides. Returns `undefined` when no per-point value is set —
+ * that lets the renderer skip the per-point branch entirely.
+ */
+export function buildPerPointSpecMap(
+  pointBezierOverrides: { readonly [k: number]: number | undefined } | undefined,
+  pointBezierModeOverrides: { readonly [k: number]: BezierMode | undefined } | undefined,
+): Record<number, BezierSpec> | undefined {
+  if (!pointBezierOverrides) return undefined
+  const out: Record<number, BezierSpec> = {}
+  for (const [k, v] of Object.entries(pointBezierOverrides)) {
+    if (v === undefined) continue
+    const idx = Number(k)
+    if (!Number.isFinite(idx)) continue
+    out[idx] = { mode: pointBezierModeOverrides?.[idx] ?? 'proportional', value: v }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * Resolve the shape-level corner spec, walking the
+ * `bezierRef → bezierOverride+bezierModeOverride → first preset` chain. Refs
+ * to missing presets fall through silently. The first preset is the implicit
+ * global default — it's always present in well-formed projects (the loader
+ * migrates legacy files so this is guaranteed).
+ */
+export function resolveShapeLevelSpec(shape: Shape, settings: ProjectSettings): BezierSpec {
+  const fromRef = presetSpec(shape.bezierRef, settings.bezierPresets)
+  if (fromRef) return fromRef
+  if (shape.bezierOverride !== null) {
+    return { mode: shape.bezierModeOverride ?? 'proportional', value: shape.bezierOverride }
+  }
+  const fallback = settings.bezierPresets[0]
+  if (fallback) return { mode: fallback.mode ?? 'proportional', value: fallback.value }
+  // Defensive: every code path should keep the preset list non-empty, but
+  // returning a zero spec keeps rendering finite if it ever isn't.
+  return { mode: 'proportional', value: 0 }
+}
+
+/**
+ * Build the per-vertex spec map: per-vertex ref wins, then per-vertex inline
+ * (value + mode), then the absent-key default in `pointsToPath` falls back to
+ * the shape-level spec. Returns `undefined` when no vertex has any per-point
+ * spec.
+ */
+export function resolvePerPointSpecMap(
+  shape: Shape,
+  settings: ProjectSettings,
+): Record<number, BezierSpec> | undefined {
+  const out: Record<number, BezierSpec> = {}
+  if (shape.pointBezierRefs) {
+    for (const [k, name] of Object.entries(shape.pointBezierRefs)) {
+      const spec = presetSpec(name, settings.bezierPresets)
+      if (spec) out[Number(k)] = spec
+    }
+  }
+  if (shape.pointBezierOverrides) {
+    for (const [k, v] of Object.entries(shape.pointBezierOverrides)) {
+      if (v === undefined) continue
+      const idx = Number(k)
+      if (out[idx]) continue
+      out[idx] = { mode: shape.pointBezierModeOverrides?.[idx] ?? 'proportional', value: v }
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
 
 /** Sweep size, normalized to [0, 360]. A zero start/end pair means a full turn. */
 export const arcSweep = (arc: ArcRange): number => {
@@ -55,8 +157,12 @@ interface CornerSegments {
  * Build the rounded-corner segments at a vertex. The curve always bulges
  * TOWARD the vertex (a classic fillet), regardless of interior angle or
  * polygon orientation.
+ *
+ * `t` may be a raw proportional value (legacy `number` form) or a
+ * `BezierSpec`. For spec form `'relative'` mode, `canvasRef` is required —
+ * pass `0` and the relative radius collapses to zero.
  */
-export function corner(prev: Point, cur: Point, next: Point, t: number): CornerSegments {
+export function corner(prev: Point, cur: Point, next: Point, t: number | BezierSpec, canvasRef = 0): CornerSegments {
   const inDx = cur[0] - prev[0]
   const inDy = cur[1] - prev[1]
   const inLen = Math.hypot(inDx, inDy) || 1
@@ -64,7 +170,7 @@ export function corner(prev: Point, cur: Point, next: Point, t: number): CornerS
   const outDy = next[1] - cur[1]
   const outLen = Math.hypot(outDx, outDy) || 1
 
-  const radius = Math.max(0, Math.min(1, t)) * 0.5 * Math.min(inLen, outLen)
+  const radius = resolveCornerRadius(asSpec(t), inLen, outLen, canvasRef)
 
   const a: Point = [cur[0] - (inDx / inLen) * radius, cur[1] - (inDy / inLen) * radius]
   const b: Point = [cur[0] + (outDx / outLen) * radius, cur[1] + (outDy / outLen) * radius]
@@ -79,19 +185,27 @@ export function corner(prev: Point, cur: Point, next: Point, t: number): CornerS
   return { a, b, control: cur, interiorAngle }
 }
 
+type BezierInput = number | BezierSpec
+type PerPointBezier = { readonly [k: number]: BezierInput | undefined }
+
+const isNonZero = (s: BezierSpec): boolean => s.value > 0
+
 /**
  * Render a polyline (or polygon) as an SVG `d` attribute, with corners rounded
- * by `bezier` ∈ [0, 1]. 0 produces straight `L` segments only.
+ * by `bezier`. The legacy `number` form is interpreted as a proportional
+ * value ∈ [0, 1]; pass a `BezierSpec` for absolute / relative modes.
  *
  * `perPointBezier` is an optional sparse override per vertex index — wins over
- * the layer-level `bezier` for that single corner. Out-of-range or undefined
- * entries fall through to `bezier`.
+ * the layer-level `bezier` for that single corner. `canvasRef` is required for
+ * the `'relative'` mode (typically `min(viewBoxWidth, viewBoxHeight)`); it's
+ * ignored by the other modes.
  */
 export function pointsToPath(
   points: Point[],
   closed: boolean,
-  bezier: number,
-  perPointBezier?: { readonly [k: number]: number | undefined },
+  bezier: BezierInput,
+  perPointBezier?: PerPointBezier,
+  canvasRef = 0,
 ): string {
   if (points.length === 0) return ''
   if (points.length === 1) {
@@ -99,20 +213,19 @@ export function pointsToPath(
     return `M ${fmt(x)} ${fmt(y)}`
   }
 
-  const baseT = Math.max(0, Math.min(1, bezier || 0))
+  const baseSpec = asSpec(bezier || 0)
   const n = points.length
-  const cornerT = (i: number): number => {
+  const cornerSpec = (i: number): BezierSpec => {
     const ov = perPointBezier?.[i]
-    if (ov === undefined) return baseT
-    return Math.max(0, Math.min(1, ov))
+    return ov === undefined ? baseSpec : asSpec(ov)
   }
 
   // Skip the rounded path entirely only when no corner has any rounding.
-  let anyCurve = baseT > 0
+  let anyCurve = isNonZero(baseSpec)
   if (!anyCurve && perPointBezier) {
     for (let i = 0; i < n; i++) {
       const ov = perPointBezier[i]
-      if (ov !== undefined && ov > 0) {
+      if (ov !== undefined && isNonZero(asSpec(ov))) {
         anyCurve = true
         break
       }
@@ -133,7 +246,7 @@ export function pointsToPath(
       const prev = points[(i - 1 + n) % n]
       const cur = points[i]
       const next = points[(i + 1) % n]
-      corners.push(corner(prev, cur, next, cornerT(i)))
+      corners.push(corner(prev, cur, next, cornerSpec(i), canvasRef))
     }
     let d = `M ${fmt(corners[0].b[0])} ${fmt(corners[0].b[1])}`
     for (let i = 1; i < n; i++) {
@@ -150,7 +263,7 @@ export function pointsToPath(
 
   let d = `M ${fmt(points[0][0])} ${fmt(points[0][1])}`
   for (let i = 1; i < n - 1; i++) {
-    const c = corner(points[i - 1], points[i], points[i + 1], cornerT(i))
+    const c = corner(points[i - 1], points[i], points[i + 1], cornerSpec(i), canvasRef)
     d += ` L ${fmt(c.a[0])} ${fmt(c.a[1])}`
     d += ` Q ${fmt(c.control[0])} ${fmt(c.control[1])} ${fmt(c.b[0])} ${fmt(c.b[1])}`
   }

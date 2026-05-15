@@ -1,6 +1,14 @@
-import { BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
+import { BEZIER_MODES, BLEND_MODES, EASINGS, STROKE_LINECAPS, STROKE_LINEJOINS } from '../types'
 import { animationHasPaint, animationHasSpin, buildKeyframesStyle } from './animation'
-import { arcToPath, dist, fmt, isPartialArc, pointsToPath } from './geometry'
+import {
+  arcToPath,
+  dist,
+  fmt,
+  isPartialArc,
+  pointsToPath,
+  resolvePerPointSpecMap,
+  resolveShapeLevelSpec,
+} from './geometry'
 import { importFreshShape, isInsideNonRenderedAncestor, pickDominantT } from './svg-import'
 import {
   composeTransformString,
@@ -18,6 +26,8 @@ import type {
   AnimationFromState,
   AnimationSpec,
   ArcRange,
+  BezierMode,
+  BezierPreset,
   BlendMode,
   Easing,
   GlyphData,
@@ -34,7 +44,90 @@ import type {
 } from '../types'
 
 const ARC_STYLES: ReadonlySet<ArcRange['style']> = new Set(['wedge', 'chord', 'open'])
+const BEZIER_MODE_SET: ReadonlySet<string> = new Set(BEZIER_MODES)
 const BLEND_MODE_SET: ReadonlySet<string> = new Set(BLEND_MODES)
+
+/**
+ * Compose the shape-level bezier inputs `pointsToPath` needs at serialization
+ * time. Mirrors `effectiveBezier` in store.ts. Operates on a Shape-shape (so
+ * reflected / cloned derivatives that carry the same fields work too).
+ */
+const shapeBezierInputs = (shape: Shape, settings: ProjectSettings) => ({
+  spec: resolveShapeLevelSpec(shape, settings),
+  perPoint: resolvePerPointSpecMap(shape, settings),
+  canvasRef: Math.min(settings.viewBoxWidth, settings.viewBoxHeight),
+})
+
+const parseBezierMode = (raw: string | null): BezierMode | undefined =>
+  raw && BEZIER_MODE_SET.has(raw) ? (raw as BezierMode) : undefined
+
+const parsePointBezierModeAttr = (raw: string | null): Record<number, BezierMode> | undefined => {
+  if (!raw) return undefined
+  const out: Record<number, BezierMode> = {}
+  for (const entry of raw.split(',')) {
+    const idx = entry.indexOf(':')
+    if (idx <= 0) continue
+    const k = parseInt(entry.slice(0, idx), 10)
+    const v = entry.slice(idx + 1)
+    if (!Number.isFinite(k) || k < 0) continue
+    if (!BEZIER_MODE_SET.has(v)) continue
+    out[k] = v as BezierMode
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * Decode the project-level bezier preset library. Stored as a JSON array
+ * with one `{name, value, mode?}` object per entry. Tolerates legacy entries
+ * without `mode` (default `'proportional'`); silently drops duplicates,
+ * empty names, and entries with non-finite values.
+ */
+const parseBezierPresetsAttr = (raw: string | null): BezierPreset[] | null => {
+  if (!raw) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+  const seen = new Set<string>()
+  const out: BezierPreset[] = []
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue
+    const obj = entry as Record<string, unknown>
+    const name = typeof obj.name === 'string' ? obj.name.trim() : ''
+    const value = typeof obj.value === 'number' && Number.isFinite(obj.value) ? obj.value : NaN
+    if (!name || seen.has(name) || !Number.isFinite(value)) continue
+    const rawMode = typeof obj.mode === 'string' ? obj.mode : ''
+    const mode: BezierMode = BEZIER_MODE_SET.has(rawMode) ? (rawMode as BezierMode) : 'proportional'
+    // Same clamping rule as the live editor: absolute is unbounded, the others
+    // sit in [0, 1].
+    const clamped = mode === 'absolute' ? Math.max(0, value) : Math.max(0, Math.min(1, value))
+    seen.add(name)
+    out.push(mode === 'proportional' ? { name, value: clamped } : { name, value: clamped, mode })
+  }
+  return out
+}
+
+/**
+ * Parse the per-point preset-ref attribute. Stored as comma-separated
+ * `index:preset-name` pairs; preset names are restricted by the editor to
+ * characters that don't conflict with the delimiters (no comma, no colon).
+ */
+const parsePointBezierRefAttr = (raw: string | null): Record<number, string> | undefined => {
+  if (!raw) return undefined
+  const out: Record<number, string> = {}
+  for (const entry of raw.split(',')) {
+    const idx = entry.indexOf(':')
+    if (idx <= 0) continue
+    const k = parseInt(entry.slice(0, idx), 10)
+    const v = entry.slice(idx + 1)
+    if (!Number.isFinite(k) || k < 0 || !v) continue
+    out[k] = v
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
 const EASING_SET: ReadonlySet<string> = new Set(EASINGS)
 const LINEJOIN_SET: ReadonlySet<string> = new Set(STROKE_LINEJOINS)
 const LINECAP_SET: ReadonlySet<string> = new Set(STROKE_LINECAPS)
@@ -189,9 +282,16 @@ const parseArcAttr = (raw: string | null): ArcRange | undefined => {
   return { start, end, style }
 }
 
+/**
+ * The first entry of `bezierPresets` is the implicit global default. It's
+ * always present — new projects start with `default = 0.5`, and the parser
+ * synthesizes one from legacy `data-v7-bezier` when an old file is opened.
+ */
+export const DEFAULT_BEZIER_PRESET_NAME = 'default'
+
 export const DEFAULT_SETTINGS: ProjectSettings = {
   snapAngles: [0, 45, 90, 135, 180, 225, 270, 315],
-  bezier: 0.5,
+  bezierPresets: [{ name: DEFAULT_BEZIER_PRESET_NAME, value: 0.5 }],
   palette: [],
   bg: null,
   width: 100,
@@ -433,8 +533,8 @@ const buildMirrorSibling = (source: Shape, settings: ProjectSettings, emitsPaint
     const d = arcToPath(rcx, rcy, r, partialArc)
     return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
   }
-  const bz = reflected.bezierOverride ?? settings.bezier
-  const d = pointsToPath(reflected.points, reflected.closed, bz, reflected.pointBezierOverrides)
+  const bz = shapeBezierInputs(reflected, settings)
+  const d = pointsToPath(reflected.points, reflected.closed, bz.spec, bz.perPoint, bz.canvasRef)
   return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
 }
 
@@ -501,8 +601,8 @@ const buildRadialSiblings = (source: Shape, settings: ProjectSettings, emitsPain
       const d = arcToPath(scx, scy, r, partialArc)
       element = `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
     } else {
-      const bz = source.bezierOverride ?? settings.bezier
-      const d = pointsToPath(source.points, source.closed, bz, source.pointBezierOverrides)
+      const bz = shapeBezierInputs(source, settings)
+      const d = pointsToPath(source.points, source.closed, bz.spec, bz.perPoint, bz.canvasRef)
       element = `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
     }
     out.push(element)
@@ -564,8 +664,8 @@ const buildGroupMemberClone = (shape: Shape, settings: ProjectSettings): string 
     const d = arcToPath(cx, cy, r, partialArc)
     return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
   }
-  const bz = shape.bezierOverride ?? settings.bezier
-  const d = pointsToPath(shape.points, shape.closed, bz, shape.pointBezierOverrides)
+  const bz = shapeBezierInputs(shape, settings)
+  const d = pointsToPath(shape.points, shape.closed, bz.spec, bz.perPoint, bz.canvasRef)
   return `<path d="${d}"${transformAttr} ${attrs.join(' ')}/>`
 }
 
@@ -595,7 +695,10 @@ export const resetIds = (n = 1): void => {
  * values can't contain unescaped `"` (see {@link escapeAttr}), so a simple
  * whitespace-anchored regex is sufficient.
  */
-export const stripV7Attributes = (svg: string): string => svg.replaceAll(/\s+data-v7-[\w-]+="[^"]*"/g, '')
+// Match both `"..."` and `'...'` so JSON-bearing attrs (which use single
+// quotes because their value contains `"`) are stripped along with the rest.
+export const stripV7Attributes = (svg: string): string =>
+  svg.replaceAll(/\s+data-v7-[\w-]+="[^"]*"/g, '').replaceAll(/\s+data-v7-[\w-]+='[^']*'/g, '')
 
 export function serializeProject(settings: ProjectSettings, shapes: Shape[], groups: Group[] = []): string {
   const lines: string[] = []
@@ -609,7 +712,11 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
       vbH,
     )}" width="${fmt(settings.width)}" height="${fmt(settings.height)}"` +
       ` data-v7-snap-angles="${escapeAttr(settings.snapAngles.join(','))}"` +
-      ` data-v7-bezier="${fmt(settings.bezier)}"` +
+      // Project-level bezier lives entirely inside the preset list. The first
+      // entry is the implicit global default; legacy `data-v7-bezier` /
+      // `data-v7-bezier-mode` are still parsed for migration but no longer
+      // emitted.
+      ` data-v7-bezier-presets='${escapeAttr(JSON.stringify(settings.bezierPresets))}'` +
       (settings.bg === null ? ` data-v7-no-bg="true"` : ` data-v7-bg="${escapeAttr(settings.bg)}"`) +
       (settings.bgRef ? ` data-v7-bg-ref="${escapeAttr(settings.bgRef)}"` : '') +
       (settings.palette.length > 0 ? ` data-v7-palette="${escapeAttr(serializePalette(settings.palette))}"` : '') +
@@ -752,6 +859,14 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
     }
     if (!isCircle && shape.bezierOverride !== null) {
       baseAttrs.push(`data-v7-bezier="${fmt(shape.bezierOverride)}"`)
+      if (shape.bezierModeOverride && shape.bezierModeOverride !== 'proportional') {
+        baseAttrs.push(`data-v7-bezier-mode="${shape.bezierModeOverride}"`)
+      }
+    }
+    // Shape-level preset reference. Independent of the inline override —
+    // resolution at render time prefers the ref when both are present.
+    if (!isCircle && shape.bezierRef) {
+      baseAttrs.push(`data-v7-bezier-ref="${escapeAttr(shape.bezierRef)}"`)
     }
     if (!isCircle && !isGlyphs && shape.pointBezierOverrides) {
       const entries = Object.entries(shape.pointBezierOverrides)
@@ -761,6 +876,26 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
         .map(([k, v]) => `${k}:${fmt(v)}`)
         .join(',')
       if (entries) baseAttrs.push(`data-v7-point-bezier="${entries}"`)
+      // Per-point mode override map, emitted only when at least one entry is
+      // non-default. Same `k:mode` shape as the value attr.
+      if (shape.pointBezierModeOverrides) {
+        const modeEntries = Object.entries(shape.pointBezierModeOverrides)
+          .map(([k, v]) => [Number(k), v] as const)
+          .filter(([k, v]) => Number.isFinite(k) && v && v !== 'proportional')
+          .toSorted(([a], [b]) => a - b)
+          .map(([k, v]) => `${k}:${v}`)
+          .join(',')
+        if (modeEntries) baseAttrs.push(`data-v7-point-bezier-mode="${modeEntries}"`)
+      }
+    }
+    if (!isCircle && !isGlyphs && shape.pointBezierRefs) {
+      const refEntries = Object.entries(shape.pointBezierRefs)
+        .map(([k, v]) => [Number(k), v] as const)
+        .filter(([k, v]) => Number.isFinite(k) && !!v)
+        .toSorted(([a], [b]) => a - b)
+        .map(([k, v]) => `${k}:${escapeAttr(v)}`)
+        .join(',')
+      if (refEntries) baseAttrs.push(`data-v7-point-bezier-ref="${refEntries}"`)
     }
     if (shape.hidden) baseAttrs.push(`data-v7-hidden="true"`)
     if (shape.locked) baseAttrs.push(`data-v7-locked="true"`)
@@ -824,8 +959,8 @@ export function serializeProject(settings: ProjectSettings, shapes: Shape[], gro
       const transformAttr = composedTransform ? ` transform="${composedTransform}"` : ''
       element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`
     } else {
-      const bz = shape.bezierOverride ?? settings.bezier
-      const d = pointsToPath(shape.points, shape.closed, bz, shape.pointBezierOverrides)
+      const bz = shapeBezierInputs(shape, settings)
+      const d = pointsToPath(shape.points, shape.closed, bz.spec, bz.perPoint, bz.canvasRef)
       const transformAttr = composedTransform ? ` transform="${composedTransform}"` : ''
       element = `<path d="${d}"${transformAttr} ${baseAttrs.join(' ')}/>`
     }
@@ -937,10 +1072,24 @@ export function parseProject(text: string): ParsedProject {
     if (parsed.length > 0) settings.snapAngles = parsed
   }
 
-  const bz = svg.getAttribute('data-v7-bezier')
-  if (bz) {
-    const v = parseFloat(bz)
-    if (Number.isFinite(v)) settings.bezier = v
+  const presets = parseBezierPresetsAttr(svg.getAttribute('data-v7-bezier-presets'))
+  if (presets && presets.length > 0) {
+    settings.bezierPresets = presets
+  } else {
+    // Legacy migration: a project saved before the "first preset is the
+    // implicit global default" model carried the global as a raw
+    // `data-v7-bezier` (and optionally `data-v7-bezier-mode`). Promote those
+    // values into a synthesized `default` preset so the new resolution chain
+    // has something to fall back to.
+    const bzRaw = svg.getAttribute('data-v7-bezier')
+    const bzValue = bzRaw === null ? NaN : parseFloat(bzRaw)
+    const value = Number.isFinite(bzValue) ? bzValue : DEFAULT_SETTINGS.bezierPresets[0].value
+    const mode = parseBezierMode(svg.getAttribute('data-v7-bezier-mode'))
+    settings.bezierPresets = [
+      mode && mode !== 'proportional'
+        ? { name: DEFAULT_BEZIER_PRESET_NAME, value, mode }
+        : { name: DEFAULT_BEZIER_PRESET_NAME, value },
+    ]
   }
 
   if (svg.getAttribute('data-v7-no-bg') === 'true') {
@@ -1057,8 +1206,18 @@ export function parseProject(text: string): ParsedProject {
     const overrideAttr = el.getAttribute('data-v7-bezier')
     const overrideNum = overrideAttr === null ? NaN : parseFloat(overrideAttr)
     const bezierOverride = !isCircle && !isGlyphs && Number.isFinite(overrideNum) ? overrideNum : null
+    // Mode override only carried when a numeric override is present; otherwise
+    // the shape inherits the global (along with its mode).
+    const bezierModeOverride =
+      bezierOverride !== null ? parseBezierMode(el.getAttribute('data-v7-bezier-mode')) : undefined
     const pointBezierOverrides =
       !isCircle && !isGlyphs ? parsePointBezierAttr(el.getAttribute('data-v7-point-bezier')) : undefined
+    const pointBezierModeOverrides =
+      !isCircle && !isGlyphs ? parsePointBezierModeAttr(el.getAttribute('data-v7-point-bezier-mode')) : undefined
+    const bezierRefAttr = !isCircle ? el.getAttribute('data-v7-bezier-ref') : null
+    const bezierRef = bezierRefAttr && bezierRefAttr.length > 0 ? bezierRefAttr : undefined
+    const pointBezierRefs =
+      !isCircle && !isGlyphs ? parsePointBezierRefAttr(el.getAttribute('data-v7-point-bezier-ref')) : undefined
     const glyphs = isGlyphs ? parseGlyphsAttrs(el) : undefined
     if (isGlyphs && !glyphs) continue
 
@@ -1142,7 +1301,11 @@ export function parseProject(text: string): ParsedProject {
       stroke: el.getAttribute('stroke') ?? 'none',
       strokeWidth: parseFloat(el.getAttribute('stroke-width') ?? '2'),
       bezierOverride,
+      ...(bezierModeOverride ? { bezierModeOverride } : {}),
+      ...(bezierRef ? { bezierRef } : {}),
       ...(pointBezierOverrides ? { pointBezierOverrides } : {}),
+      ...(pointBezierModeOverrides ? { pointBezierModeOverrides } : {}),
+      ...(pointBezierRefs ? { pointBezierRefs } : {}),
       hidden: el.getAttribute('data-v7-hidden') === 'true',
       locked: el.getAttribute('data-v7-locked') === 'true',
       ...(linejoin ? { strokeLinejoin: linejoin } : {}),
@@ -1172,8 +1335,8 @@ export function parseProject(text: string): ParsedProject {
   // override on every fresh path because it can't see siblings. Here we
   // collect those overrides, pick the dominant value (2-dp bucketed so float
   // drift in the recovered `t` doesn't shatter the histogram), and:
-  //   1. promote it to `settings.bezier` when the file didn't already carry
-  //      `data-v7-bezier`,
+  //   1. promote it into the implicit-default preset (`bezierPresets[0]`)
+  //      when the file didn't already carry a presets attribute,
   //   2. null any fresh shape's `bezierOverride` that lands on the global
   //      (and any shape with no actual corners — `bezierOverride` on a
   //      2-vertex line is meaningless and would emit a noisy attribute).
@@ -1188,14 +1351,18 @@ export function parseProject(text: string): ParsedProject {
       if (sh.points.length < 3) continue
       if (typeof sh.bezierOverride === 'number') candidateTs.push(sh.bezierOverride)
     }
-    if (candidateTs.length > 0 && !svg.hasAttribute('data-v7-bezier')) {
-      settings.bezier = pickDominantT(candidateTs)
+    const hadExplicitPresets = svg.hasAttribute('data-v7-bezier-presets')
+    const hadLegacyBezier = svg.hasAttribute('data-v7-bezier')
+    if (candidateTs.length > 0 && !hadExplicitPresets && !hadLegacyBezier) {
+      const dominant = pickDominantT(candidateTs)
+      settings.bezierPresets = [{ name: DEFAULT_BEZIER_PRESET_NAME, value: dominant }]
     }
+    const defaultValue = settings.bezierPresets[0]?.value ?? 0
     for (const idx of freshIndices) {
       const sh = shapes[idx]
       if (typeof sh.bezierOverride !== 'number') continue
       const noCorners = sh.kind === 'circle' || sh.points.length < 3
-      if (noCorners || Math.abs(sh.bezierOverride - settings.bezier) <= 0.005) {
+      if (noCorners || Math.abs(sh.bezierOverride - defaultValue) <= 0.005) {
         sh.bezierOverride = null
       }
     }

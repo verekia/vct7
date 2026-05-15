@@ -2,6 +2,37 @@ export type Point = readonly [number, number]
 
 export type Tool = 'select' | 'line' | 'polygon' | 'circle'
 
+/**
+ * How a bezier value is interpreted when building the rounded-corner arc:
+ *
+ * - `proportional` — `value ∈ [0, 1]`, scaled against the shorter neighboring
+ *   edge length. Far-apart vertices get larger arcs; this is the legacy mode.
+ * - `absolute` — `value` is a corner radius in canvas units. Independent of
+ *   neighbor distances, so every corner with the same value has the same
+ *   visible arc (until the half-min-neighbor cap kicks in).
+ * - `relative` — `value ∈ [0, 1]`, scaled against `min(viewBoxWidth,
+ *   viewBoxHeight)`. Lives between the other two: independent of neighbors,
+ *   but the absolute radius tracks the canvas size if it changes.
+ */
+export type BezierMode = 'proportional' | 'absolute' | 'relative'
+
+export const BEZIER_MODES: readonly BezierMode[] = ['proportional', 'absolute', 'relative']
+
+/**
+ * A named bezier rounding value, shared across the whole project. Shapes and
+ * vertices can reference one by `name`; tweaking the preset's value or mode
+ * updates every corner that refers to it. References to missing presets fall
+ * through silently to the next layer in the resolution chain.
+ */
+export interface BezierPreset {
+  /** Unique identifier and display name. */
+  name: string
+  /** Corner-rounding amount. Range depends on `mode`. */
+  value: number
+  /** How `value` is interpreted. Absent in legacy files → `'proportional'`. */
+  mode?: BezierMode
+}
+
 export type StrokeLinejoin = 'miter' | 'round' | 'bevel'
 export type StrokeLinecap = 'butt' | 'round' | 'square'
 
@@ -75,12 +106,40 @@ export interface Shape {
   /** When null, the project's global bezier value applies. */
   bezierOverride: number | null
   /**
+   * Mode this shape's `bezierOverride` uses. Absent (or undefined when
+   * `bezierOverride === null`) means `'proportional'`. The mode is meaningful
+   * only when `bezierOverride !== null` — clearing the override clears the
+   * mode too.
+   */
+  bezierModeOverride?: BezierMode
+  /**
+   * Reference to a `BezierPreset` by name. When set, *wins over* the inline
+   * `bezierOverride` / `bezierModeOverride` for this layer (those are kept in
+   * memory but ignored at render time). Setting a ref via the panel clears
+   * the inline pair; setting an inline value via the panel clears the ref.
+   * `null` means no ref — fall through to the inline pair, then the global.
+   */
+  bezierRef?: string | null
+  /**
    * Sparse per-vertex bezier override map (`pointIndex → t`). Wins over the
    * layer's `bezierOverride` and the project's global bezier for the corner
    * at that vertex. Endpoints of open polylines have no corner — entries on
    * those indices are stored faithfully but render as a no-op.
    */
   pointBezierOverrides?: Record<number, number>
+  /**
+   * Sparse per-vertex mode override, parallel to `pointBezierOverrides`. A
+   * missing entry implies `'proportional'`. Indices present here without a
+   * matching numeric override are meaningless (mode without a value to
+   * interpret) and ignored at render time.
+   */
+  pointBezierModeOverrides?: Record<number, BezierMode>
+  /**
+   * Sparse per-vertex preset reference map. A ref at a vertex wins over the
+   * inline value/mode at that vertex AND over the shape-level ref / inline.
+   * Refs to missing presets fall through to the next layer.
+   */
+  pointBezierRefs?: Record<number, string>
   hidden: boolean
   locked: boolean
   /** User-supplied display name. Empty / undefined falls back to "polygon" / "line" / "circle". */
@@ -351,8 +410,16 @@ export interface PaletteColor {
 export interface ProjectSettings {
   /** Allowed snap angles in degrees. Empty array disables snapping. */
   snapAngles: number[]
-  /** Global corner rounding amount, 0..1. */
-  bezier: number
+  /**
+   * Named bezier presets, shared across the whole project. The first entry
+   * is the *implicit global default* — any shape/vertex that doesn't override
+   * inherits its value and mode. Renaming the first preset still keeps it as
+   * the default (position, not name, decides). Must contain at least one
+   * entry: new projects ship with `{ name: 'default', value: 0.5 }`, and the
+   * SVG loader synthesizes one from legacy `data-v7-bezier` attributes when a
+   * pre-presets file is opened.
+   */
+  bezierPresets: BezierPreset[]
   /**
    * Project-level color palette. The editor enforces unique non-empty names;
    * the order is the order the user added entries (used as the display order

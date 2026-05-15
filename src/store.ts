@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import { blendColor, findColorBelow, mix, parseHex, toHex } from './lib/blend'
+import { resolvePerPointSpecMap, resolveShapeLevelSpec } from './lib/geometry'
 import { DEFAULT_SETTINGS, makeId } from './lib/svg-io'
 import {
   applyTransformToPoint,
@@ -19,8 +20,11 @@ import {
   transformPointsAround,
 } from './lib/transform'
 
+import type { BezierSpec } from './lib/geometry'
 import type {
   AnimationSpec,
+  BezierMode,
+  BezierPreset,
   Drawing,
   GlyphData,
   Group,
@@ -58,13 +62,13 @@ interface HistoryEntry {
  * map stays aligned with the new compacted points array. Returns undefined
  * when the result is empty so the shape stays tidy.
  */
-const reindexPointBeziers = (
-  overrides: Record<number, number> | undefined,
+const reindexPointBeziers = <T>(
+  overrides: Record<number, T> | undefined,
   dropped: ReadonlySet<number>,
-): Record<number, number> | undefined => {
+): Record<number, T> | undefined => {
   if (!overrides) return undefined
   const sortedDrops = [...dropped].toSorted((a, b) => a - b)
-  const next: Record<number, number> = {}
+  const next: Record<number, T> = {}
   for (const [k, v] of Object.entries(overrides)) {
     const i = Number(k)
     if (dropped.has(i)) continue
@@ -80,12 +84,12 @@ const reindexPointBeziers = (
 
 /** Shift overrides up by 1 for entries at or after `insertIndex` so they keep
  * pointing at the same vertex once a new point has been spliced in. */
-const shiftPointBeziersForInsert = (
-  overrides: Record<number, number> | undefined,
+const shiftPointBeziersForInsert = <T>(
+  overrides: Record<number, T> | undefined,
   insertIndex: number,
-): Record<number, number> | undefined => {
+): Record<number, T> | undefined => {
   if (!overrides) return undefined
-  const next: Record<number, number> = {}
+  const next: Record<number, T> = {}
   for (const [k, v] of Object.entries(overrides)) {
     const i = Number(k)
     next[i >= insertIndex ? i + 1 : i] = v
@@ -520,6 +524,26 @@ export interface AppState {
   setShapePaletteRef: (id: string, channel: 'fill' | 'stroke', name: string | undefined) => void
   /** Same as above for the project background. */
   setBgPaletteRef: (name: string | undefined) => void
+  /**
+   * Add a bezier preset. No-op on empty / duplicate names so callers don't
+   * have to guard. `mode` defaults to `'proportional'`.
+   */
+  addBezierPreset: (name: string, value: number, mode?: BezierMode) => void
+  /**
+   * Update a preset — rename, change value, change mode, or any combination.
+   * Renaming cascades to every `bezierRef` / `pointBezierRefs` entry that
+   * points at the old name. No-op on collision with another preset's name.
+   */
+  updateBezierPreset: (name: string, patch: { name?: string; value?: number; mode?: BezierMode }) => void
+  /**
+   * Delete a preset. Any shape/vertex references to it are cleared (the
+   * corner falls back to the next layer of the resolution chain).
+   */
+  removeBezierPreset: (name: string) => void
+  /** Link a shape's bezier to a preset (clearing inline value+mode). */
+  setShapeBezierRef: (id: string, name: string | undefined) => void
+  /** Link selected vertices to a preset (clearing inline values+modes there). */
+  setVertexBezierRef: (id: string, indices: number[], name: string | undefined) => void
   setProject: (settings: ProjectSettings, shapes: Shape[], groups?: Group[]) => void
   newProject: () => void
   setFileMeta: (name: string, handle: unknown) => void
@@ -939,6 +963,8 @@ export const useStore = create<AppState>(set => ({
                 ...sh,
                 points: sh.points.filter((_, i) => i !== index),
                 pointBezierOverrides: reindexPointBeziers(sh.pointBezierOverrides, dropped),
+                pointBezierModeOverrides: reindexPointBeziers(sh.pointBezierModeOverrides, dropped),
+                pointBezierRefs: reindexPointBeziers(sh.pointBezierRefs, dropped),
               },
         ),
         selectedVertices: [],
@@ -972,6 +998,8 @@ export const useStore = create<AppState>(set => ({
                 ...sh,
                 points: nextPoints,
                 pointBezierOverrides: shiftPointBeziersForInsert(sh.pointBezierOverrides, insertAt),
+                pointBezierModeOverrides: shiftPointBeziersForInsert(sh.pointBezierModeOverrides, insertAt),
+                pointBezierRefs: shiftPointBeziersForInsert(sh.pointBezierRefs, insertAt),
               },
         ),
         selectedVertices: [{ shapeId, index: insertAt }],
@@ -1010,6 +1038,8 @@ export const useStore = create<AppState>(set => ({
           ...sh,
           points: kept,
           pointBezierOverrides: reindexPointBeziers(sh.pointBezierOverrides, drop),
+          pointBezierModeOverrides: reindexPointBeziers(sh.pointBezierModeOverrides, drop),
+          pointBezierRefs: reindexPointBeziers(sh.pointBezierRefs, drop),
         })
       }
       return {
@@ -1515,8 +1545,11 @@ export const useStore = create<AppState>(set => ({
         scale: undefined,
         mirror: undefined,
         // pointBezierOverrides indices no longer line up with the new point
-        // list — drop them rather than try to rebuild a guess.
+        // list — drop them (and their parallel mode map) rather than try to
+        // rebuild a guess.
         pointBezierOverrides: undefined,
+        pointBezierModeOverrides: undefined,
+        pointBezierRefs: undefined,
         ...(bakedArc ? { arc: bakedArc } : {}),
       }
       merged = true
@@ -1627,6 +1660,8 @@ export const useStore = create<AppState>(set => ({
         rotation: undefined,
         scale: undefined,
         pointBezierOverrides: undefined,
+        pointBezierModeOverrides: undefined,
+        pointBezierRefs: undefined,
         // Mirror modifier on either source is meaningless after a merge —
         // there's no longer a clean axis relationship to preserve.
         mirror: undefined,
@@ -2120,6 +2155,139 @@ export const useStore = create<AppState>(set => ({
         dirty: true,
       }
     }),
+  addBezierPreset: (name, value, mode) =>
+    set(s => {
+      const trimmed = name.trim()
+      if (!trimmed) return s
+      if (s.settings.bezierPresets.some(p => p.name === trimmed)) return s
+      const preset: BezierPreset =
+        mode && mode !== 'proportional' ? { name: trimmed, value, mode } : { name: trimmed, value }
+      return {
+        ...pushSnapshot(s),
+        settings: { ...s.settings, bezierPresets: [...s.settings.bezierPresets, preset] },
+        dirty: true,
+      }
+    }),
+  updateBezierPreset: (name, patch) =>
+    set(s => {
+      const idx = s.settings.bezierPresets.findIndex(p => p.name === name)
+      if (idx === -1) return s
+      const renaming = patch.name !== undefined && patch.name !== name
+      const newName = renaming ? patch.name!.trim() : name
+      if (renaming && !newName) return s
+      if (renaming && s.settings.bezierPresets.some(p => p.name === newName)) return s
+      const nextPresets = s.settings.bezierPresets.map((p, i) => {
+        if (i !== idx) return p
+        const mode = patch.mode ?? p.mode ?? 'proportional'
+        const value = patch.value ?? p.value
+        return mode === 'proportional' ? { name: newName, value } : { name: newName, value, mode }
+      })
+      const settings: ProjectSettings = { ...s.settings, bezierPresets: nextPresets }
+      // Slider drags should collapse into one undo entry; renames are atomic.
+      const coalesce = renaming ? undefined : `bezierPreset:${name}`
+      const shapes = renaming
+        ? s.shapes.map(sh => {
+            let next = sh
+            if (sh.bezierRef === name) next = { ...next, bezierRef: newName }
+            if (sh.pointBezierRefs) {
+              const remapped: Record<number, string> = {}
+              let changed = false
+              for (const [k, v] of Object.entries(sh.pointBezierRefs)) {
+                if (v === name) {
+                  remapped[Number(k)] = newName
+                  changed = true
+                } else {
+                  remapped[Number(k)] = v
+                }
+              }
+              if (changed) next = { ...next, pointBezierRefs: remapped }
+            }
+            return next
+          })
+        : s.shapes
+      return { ...pushSnapshot(s, coalesce), settings, shapes, dirty: true }
+    }),
+  removeBezierPreset: name =>
+    set(s => {
+      if (!s.settings.bezierPresets.some(p => p.name === name)) return s
+      // The first preset is the implicit global default — deleting the only
+      // entry would leave the project without one, so block that case (matches
+      // fnt7's behavior with its preset list).
+      if (s.settings.bezierPresets.length <= 1) return s
+      const settings: ProjectSettings = {
+        ...s.settings,
+        bezierPresets: s.settings.bezierPresets.filter(p => p.name !== name),
+      }
+      // Clear refs pointing at the deleted preset so the data stays honest
+      // about what's resolved at render time. Shapes/vertices fall through
+      // to the next layer of the resolution chain.
+      const shapes = s.shapes.map(sh => {
+        let next = sh
+        if (sh.bezierRef === name) next = { ...next, bezierRef: undefined }
+        if (sh.pointBezierRefs) {
+          const kept: Record<number, string> = {}
+          let dropped = false
+          for (const [k, v] of Object.entries(sh.pointBezierRefs)) {
+            if (v === name) dropped = true
+            else kept[Number(k)] = v
+          }
+          if (dropped) {
+            next = { ...next, pointBezierRefs: Object.keys(kept).length > 0 ? kept : undefined }
+          }
+        }
+        return next
+      })
+      return { ...pushSnapshot(s), settings, shapes, dirty: true }
+    }),
+  setShapeBezierRef: (id, name) =>
+    set(s => {
+      const shape = s.shapes.find(sh => sh.id === id)
+      if (!shape) return s
+      // Setting a ref clears the inline pair (and vice versa when caller passes
+      // undefined to "off" the ref).
+      const patch: Partial<Shape> = name
+        ? { bezierRef: name, bezierOverride: null, bezierModeOverride: undefined }
+        : { bezierRef: undefined }
+      return {
+        ...pushSnapshot(s, `bezierRef:${id}`),
+        shapes: s.shapes.map(sh => (sh.id === id ? { ...sh, ...patch } : sh)),
+        dirty: true,
+      }
+    }),
+  setVertexBezierRef: (id, indices, name) =>
+    set(s => {
+      if (indices.length === 0) return s
+      const shape = s.shapes.find(sh => sh.id === id)
+      if (!shape) return s
+      const refs: Record<number, string> = { ...shape.pointBezierRefs }
+      const values: Record<number, number> = { ...shape.pointBezierOverrides }
+      const modes: Record<number, BezierMode> = { ...shape.pointBezierModeOverrides }
+      for (const i of indices) {
+        if (name) {
+          refs[i] = name
+          delete values[i]
+          delete modes[i]
+        } else {
+          delete refs[i]
+        }
+      }
+      const trim = <T>(o: Record<number, T>): Record<number, T> | undefined =>
+        Object.keys(o).length > 0 ? o : undefined
+      return {
+        ...pushSnapshot(s, `vertexBezierRef:${id}`),
+        shapes: s.shapes.map(sh =>
+          sh.id === id
+            ? {
+                ...sh,
+                pointBezierRefs: trim(refs),
+                pointBezierOverrides: trim(values),
+                pointBezierModeOverrides: trim(modes),
+              }
+            : sh,
+        ),
+        dirty: true,
+      }
+    }),
   setProject: (settings, shapes, groups) =>
     set(s => ({
       settings,
@@ -2220,5 +2388,37 @@ export const useStore = create<AppState>(set => ({
     }),
 }))
 
-export const effectiveBezier = (shape: Shape, settings: ProjectSettings): number =>
-  shape.bezierOverride ?? settings.bezier
+/**
+ * Bundle of everything the renderer needs to draw a shape's corners: the
+ * resolved base spec (shape ref → shape inline → global), the per-vertex
+ * spec map (vertex ref → vertex inline; falls through to base via the
+ * absent-key default in `pointsToPath`), and the canvas reference dimension
+ * used by `'relative'` mode.
+ *
+ * Computed once per shape per frame and threaded through `ShapeNode` /
+ * `MirrorNode` / `RadialClones` / `LayerPanel` thumbnails.
+ */
+export interface ShapeBezier {
+  spec: BezierSpec
+  perPoint: Record<number, BezierSpec> | undefined
+  canvasRef: number
+}
+
+export const effectiveBezier = (shape: Shape, settings: ProjectSettings): ShapeBezier => ({
+  spec: resolveShapeLevelSpec(shape, settings),
+  perPoint: resolvePerPointSpecMap(shape, settings),
+  canvasRef: globalCanvasRef(settings),
+})
+
+/** Canvas reference dimension for `'relative'` bezier mode. */
+export const globalCanvasRef = (settings: ProjectSettings): number =>
+  Math.min(settings.viewBoxWidth, settings.viewBoxHeight)
+
+/**
+ * Resolved global bezier spec — the first preset is the implicit default.
+ * Used for drawing previews (no shape context).
+ */
+export const globalBezierSpec = (settings: ProjectSettings): BezierSpec => {
+  const p = settings.bezierPresets[0]
+  return p ? { mode: p.mode ?? 'proportional', value: p.value } : { mode: 'proportional', value: 0 }
+}
