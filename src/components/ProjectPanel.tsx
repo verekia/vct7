@@ -21,8 +21,15 @@ export interface BezierSliderRange {
 
 export const bezierSliderRange = (mode: BezierMode, canvasRef: number): BezierSliderRange => {
   if (mode === 'absolute') {
-    const max = Math.max(1, canvasRef / 2)
+    // canvasRef / 4 keeps the useful range near the middle of the slider —
+    // canvasRef / 2 (the geometric "could possibly matter" cap) lands actual
+    // editing values at the far bottom of the track.
+    const max = Math.max(1, canvasRef / 4)
     return { max, step: Math.max(0.1, max / 100), isAbsolute: true }
+  }
+  if (mode === 'relative') {
+    // Same reasoning — most useful values sit well under 50% of the canvas.
+    return { max: 0.5, step: 0.005, isAbsolute: false }
   }
   return { max: 1, step: 0.01, isAbsolute: false }
 }
