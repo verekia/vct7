@@ -10,7 +10,7 @@ browser/Figma/Illustrator can render — opening it in VCT7 restores the
 full editable project losslessly.
 
 Stack: Next.js 16 (pages router, static export) · React 19 (with React Compiler)
-· TypeScript 6 · Zustand 5 · Tailwind v4 (PostCSS) · `bun test` · oxlint · oxfmt.
+· TypeScript 6 · Zustand 5 · Tailwind v4 (PostCSS) · `bun test` · oxlint · `bun fmt`.
 
 ## Package manager: Bun
 
